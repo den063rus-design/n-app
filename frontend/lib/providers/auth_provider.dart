@@ -1,12 +1,11 @@
 import 'package:flutter/foundation.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
-import '../services/api_service.dart';
-import '../config/api_config.dart';
+import '../services/socket_service.dart';
 
 class AuthProvider extends ChangeNotifier {
   final AuthService _authService = AuthService();
-  final ApiService _apiService = ApiService();
+  final SocketService _socketService = SocketService();
 
   User? _currentUser;
   bool _isLoading = false;
@@ -18,32 +17,33 @@ class AuthProvider extends ChangeNotifier {
   bool get isAuthenticated => _currentUser != null;
   bool get isAdmin => _currentUser?.isAdmin ?? false;
 
-  /// Проверяет, есть ли сохранённый токен, и загружает пользователя
-  Future<void> tryAutoLogin() async {
+  /// Проверяет, есть ли сохранённый токен
+  Future<bool> checkAuth() async {
     final isLoggedIn = await _authService.isLoggedIn();
     if (isLoggedIn) {
-      try {
-        final response = await _apiService.get(ApiConfig.usersEndpoint + '/me');
-        _currentUser = User.fromJson(response.data as Map<String, dynamic>);
-        notifyListeners();
-      } catch (e) {
-        await _authService.logout();
+      final token = await _authService.getToken();
+      if (token != null) {
+        _socketService.connect(token);
       }
     }
+    return isLoggedIn;
   }
 
   /// Выполняет вход
-  Future<bool> login(String username, String password) async {
+  Future<bool> login(String login, String password) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      final data = await _authService.login(username, password);
+      final data = await _authService.login(login, password);
 
-      // Загружаем информацию о пользователе
-      final response = await _apiService.get(ApiConfig.usersEndpoint + '/me');
-      _currentUser = User.fromJson(response.data as Map<String, dynamic>);
+      final userData = data['user'] as Map<String, dynamic>;
+      _currentUser = User.fromJson(userData);
+
+      // Подключаем Socket.IO
+      final token = data['access_token'] as String;
+      _socketService.connect(token);
 
       _isLoading = false;
       notifyListeners();
@@ -58,6 +58,7 @@ class AuthProvider extends ChangeNotifier {
 
   /// Выполняет выход
   Future<void> logout() async {
+    _socketService.disconnect();
     await _authService.logout();
     _currentUser = null;
     _error = null;

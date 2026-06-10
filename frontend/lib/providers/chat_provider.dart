@@ -27,14 +27,9 @@ class ChatProvider extends ChangeNotifier {
 
   /// Настраивает слушатели Socket.IO
   void _setupSocketListeners() {
-    _socketService.onMessageReceived((data) {
+    _socketService.onNewMessage((data) {
       final message = Message.fromJson(data as Map<String, dynamic>);
       _messages.add(message);
-      notifyListeners();
-    });
-
-    _socketService.onUsersOnline((data) {
-      // Обновление списка онлайн пользователей
       notifyListeners();
     });
   }
@@ -45,7 +40,7 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final response = await _apiService.get(ApiConfig.usersEndpoint);
+      final response = await _apiService.get(ApiConfig.users);
       final list = response.data as List<dynamic>;
       _users = list
           .map((e) => User.fromJson(e as Map<String, dynamic>))
@@ -59,15 +54,13 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  /// Загружает сообщения для выбранного пользователя
-  Future<void> loadMessages(int userId) async {
+  /// Загружает сообщения (GET /chat/my для user, GET /chat для admin)
+  Future<void> loadMessages() async {
     _isLoading = true;
     notifyListeners();
 
     try {
-      final response = await _apiService.get(
-        '${ApiConfig.messagesEndpoint}/$userId',
-      );
+      final response = await _apiService.get(ApiConfig.chatMy);
       final list = response.data as List<dynamic>;
       _messages = list
           .map((e) => Message.fromJson(e as Map<String, dynamic>))
@@ -81,26 +74,66 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  /// Выбирает пользователя для чата
-  void selectUser(User user) {
-    _selectedUser = user;
-    _socketService.joinRoom(user.id);
-    loadMessages(user.id);
+  /// Загружает сообщения конкретного пользователя (admin) — GET /chat/user/:userId
+  Future<void> loadUserMessages(int userId) async {
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final response = await _apiService.get('${ApiConfig.chat}/user/$userId');
+      final list = response.data as List<dynamic>;
+      _messages = list
+          .map((e) => Message.fromJson(e as Map<String, dynamic>))
+          .toList();
+      _isLoading = false;
+      notifyListeners();
+    } catch (e) {
+      _isLoading = false;
+      _error = 'Ошибка загрузки сообщений';
+      notifyListeners();
+    }
   }
 
-  /// Отправляет сообщение
-  void sendMessage({
-    required int senderId,
-    required int receiverId,
-    required String content,
-  }) {
-    if (content.trim().isEmpty) return;
+  /// Выбирает пользователя для чата (admin)
+  void selectUser(User user) {
+    _selectedUser = user;
+    loadUserMessages(user.id);
+  }
 
-    _socketService.sendMessage(
-      senderId: senderId,
-      receiverId: receiverId,
-      content: content,
-    );
+  /// Отправляет сообщение через HTTP POST /chat
+  Future<void> sendMessage(String text, int userId) async {
+    if (text.trim().isEmpty) return;
+
+    try {
+      await _apiService.post(
+        ApiConfig.chat,
+        data: {
+          'text': text,
+          'userId': userId,
+        },
+      );
+    } catch (e) {
+      _error = 'Ошибка отправки сообщения';
+      notifyListeners();
+    }
+  }
+
+  /// Удаляет сообщение (admin) — DELETE /chat/:id
+  Future<void> deleteMessage(int messageId) async {
+    try {
+      await _apiService.delete('${ApiConfig.chat}/$messageId');
+      _messages.removeWhere((m) => m.id == messageId);
+      notifyListeners();
+    } catch (e) {
+      _error = 'Ошибка удаления сообщения';
+      notifyListeners();
+    }
+  }
+
+  /// Добавляет сообщение из Socket.IO в реальном времени
+  void addMessage(Message message) {
+    _messages.add(message);
+    notifyListeners();
   }
 
   /// Очищает ошибку

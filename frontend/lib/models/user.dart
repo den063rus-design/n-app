@@ -1,43 +1,44 @@
 class User {
   final int id;
-  final String username;
+  final String fio;
+  final int age;
+  final String login;
   final String role;
-  final String? email;
-  final bool isActive;
-  final DateTime? createdAt;
+  final String status;
 
   User({
     required this.id,
-    required this.username,
+    required this.fio,
+    required this.age,
+    required this.login,
     required this.role,
-    this.email,
-    this.isActive = true,
-    this.createdAt,
+    required this.status,
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
     return User(
       id: json['id'] as int,
-      username: json['username'] as String,
-      role: json['role'] as String? ?? 'user',
-      email: json['email'] as String?,
-      isActive: json['isActive'] as bool? ?? true,
-      createdAt: json['createdAt'] != null
-          ? DateTime.parse(json['createdAt'] as String)
-          : null,
+      fio: json['fio'] as String,
+      age: json['age'] as int,
+      login: json['login'] as String,
+      role: json['role'] as String,
+      status: json['status'] as String,
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
       'id': id,
-      'username': username,
+      'fio': fio,
+      'age': age,
+      'login': login,
       'role': role,
-      'email': email,
-      'isActive': isActive,
-      'createdAt': createdAt?.toIso8601String(),
+      'status': status,
     };
   }
 
-  bool get isAdmin => role == 'admin';
+  bool get isAdmin => role == 'ADMIN';
+  bool get isActive => status == 'ACTIVE';
+  bool get isBlocked => status == 'BLOCKED';
+  bool get isArchived => status == 'ARCHIVED';
 }

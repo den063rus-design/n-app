@@ -4,6 +4,8 @@ import '../models/user.dart';
 import '../models/message.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
+import '../services/api_service.dart';
+import '../config/api_config.dart';
 
 class AdminScreen extends StatefulWidget {
   const AdminScreen({super.key});
@@ -14,6 +16,11 @@ class AdminScreen extends StatefulWidget {
 
 class _AdminScreenState extends State<AdminScreen> {
   final _messageController = TextEditingController();
+  final _fioController = TextEditingController();
+  final _ageController = TextEditingController();
+  final _loginController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final ApiService _apiService = ApiService();
 
   @override
   void initState() {
@@ -26,6 +33,10 @@ class _AdminScreenState extends State<AdminScreen> {
   @override
   void dispose() {
     _messageController.dispose();
+    _fioController.dispose();
+    _ageController.dispose();
+    _loginController.dispose();
+    _passwordController.dispose();
     super.dispose();
   }
 
@@ -34,11 +45,152 @@ class _AdminScreenState extends State<AdminScreen> {
     if (selectedUser == null) return;
 
     chatProvider.sendMessage(
-      senderId: authProvider.currentUser!.id,
-      receiverId: selectedUser.id,
-      content: _messageController.text,
+      _messageController.text,
+      selectedUser.id,
     );
     _messageController.clear();
+  }
+
+  Future<void> _createUser() async {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Создать пользователя'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _fioController,
+                decoration: const InputDecoration(labelText: 'ФИО'),
+              ),
+              TextField(
+                controller: _ageController,
+                decoration: const InputDecoration(labelText: 'Возраст'),
+                keyboardType: TextInputType.number,
+              ),
+              TextField(
+                controller: _loginController,
+                decoration: const InputDecoration(labelText: 'Логин'),
+              ),
+              TextField(
+                controller: _passwordController,
+                decoration: const InputDecoration(labelText: 'Пароль'),
+                obscureText: true,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              try {
+                await _apiService.post(
+                  ApiConfig.users,
+                  data: {
+                    'fio': _fioController.text,
+                    'age': int.tryParse(_ageController.text) ?? 0,
+                    'login': _loginController.text,
+                    'password': _passwordController.text,
+                  },
+                );
+                _fioController.clear();
+                _ageController.clear();
+                _loginController.clear();
+                _passwordController.clear();
+                if (ctx.mounted) Navigator.pop(ctx);
+                context.read<ChatProvider>().loadUsers();
+              } catch (e) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Ошибка создания пользователя')),
+                );
+              }
+            },
+            child: const Text('Создать'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _blockUser(User user) async {
+    try {
+      await _apiService.patch('${ApiConfig.users}/${user.id}/block');
+      context.read<ChatProvider>().loadUsers();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ошибка')),
+      );
+    }
+  }
+
+  Future<void> _unblockUser(User user) async {
+    try {
+      await _apiService.patch('${ApiConfig.users}/${user.id}/unblock');
+      context.read<ChatProvider>().loadUsers();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ошибка')),
+      );
+    }
+  }
+
+  Future<void> _archiveUser(User user) async {
+    try {
+      await _apiService.patch('${ApiConfig.users}/${user.id}/archive');
+      context.read<ChatProvider>().loadUsers();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ошибка')),
+      );
+    }
+  }
+
+  Future<void> _restoreUser(User user) async {
+    try {
+      await _apiService.patch('${ApiConfig.users}/${user.id}/restore');
+      context.read<ChatProvider>().loadUsers();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ошибка')),
+      );
+    }
+  }
+
+  Future<void> _deleteUser(User user) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Удалить пользователя'),
+        content: Text('Вы уверены, что хотите удалить ${user.fio}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        await _apiService.delete('${ApiConfig.users}/${user.id}');
+        context.read<ChatProvider>().loadUsers();
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Ошибка удаления')),
+        );
+      }
+    }
   }
 
   @override
@@ -47,6 +199,11 @@ class _AdminScreenState extends State<AdminScreen> {
       appBar: AppBar(
         title: const Text('Администратор'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.person_add),
+            onPressed: _createUser,
+            tooltip: 'Создать пользователя',
+          ),
           IconButton(
             icon: const Icon(Icons.exit_to_app),
             onPressed: () {
@@ -70,15 +227,7 @@ class _AdminScreenState extends State<AdminScreen> {
                   itemCount: chat.users.length,
                   itemBuilder: (context, index) {
                     final user = chat.users[index];
-                    return ListTile(
-                      leading: CircleAvatar(
-                        child: Text(user.username[0].toUpperCase()),
-                      ),
-                      title: Text(user.username),
-                      subtitle: Text(user.role),
-                      selected: chat.selectedUser?.id == user.id,
-                      onTap: () => chat.selectUser(user),
-                    );
+                    return _buildUserCard(user, chat);
                   },
                 );
               },
@@ -105,12 +254,12 @@ class _AdminScreenState extends State<AdminScreen> {
                         children: [
                           CircleAvatar(
                             child: Text(
-                              chat.selectedUser!.username[0].toUpperCase(),
+                              chat.selectedUser!.fio[0].toUpperCase(),
                             ),
                           ),
                           const SizedBox(width: 12),
                           Text(
-                            'Чат с ${chat.selectedUser!.username}',
+                            'Чат с ${chat.selectedUser!.fio}',
                             style: const TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 16,
@@ -128,7 +277,7 @@ class _AdminScreenState extends State<AdminScreen> {
                           final message = chat.messages[index];
                           final isMine =
                               message.senderId == auth.currentUser?.id;
-                          return _buildMessageBubble(message, isMine);
+                          return _buildMessageBubble(message, isMine, chat);
                         },
                       ),
                     ),
@@ -182,37 +331,173 @@ class _AdminScreenState extends State<AdminScreen> {
     );
   }
 
-  Widget _buildMessageBubble(Message message, bool isMine) {
+  Widget _buildUserCard(User user, ChatProvider chat) {
+    final isSelected = chat.selectedUser?.id == user.id;
+    final statusColor = user.isActive
+        ? Colors.green
+        : user.isBlocked
+            ? Colors.red
+            : Colors.orange;
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      color: isSelected ? Colors.blue[50] : null,
+      child: ListTile(
+        leading: CircleAvatar(
+          child: Text(user.fio[0].toUpperCase()),
+        ),
+        title: Text(
+          user.fio,
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Возраст: ${user.age}'),
+            Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: statusColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Text(_statusLabel(user.status)),
+              ],
+            ),
+          ],
+        ),
+        selected: isSelected,
+        onTap: () => chat.selectUser(user),
+        trailing: PopupMenuButton<String>(
+          onSelected: (value) {
+            switch (value) {
+              case 'block':
+                _blockUser(user);
+                break;
+              case 'unblock':
+                _unblockUser(user);
+                break;
+              case 'archive':
+                _archiveUser(user);
+                break;
+              case 'restore':
+                _restoreUser(user);
+                break;
+              case 'delete':
+                _deleteUser(user);
+                break;
+            }
+          },
+          itemBuilder: (context) => [
+            if (user.isActive) ...[
+              const PopupMenuItem(
+                value: 'block',
+                child: Text('Заблокировать'),
+              ),
+              const PopupMenuItem(
+                value: 'archive',
+                child: Text('Архивировать'),
+              ),
+            ],
+            if (user.isBlocked) ...[
+              const PopupMenuItem(
+                value: 'unblock',
+                child: Text('Разблокировать'),
+              ),
+              const PopupMenuItem(
+                value: 'archive',
+                child: Text('Архивировать'),
+              ),
+            ],
+            if (user.isArchived) ...[
+              const PopupMenuItem(
+                value: 'restore',
+                child: Text('Восстановить'),
+              ),
+            ],
+            const PopupMenuItem(
+              value: 'delete',
+              child: Text('Удалить', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _statusLabel(String status) {
+    switch (status) {
+      case 'ACTIVE':
+        return 'Активен';
+      case 'BLOCKED':
+        return 'Заблокирован';
+      case 'ARCHIVED':
+        return 'Архивирован';
+      default:
+        return status;
+    }
+  }
+
+  Widget _buildMessageBubble(Message message, bool isMine, ChatProvider chat) {
     return Align(
       alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(
-          color: isMine
-              ? Theme.of(context).colorScheme.primary
-              : Colors.grey[200],
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: isMine
-                ? const Radius.circular(16)
-                : const Radius.circular(4),
-            bottomRight: isMine
-                ? const Radius.circular(4)
-                : const Radius.circular(16),
+      child: Stack(
+        children: [
+          Container(
+            margin: const EdgeInsets.only(bottom: 8, right: isMine ? 36 : 0, left: isMine ? 0 : 36),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: isMine
+                  ? Theme.of(context).colorScheme.primary
+                  : Colors.grey[200],
+              borderRadius: BorderRadius.only(
+                topLeft: const Radius.circular(16),
+                topRight: const Radius.circular(16),
+                bottomLeft: isMine
+                    ? const Radius.circular(16)
+                    : const Radius.circular(4),
+                bottomRight: isMine
+                    ? const Radius.circular(4)
+                    : const Radius.circular(16),
+              ),
+            ),
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.5,
+            ),
+            child: Text(
+              message.content,
+              style: TextStyle(
+                color: isMine ? Colors.white : Colors.black87,
+                fontSize: 15,
+              ),
+            ),
           ),
-        ),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.6,
-        ),
-        child: Text(
-          message.content,
-          style: TextStyle(
-            color: isMine ? Colors.white : Colors.black87,
-            fontSize: 15,
-          ),
-        ),
+          // Кнопка удаления сообщения (только для админа)
+          if (!isMine && message.id != null)
+            Positioned(
+              right: 0,
+              top: 0,
+              child: GestureDetector(
+                onTap: () => chat.deleteMessage(message.id!),
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.red[100],
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.close,
+                    size: 14,
+                    color: Colors.red[700],
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

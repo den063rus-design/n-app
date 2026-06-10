@@ -17,11 +17,7 @@ class _UserScreenState extends State<UserScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final auth = context.read<AuthProvider>();
-      if (auth.currentUser != null) {
-        // Пользователь загружает сообщения с администратором (id = 1)
-        context.read<ChatProvider>().loadMessages(auth.currentUser!.id);
-      }
+      context.read<ChatProvider>().loadMessages();
     });
   }
 
@@ -38,9 +34,8 @@ class _UserScreenState extends State<UserScreen> {
     if (auth.currentUser == null) return;
 
     chat.sendMessage(
-      senderId: auth.currentUser!.id,
-      receiverId: 1, // ID администратора
-      content: _messageController.text,
+      _messageController.text,
+      auth.currentUser!.id,
     );
     _messageController.clear();
   }

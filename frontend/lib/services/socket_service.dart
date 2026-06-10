@@ -1,29 +1,23 @@
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import '../config/api_config.dart';
-import 'auth_service.dart';
 
 class SocketService {
   static final SocketService _instance = SocketService._internal();
   factory SocketService() => _instance;
 
   IO.Socket? _socket;
-  final AuthService _authService = AuthService();
 
   SocketService._internal();
 
   IO.Socket? get socket => _socket;
 
-  /// Подключается к Socket.IO серверу
-  Future<void> connect() async {
-    final token = await _authService.getToken();
-
+  /// Подключается к Socket.IO серверу с JWT токеном
+  void connect(String token) {
     _socket = IO.io(
-      ApiConfig.baseUrl,
+      ApiConfig.socketUrl,
       IO.OptionBuilder()
           .setTransports(['websocket'])
-          .setExtraHeaders({
-            'Authorization': 'Bearer $token',
-          })
+          .setAuth({'token': token})
           .enableAutoConnect()
           .build(),
     );
@@ -43,32 +37,17 @@ class SocketService {
     _socket!.connect();
   }
 
-  /// Присоединяется к комнате чата
-  void joinRoom(int userId) {
-    _socket?.emit('join', {'userId': userId});
-  }
-
-  /// Отправляет сообщение
-  void sendMessage({
-    required int senderId,
-    required int receiverId,
-    required String content,
-  }) {
+  /// Отправляет сообщение через Socket.IO
+  void sendMessage(String text, int userId) {
     _socket?.emit('sendMessage', {
-      'senderId': senderId,
-      'receiverId': receiverId,
-      'content': content,
+      'text': text,
+      'userId': userId,
     });
   }
 
   /// Слушает новые сообщения
-  void onMessageReceived(void Function(dynamic data) callback) {
+  void onNewMessage(void Function(dynamic data) callback) {
     _socket?.on('newMessage', callback);
-  }
-
-  /// Слушает список пользователей онлайн
-  void onUsersOnline(void Function(dynamic data) callback) {
-    _socket?.on('usersOnline', callback);
   }
 
   /// Отключается от сервера

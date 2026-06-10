@@ -7,12 +7,12 @@ class AuthService {
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
   /// Выполняет вход и сохраняет JWT токен
-  Future<Map<String, dynamic>> login(String username, String password) async {
+  Future<Map<String, dynamic>> login(String login, String password) async {
     try {
       final response = await _apiService.post(
-        ApiConfig.loginEndpoint,
+        ApiConfig.login,
         data: {
-          'username': username,
+          'login': login,
           'password': password,
         },
       );
