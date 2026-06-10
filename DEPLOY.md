@@ -42,10 +42,15 @@ git --version
 
 ### 2.2. Клонирование репозитория на сервер
 
+**Важно:** Директория `/opt/n-app` не должна существовать или должна быть пуста, иначе `git clone` не сработает.
+
 ```bash
-sudo mkdir -p /opt/n-app
-sudo chown $USER:$USER /opt/n-app
-git clone https://github.com/den063rus-design/n-app.git /opt/n-app
+# Удалить старую директорию, если она есть (но не содержит нужных данных!)
+sudo rm -rf /opt/n-app
+
+# Клонировать репозиторий
+sudo git clone https://github.com/den063rus-design/n-app.git /opt/n-app
+sudo chown -R $USER:$USER /opt/n-app
 cd /opt/n-app
 ```
 
@@ -66,7 +71,7 @@ cat ~/.ssh/deploy_key.pub
 3. Key: вставьте содержимое `~/.ssh/deploy_key.pub`
 4. Нажмите **Add SSH key**
 
-**На сервере** смените remote на SSH:
+**На сервере** смените remote на SSH (выполнять ТОЛЬКО после `git clone`):
 
 ```bash
 cd /opt/n-app
