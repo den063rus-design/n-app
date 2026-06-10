@@ -43,7 +43,9 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
 
       final ageText = _ageController.text.trim();
       if (ageText.isNotEmpty) {
-        data['age'] = int.tryParse(ageText);
+        data['age'] = int.tryParse(ageText) ?? 0;
+      } else {
+        data['age'] = 0;
       }
 
       final notesText = _notesController.text.trim();
