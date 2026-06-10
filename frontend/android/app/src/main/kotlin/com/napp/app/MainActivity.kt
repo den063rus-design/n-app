@@ -1,4 +1,4 @@
-package com.napp.n_app_frontend
+package com.napp.app
 
 import io.flutter.embedding.android.FlutterActivity
 

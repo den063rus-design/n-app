@@ -20,10 +20,13 @@ class CallScreen extends StatefulWidget {
 
 class _CallScreenState extends State<CallScreen> {
   final CallService _callService = CallService();
+  final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
+  final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
 
   @override
   void initState() {
     super.initState();
+    _initRenderers();
     _callService.init();
 
     if (!widget.isIncoming) {
@@ -31,8 +34,27 @@ class _CallScreenState extends State<CallScreen> {
     }
   }
 
+  Future<void> _initRenderers() async {
+    await _localRenderer.initialize();
+    await _remoteRenderer.initialize();
+
+    _callService.localStream.listen((stream) {
+      if (stream != null) {
+        _localRenderer.srcObject = stream;
+      }
+    });
+
+    _callService.remoteStream.listen((stream) {
+      if (stream != null) {
+        _remoteRenderer.srcObject = stream;
+      }
+    });
+  }
+
   @override
   void dispose() {
+    _localRenderer.dispose();
+    _remoteRenderer.dispose();
     super.dispose();
   }
 
@@ -47,42 +69,10 @@ class _CallScreenState extends State<CallScreen> {
           return Stack(
             children: [
               // Remote video (full screen)
-              StreamBuilder<MediaStream?>(
-                stream: _callService.remoteStream,
-                builder: (context, snapshot) {
-                  if (snapshot.data != null) {
-                    return RTCVideoView(
-                      snapshot.data!,
-                      objectFit:
-                          RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-                    );
-                  }
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        CircleAvatar(
-                          radius: 50,
-                          backgroundColor: Colors.grey[800],
-                          child: Icon(
-                            Icons.person,
-                            size: 60,
-                            color: Colors.grey[400],
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                        Text(
-                          widget.userName,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
+              RTCVideoView(
+                _remoteRenderer,
+                objectFit:
+                    RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
               ),
               // Local video (PiP)
               Positioned(
@@ -95,32 +85,14 @@ class _CallScreenState extends State<CallScreen> {
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: Colors.white, width: 2),
                   ),
-                  child: StreamBuilder<MediaStream?>(
-                    stream: _callService.localStream,
-                    builder: (context, snapshot) {
-                      if (snapshot.data != null) {
-                        return ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: RTCVideoView(
-                            snapshot.data!,
-                            objectFit: RTCVideoViewObjectFit
-                                .RTCVideoViewObjectFitCover,
-                            mirror: true,
-                          ),
-                        );
-                      }
-                      return Container(
-                        decoration: BoxDecoration(
-                          color: Colors.grey[800],
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Icon(
-                          Icons.videocam_off,
-                          color: Colors.white54,
-                          size: 32,
-                        ),
-                      );
-                    },
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: RTCVideoView(
+                      _localRenderer,
+                      objectFit: RTCVideoViewObjectFit
+                          .RTCVideoViewObjectFitCover,
+                      mirror: true,
+                    ),
                   ),
                 ),
               ),
