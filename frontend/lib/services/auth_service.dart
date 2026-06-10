@@ -25,7 +25,7 @@ class AuthService {
         throw Exception('Неожиданный тип ответа от сервера: ${rawResponse.runtimeType}');
       }
 
-      final data = rawResponse as Map<String, dynamic>;
+      final data = rawResponse;
 
       if (!data.containsKey('accessToken')) {
         debugPrint('AuthService.login: ERROR - no accessToken key in response. Keys: ${data.keys}');

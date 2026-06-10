@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../providers/auth_provider.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -13,7 +14,15 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _loginController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _storage = const FlutterSecureStorage();
   bool _obscurePassword = true;
+  bool _saveCredentials = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedCredentials();
+  }
 
   @override
   void dispose() {
@@ -22,16 +31,57 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
+  /// Загружает сохранённые логин и пароль
+  Future<void> _loadSavedCredentials() async {
+    try {
+      final savedLogin = await _storage.read(key: 'saved_login');
+      final savedPassword = await _storage.read(key: 'saved_password');
+      if (savedLogin != null && savedPassword != null) {
+        _loginController.text = savedLogin;
+        _passwordController.text = savedPassword;
+      }
+    } catch (e) {
+      // Игнорируем ошибки чтения
+    }
+  }
+
+  /// Сохраняет логин и пароль в SecureStorage
+  Future<void> _persistCredentials(String login, String password) async {
+    try {
+      await _storage.write(key: 'saved_login', value: login);
+      await _storage.write(key: 'saved_password', value: password);
+    } catch (e) {
+      // Игнорируем ошибки записи
+    }
+  }
+
+  /// Удаляет сохранённые логин и пароль
+  Future<void> _clearSavedCredentials() async {
+    try {
+      await _storage.delete(key: 'saved_login');
+      await _storage.delete(key: 'saved_password');
+    } catch (e) {
+      // Игнорируем ошибки удаления
+    }
+  }
+
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
 
     final authProvider = context.read<AuthProvider>();
-    final success = await authProvider.login(
-      _loginController.text.trim(),
-      _passwordController.text,
-    );
+    final login = _loginController.text.trim();
+    final password = _passwordController.text;
+
+    final success = await authProvider.login(login, password);
 
     if (success && mounted) {
+      // Сохраняем или удаляем credentials в зависимости от чекбокса
+      if (_saveCredentials) {
+        await _persistCredentials(login, password);
+      } else {
+        await _clearSavedCredentials();
+      }
+
       final isAdmin = authProvider.isAdmin;
       Navigator.pushReplacementNamed(
         context,
@@ -59,7 +109,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'N App',
+                  'Natalie-Eng',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.headlineLarge?.copyWith(
                         fontWeight: FontWeight.bold,
@@ -115,6 +165,21 @@ class _LoginScreenState extends State<LoginScreen> {
                   },
                 ),
                 const SizedBox(height: 8),
+                // Чекбокс "Запомнить логин и пароль"
+                Row(
+                  children: [
+                    Checkbox(
+                      value: _saveCredentials,
+                      onChanged: (value) {
+                        setState(() {
+                          _saveCredentials = value ?? true;
+                        });
+                      },
+                    ),
+                    const Text('Запомнить логин и пароль'),
+                  ],
+                ),
+                const SizedBox(height: 4),
                 Consumer<AuthProvider>(
                   builder: (context, auth, _) {
                     if (auth.error != null) {

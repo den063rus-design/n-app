@@ -34,10 +34,10 @@ class AuthProvider extends ChangeNotifier {
     return isLoggedIn;
   }
 
-  /// Загружает профиль текущего пользователя с сервера
+  /// Загружает профиль текущего пользователя с сервера (GET /users/me)
   Future<void> getCurrentUser() async {
     try {
-      final user = await _apiService.getUserById(0); // /users/me или /users/profile
+      final user = await _apiService.getCurrentUser();
       _currentUser = user;
       notifyListeners();
     } catch (e) {

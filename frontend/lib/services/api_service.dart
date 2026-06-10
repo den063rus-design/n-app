@@ -121,6 +121,12 @@ class ApiService {
     return User.fromJson(response as Map<String, dynamic>);
   }
 
+  /// Получить текущего пользователя по JWT-токену (GET /users/me)
+  Future<User> getCurrentUser() async {
+    final response = await get('/users/me');
+    return User.fromJson(response as Map<String, dynamic>);
+  }
+
   Future<User> updateUser(int id, Map<String, dynamic> data) async {
     final response = await patch('/users/$id', data: data);
     return User.fromJson(response as Map<String, dynamic>);
