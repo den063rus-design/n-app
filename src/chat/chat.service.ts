@@ -6,11 +6,16 @@ import {
 } from '@nestjs/common';
 import { MessageStatus, Role, UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { ChatGateway } from './chat.gateway';
 import { CreateMessageDto } from './dto/create-message.dto';
+import { ChatHistoryQueryDto } from './dto/chat-history-query.dto';
 
 @Injectable()
 export class ChatService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly chatGateway: ChatGateway,
+  ) {}
 
   private readonly messageSelect = {
     id: true,
@@ -20,9 +25,10 @@ export class ChatService {
     status: true,
     createdAt: true,
     updatedAt: true,
+    attachments: true,
   } as const;
 
-  async createMessage(senderId: number, senderRole: Role, dto: CreateMessageDto) {
+  async create(dto: CreateMessageDto, senderId: number) {
     const sender = await this.prisma.user.findUnique({
       where: { id: senderId },
     });
@@ -31,7 +37,7 @@ export class ChatService {
       throw new ForbiddenException('Пользователь недоступен');
     }
 
-    const receiver = await this.resolveReceiver(senderRole, dto.receiverId);
+    const receiver = await this.resolveReceiver(sender.role, dto.userId);
 
     if (sender.id === receiver.id) {
       throw new BadRequestException('Нельзя отправить сообщение самому себе');
@@ -49,7 +55,51 @@ export class ChatService {
       select: this.messageSelect,
     });
 
+    // Эмитим событие через gateway
+    this.chatGateway.sendToChatParticipants(
+      message.senderId,
+      message.receiverId,
+      'message:new',
+      message,
+    );
+
     return message;
+  }
+
+  async getHistory(
+    userId: number,
+    query: ChatHistoryQueryDto,
+    currentUserId: number,
+    currentUserRole: string,
+  ) {
+    // Если роль USER — проверяем, что userId === currentUserId
+    if (currentUserRole !== 'ADMIN' && userId !== currentUserId) {
+      throw new ForbiddenException('Доступ запрещён');
+    }
+
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 50;
+    const skip = (page - 1) * limit;
+
+    const where = {
+      OR: [
+        { senderId: userId, receiverId: currentUserId },
+        { senderId: currentUserId, receiverId: userId },
+      ] as Array<{ senderId: number; receiverId: number }>,
+    };
+
+    const [data, total] = await Promise.all([
+      this.prisma.message.findMany({
+        where,
+        orderBy: { createdAt: 'asc' },
+        skip,
+        take: limit,
+        select: this.messageSelect,
+      }),
+      this.prisma.message.count({ where }),
+    ]);
+
+    return { data, total, page, limit };
   }
 
   async findAll() {
@@ -69,60 +119,17 @@ export class ChatService {
     });
   }
 
-  async deleteMessage(messageId: number) {
-    const message = await this.prisma.message.findUnique({
-      where: { id: messageId },
-    });
-
-    if (!message) {
-      throw new NotFoundException('Сообщение не найдено');
+  async deleteMessage(messageId: number, currentUserId: number, currentUserRole: string) {
+    if (currentUserRole !== 'ADMIN') {
+      throw new ForbiddenException('Только администратор может удалять сообщения');
     }
 
-    return this.prisma.message.delete({
-      where: { id: messageId },
-      select: this.messageSelect,
-    });
-  }
-
-  async markDelivered(messageId: number) {
-    return this.updateStatus(messageId, MessageStatus.DELIVERED);
-  }
-
-  async markRead(messageId: number, readerId: number) {
-    const message = await this.prisma.message.findUnique({
-      where: { id: messageId },
-    });
-
-    if (!message) {
-      throw new NotFoundException('Сообщение не найдено');
-    }
-
-    if (message.receiverId !== readerId) {
-      throw new ForbiddenException('Только получатель может отметить сообщение прочитанным');
-    }
-
-    return this.updateStatus(messageId, MessageStatus.READ);
-  }
-
-  async getMessageWithParticipants(messageId: number) {
     const message = await this.prisma.message.findUnique({
       where: { id: messageId },
       select: {
         ...this.messageSelect,
-        sender: {
-          select: {
-            id: true,
-            login: true,
-            role: true,
-          },
-        },
-        receiver: {
-          select: {
-            id: true,
-            login: true,
-            role: true,
-          },
-        },
+        sender: { select: { id: true } },
+        receiver: { select: { id: true } },
       },
     });
 
@@ -130,10 +137,37 @@ export class ChatService {
       throw new NotFoundException('Сообщение не найдено');
     }
 
-    return message;
+    await this.prisma.message.delete({
+      where: { id: messageId },
+    });
+
+    // Эмитим событие удаления обоим участникам
+    this.chatGateway.sendToChatParticipants(
+      message.senderId,
+      message.receiverId,
+      'message:deleted',
+      { messageId },
+    );
+
+    return {
+      message: { senderId: message.senderId, receiverId: message.receiverId },
+      response: { message: 'Сообщение удалено' },
+    };
   }
 
-  private async updateStatus(messageId: number, status: MessageStatus) {
+  async markAsDelivered(messageId: number) {
+    return this.updateStatus(messageId, MessageStatus.DELIVERED, 'message:delivered');
+  }
+
+  async markAsRead(messageId: number) {
+    return this.updateStatus(messageId, MessageStatus.READ, 'message:read');
+  }
+
+  async remove(messageId: number, userId: number, userRole: string) {
+    return this.deleteMessage(messageId, userId, userRole);
+  }
+
+  private async updateStatus(messageId: number, status: MessageStatus, event: string) {
     const message = await this.prisma.message.findUnique({
       where: { id: messageId },
     });
@@ -142,11 +176,16 @@ export class ChatService {
       throw new NotFoundException('Сообщение не найдено');
     }
 
-    return this.prisma.message.update({
+    const updated = await this.prisma.message.update({
       where: { id: messageId },
       data: { status },
       select: this.messageSelect,
     });
+
+    // Эмитим событие обоим участникам
+    this.chatGateway.sendToChatParticipants(updated.senderId, updated.receiverId, event, updated);
+
+    return updated;
   }
 
   private async resolveReceiver(senderRole: Role, receiverId?: number) {
