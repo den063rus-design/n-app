@@ -265,31 +265,25 @@ export PATH="/opt/flutter/bin:$PATH"
 flutter --version
 ```
 
-**Проблема: `Flutter requires Android SDK`**
+**Проблема: `[!] No Android SDK found`**
 
-Установите Android SDK Command Line Tools:
+Используйте готовый скрипт [`deploy/setup-android-sdk.sh`](deploy/setup-android-sdk.sh):
 
 ```bash
-# 1. Установите Java (требуется для Android SDK)
-sudo apt install openjdk-17-jdk -y
+chmod +x deploy/setup-android-sdk.sh
+sudo ./deploy/setup-android-sdk.sh
+```
 
-# 2. Скачайте Android SDK command line tools
-cd /opt
-wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-unzip commandlinetools-linux-11076708_latest.zip -d android-sdk
-rm commandlinetools-linux-11076708_latest.zip
+Скрипт автоматически:
+1. Установит Java 17
+2. Скачает и настроит Android SDK Command Line Tools
+3. Пропишет переменные `ANDROID_HOME` и `PATH` в `~/.bashrc`
+4. Примет лицензии Android SDK
+5. Установит `platforms;android-34`, `build-tools;34.0.0` и `platform-tools`
 
-# 3. Настройте переменные
-export ANDROID_HOME="/opt/android-sdk"
-export PATH="$ANDROID_HOME/cmdline-tools/bin:$PATH"
-echo 'export ANDROID_HOME="/opt/android-sdk"' >> ~/.bashrc
-echo 'export PATH="$ANDROID_HOME/cmdline-tools/bin:$PATH"' >> ~/.bashrc
-
-# 4. Примите лицензии
-yes | sdkmanager --sdk_root=$ANDROID_HOME --licenses
-
-# 5. Установите необходимые компоненты
-sdkmanager --sdk_root=$ANDROID_HOME "platforms;android-34" "build-tools;34.0.0"
+После установки **перезайдите** на сервер (logout/login) или выполните:
+```bash
+source ~/.bashrc
 ```
 
 ### 4.3. Запуск сборки
