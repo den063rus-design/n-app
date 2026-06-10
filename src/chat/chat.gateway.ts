@@ -12,6 +12,8 @@ import { jwtConstants } from '../config/constants';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatService } from './chat.service';
 import { CreateMessageDto } from './dto/create-message.dto';
+import { validate } from 'class-validator';
+import { plainToInstance } from 'class-transformer';
 
 type SocketUser = {
   id: number;
@@ -31,7 +33,8 @@ type AuthedSocket = Socket<
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: process.env.CORS_ORIGIN ?? 'http://localhost:3000',
+    credentials: true,
   },
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -47,14 +50,14 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {}
 
   async handleConnection(client: AuthedSocket) {
-    const token = this.extractToken(client);
-
-    if (!token) {
-      client.disconnect(true);
-      return;
-    }
-
     try {
+      const token = this.extractToken(client);
+
+      if (!token) {
+        client.disconnect(true);
+        return;
+      }
+
       const payload = await this.jwtService.verifyAsync<{
         sub: number;
         login: string;
@@ -83,72 +86,108 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (firstConnection) {
         this.server.emit('user:online', { userId: user.id, login: user.login });
       }
-    } catch {
+    } catch (error) {
+      console.error('ChatGateway.handleConnection error:', error);
       client.disconnect(true);
     }
   }
 
   handleDisconnect(client: AuthedSocket) {
-    const user = client.data.user;
+    try {
+      const user = client.data.user;
 
-    if (!user) {
-      return;
+      if (!user) {
+        return;
+      }
+
+      this.removeSocket(user.id, client.id);
+    } catch (error) {
+      console.error('ChatGateway.handleDisconnect error:', error);
     }
-
-    this.removeSocket(user.id, client.id);
   }
 
   @SubscribeMessage('message:send')
   async handleSendMessage(client: AuthedSocket, payload: CreateMessageDto) {
-    const user = client.data.user;
+    try {
+      const user = client.data.user;
 
-    if (!user) {
-      client.disconnect(true);
-      return;
+      if (!user) {
+        client.disconnect(true);
+        return;
+      }
+
+      // Валидация входящих данных
+      const dtoInstance = plainToInstance(CreateMessageDto, payload);
+      const errors = await validate(dtoInstance);
+      if (errors.length > 0) {
+        client.emit('message:error', {
+          error: 'Validation failed',
+          details: errors.map((e) => e.constraints),
+        });
+        return;
+      }
+
+      const message = await this.chatService.createMessage(user.id, user.role, dtoInstance);
+      this.emitToUser(message.senderId, 'message:new', message);
+      this.emitToUser(message.receiverId, 'message:new', message);
+
+      const receiverSockets = this.userSockets.get(message.receiverId);
+      if (receiverSockets && receiverSockets.size > 0) {
+        const deliveredMessage = await this.chatService.markDelivered(message.id);
+        this.emitToUser(message.senderId, 'message:delivered', deliveredMessage);
+        this.emitToUser(message.receiverId, 'message:delivered', deliveredMessage);
+      }
+
+      return message;
+    } catch (error) {
+      console.error('ChatGateway.handleSendMessage error:', error);
+      client.emit('message:error', { error: 'Internal server error' });
     }
-
-    const message = await this.chatService.createMessage(user.id, user.role, payload);
-    this.emitToUser(message.senderId, 'message:new', message);
-    this.emitToUser(message.receiverId, 'message:new', message);
-
-    const receiverSockets = this.userSockets.get(message.receiverId);
-    if (receiverSockets && receiverSockets.size > 0) {
-      const deliveredMessage = await this.chatService.markDelivered(message.id);
-      this.emitToUser(message.senderId, 'message:delivered', deliveredMessage);
-      this.emitToUser(message.receiverId, 'message:delivered', deliveredMessage);
-    }
-
-    return message;
   }
 
   @SubscribeMessage('message:read')
   async handleReadMessage(client: AuthedSocket, payload: { messageId: number }) {
-    const user = client.data.user;
+    try {
+      const user = client.data.user;
 
-    if (!user) {
-      client.disconnect(true);
-      return;
+      if (!user) {
+        client.disconnect(true);
+        return;
+      }
+
+      if (!payload || typeof payload.messageId !== 'number') {
+        client.emit('message:error', { error: 'Invalid payload: messageId is required' });
+        return;
+      }
+
+      const message = await this.chatService.markRead(payload.messageId, user.id);
+      this.emitToUser(message.senderId, 'message:read', message);
+      this.emitToUser(message.receiverId, 'message:read', message);
+      return message;
+    } catch (error) {
+      console.error('ChatGateway.handleReadMessage error:', error);
+      client.emit('message:error', { error: 'Internal server error' });
     }
-
-    const message = await this.chatService.markRead(payload.messageId, user.id);
-    this.emitToUser(message.senderId, 'message:read', message);
-    this.emitToUser(message.receiverId, 'message:read', message);
-    return message;
   }
 
   private extractToken(client: Socket) {
-    const handshakeAuth = client.handshake.auth as { token?: unknown } | undefined;
-    const authToken = handshakeAuth?.token;
-    if (typeof authToken === 'string' && authToken.length > 0) {
-      return authToken;
-    }
+    try {
+      const handshakeAuth = client.handshake.auth as { token?: unknown } | undefined;
+      const authToken = handshakeAuth?.token;
+      if (typeof authToken === 'string' && authToken.length > 0) {
+        return authToken;
+      }
 
-    const header = client.handshake.headers.authorization;
-    if (typeof header === 'string' && header.startsWith('Bearer ')) {
-      return header.slice(7);
-    }
+      const header = client.handshake.headers.authorization;
+      if (typeof header === 'string' && header.startsWith('Bearer ')) {
+        return header.slice(7);
+      }
 
-    return null;
+      return null;
+    } catch (error) {
+      console.error('ChatGateway.extractToken error:', error);
+      return null;
+    }
   }
 
   private addSocket(userId: number, socketId: string) {
@@ -160,30 +199,38 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   private removeSocket(userId: number, socketId: string) {
-    const sockets = this.userSockets.get(userId);
-    if (!sockets) {
-      return;
-    }
+    try {
+      const sockets = this.userSockets.get(userId);
+      if (!sockets) {
+        return;
+      }
 
-    sockets.delete(socketId);
+      sockets.delete(socketId);
 
-    if (sockets.size === 0) {
-      this.userSockets.delete(userId);
-      this.server.emit('user:offline', { userId });
-    } else {
-      this.userSockets.set(userId, sockets);
+      if (sockets.size === 0) {
+        this.userSockets.delete(userId);
+        this.server.emit('user:offline', { userId });
+      } else {
+        this.userSockets.set(userId, sockets);
+      }
+    } catch (error) {
+      console.error('ChatGateway.removeSocket error:', error);
     }
   }
 
   private emitToUser(userId: number, event: string, data: unknown) {
-    const sockets = this.userSockets.get(userId);
+    try {
+      const sockets = this.userSockets.get(userId);
 
-    if (!sockets) {
-      return;
-    }
+      if (!sockets) {
+        return;
+      }
 
-    for (const socketId of sockets) {
-      this.server.to(socketId).emit(event, data);
+      for (const socketId of sockets) {
+        this.server.to(socketId).emit(event, data);
+      }
+    } catch (error) {
+      console.error(`ChatGateway.emitToUser error (event: ${event}):`, error);
     }
   }
 }

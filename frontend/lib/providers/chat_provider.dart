@@ -28,9 +28,39 @@ class ChatProvider extends ChangeNotifier {
   /// Настраивает слушатели Socket.IO
   void _setupSocketListeners() {
     _socketService.onNewMessage((data) {
-      final message = Message.fromJson(data as Map<String, dynamic>);
-      _messages.add(message);
-      notifyListeners();
+      try {
+        final message = Message.fromJson(data as Map<String, dynamic>);
+        _messages.add(message);
+        notifyListeners();
+      } catch (e) {
+        print('Error parsing new message: $e');
+      }
+    });
+
+    _socketService.onMessageDelivered((data) {
+      try {
+        final updated = Message.fromJson(data as Map<String, dynamic>);
+        final index = _messages.indexWhere((m) => m.id == updated.id);
+        if (index != -1) {
+          _messages[index] = updated;
+          notifyListeners();
+        }
+      } catch (e) {
+        print('Error parsing delivered message: $e');
+      }
+    });
+
+    _socketService.onMessageRead((data) {
+      try {
+        final updated = Message.fromJson(data as Map<String, dynamic>);
+        final index = _messages.indexWhere((m) => m.id == updated.id);
+        if (index != -1) {
+          _messages[index] = updated;
+          notifyListeners();
+        }
+      } catch (e) {
+        print('Error parsing read message: $e');
+      }
     });
   }
 
@@ -101,16 +131,18 @@ class ChatProvider extends ChangeNotifier {
   }
 
   /// Отправляет сообщение через HTTP POST /chat
-  Future<void> sendMessage(String text, int userId) async {
+  /// [receiverId] — ID получателя (null для USER, т.к. backend сам найдёт админа)
+  Future<void> sendMessage(String text, int? receiverId) async {
     if (text.trim().isEmpty) return;
 
     try {
+      final data = <String, dynamic>{'text': text};
+      if (receiverId != null) {
+        data['receiverId'] = receiverId;
+      }
       await _apiService.post(
         ApiConfig.chat,
-        data: {
-          'text': text,
-          'userId': userId,
-        },
+        data: data,
       );
     } catch (e) {
       _error = 'Ошибка отправки сообщения';

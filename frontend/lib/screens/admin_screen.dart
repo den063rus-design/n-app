@@ -469,7 +469,7 @@ class _AdminScreenState extends State<AdminScreen> {
               maxWidth: MediaQuery.of(context).size.width * 0.5,
             ),
             child: Text(
-              message.content,
+              message.text,
               style: TextStyle(
                 color: isMine ? Colors.white : Colors.black87,
                 fontSize: 15,

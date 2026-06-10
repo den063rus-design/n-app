@@ -33,9 +33,11 @@ class _UserScreenState extends State<UserScreen> {
 
     if (auth.currentUser == null) return;
 
+    // Пользователь отправляет сообщение администратору.
+    // Backend сам найдёт активного администратора (receiverId не нужен для USER).
     chat.sendMessage(
       _messageController.text,
-      auth.currentUser!.id,
+      null, // receiverId = null — backend сам найдёт админа
     );
     _messageController.clear();
   }
@@ -116,7 +118,7 @@ class _UserScreenState extends State<UserScreen> {
     );
   }
 
-  Widget _buildMessageBubble(message, bool isMine) {
+  Widget _buildMessageBubble(Message message, bool isMine) {
     return Align(
       alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -141,7 +143,7 @@ class _UserScreenState extends State<UserScreen> {
           maxWidth: MediaQuery.of(context).size.width * 0.6,
         ),
         child: Text(
-          message.content,
+          message.text,
           style: TextStyle(
             color: isMine ? Colors.white : Colors.black87,
             fontSize: 15,

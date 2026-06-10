@@ -2,17 +2,17 @@ class Message {
   final int? id;
   final int senderId;
   final int receiverId;
-  final String content;
+  final String text;
   final DateTime? createdAt;
-  final bool isRead;
+  final String status;
 
   Message({
     this.id,
     required this.senderId,
     required this.receiverId,
-    required this.content,
+    required this.text,
     this.createdAt,
-    this.isRead = false,
+    this.status = 'SENT',
   });
 
   factory Message.fromJson(Map<String, dynamic> json) {
@@ -20,11 +20,11 @@ class Message {
       id: json['id'] as int?,
       senderId: json['senderId'] as int,
       receiverId: json['receiverId'] as int,
-      content: json['content'] as String,
+      text: json['text'] as String,
       createdAt: json['createdAt'] != null
           ? DateTime.parse(json['createdAt'] as String)
           : null,
-      isRead: json['isRead'] as bool? ?? false,
+      status: json['status'] as String? ?? 'SENT',
     );
   }
 
@@ -33,9 +33,13 @@ class Message {
       if (id != null) 'id': id,
       'senderId': senderId,
       'receiverId': receiverId,
-      'content': content,
+      'text': text,
       if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
-      'isRead': isRead,
+      'status': status,
     };
   }
+
+  bool get isRead => status == 'READ';
+  bool get isDelivered => status == 'DELIVERED';
+  bool get isSent => status == 'SENT';
 }
