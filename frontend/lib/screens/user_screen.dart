@@ -183,13 +183,22 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
     if (auth.currentUser == null) return;
 
     try {
-      final fileKey = await chat.uploadFile(filePath);
-      if (fileKey != null) {
-        await chat.sendMessage('', null, fileKeys: [fileKey]);
+      final result = await chat.uploadFile(filePath);
+      if (result != null) {
+        final fileKey = result['key'] as String;
+        final files = [
+          {
+            'key': fileKey,
+            'originalName': result['originalName'] as String? ?? fileKey,
+            'fileSize': result['fileSize'] as int? ?? 0,
+            'mimeType': result['mimeType'] as String? ?? 'application/octet-stream',
+          },
+        ];
+        await chat.sendMessage('', null, files: files);
         _scrollToBottom();
       }
     } catch (e) {
-      _showError('Ошибка отправки файла');
+      _showError('Ошибка отправки файла: $e');
     }
   }
 

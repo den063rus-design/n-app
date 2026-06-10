@@ -1,7 +1,7 @@
-import 'dart:convert';
+import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../models/user.dart';
 import '../models/notification.dart';
@@ -32,16 +32,21 @@ class ApiService {
         onRequest: (options, handler) async {
           // Не добавляем токен для запроса логина
           if (options.path.contains('/auth/login')) {
+            debugPrint('[Dio] ${options.method} ${options.path} — без токена (login)');
             handler.next(options);
             return;
           }
           final token = await _storage.read(key: 'jwt_token');
           if (token != null) {
             options.headers['Authorization'] = 'Bearer $token';
+            debugPrint('[Dio] ${options.method} ${options.path} — токен добавлен');
+          } else {
+            debugPrint('[Dio] ${options.method} ${options.path} — токен отсутствует');
           }
           handler.next(options);
         },
         onError: (error, handler) {
+          debugPrint('[Dio] ERROR ${error.response?.statusCode} ${error.requestOptions.path}: ${error.response?.data}');
           if (error.response?.statusCode == 401) {
             // Token expired — можно добавить логику refresh
           }
@@ -52,17 +57,6 @@ class ApiService {
   }
 
   Dio get dio => _dio;
-
-  String get _baseUrl => ApiConfig.baseUrl;
-
-  Future<Map<String, String>> get _headers async {
-    final token = await _storage.read(key: 'jwt_token');
-    return {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
-    };
-  }
 
   // =================================================================
   // Базовые HTTP-методы
@@ -173,38 +167,58 @@ class ApiService {
   // Files
   // =================================================================
 
-  Future<String> uploadFile(String filePath) async {
-    final uri = Uri.parse('$_baseUrl/files/upload');
-    final request = http.MultipartRequest('POST', uri);
-    final headers = await _headers;
-    headers.remove('Content-Type');
-    request.headers.addAll(headers);
-    request.files.add(await http.MultipartFile.fromPath('file', filePath));
+  Future<Map<String, dynamic>> uploadFile(String filePath) async {
+    final fileName = File(filePath).uri.pathSegments.last;
+    debugPrint('[ApiService.uploadFile] filePath=$filePath fileName=$fileName');
+
     try {
-      final response = await request.send().timeout(const Duration(seconds: 30));
-      final responseBody = await response.stream.bytesToString();
-      
-      if (response.statusCode != 201 && response.statusCode != 200) {
-        String errorMsg;
-        try {
-          final errorDecoded = jsonDecode(responseBody) as Map<String, dynamic>;
-          errorMsg = errorDecoded['message'] as String? ?? errorDecoded['error'] as String? ?? 'HTTP ${response.statusCode}';
-        } catch (_) {
-          errorMsg = 'HTTP ${response.statusCode}: $responseBody';
-        }
-        throw Exception('Ошибка загрузки файла: $errorMsg');
-      }
-      
-      final decoded = jsonDecode(responseBody) as Map<String, dynamic>;
+      final formData = FormData.fromMap({
+        'file': await MultipartFile.fromFile(filePath, filename: fileName),
+      });
+
+      final response = await _dio.post(
+        '/files/upload',
+        data: formData,
+        options: Options(
+          headers: {'Content-Type': 'multipart/form-data'},
+          receiveTimeout: const Duration(seconds: 30),
+          sendTimeout: const Duration(seconds: 30),
+        ),
+      );
+
+      debugPrint('[ApiService.uploadFile] response status=${response.statusCode}');
+      debugPrint('[ApiService.uploadFile] response data=${response.data}');
+
+      final decoded = response.data as Map<String, dynamic>;
       final fileKey = decoded['key'] as String?;
       if (fileKey == null) {
-        throw Exception('Сервер не вернул ключ файла. Ответ: $responseBody');
+        throw Exception('Сервер не вернул ключ файла. Ответ: $decoded');
       }
-      return fileKey;
-    } on http.ClientException catch (e) {
-      throw Exception('Ошибка сети при загрузке файла: ${e.message}');
-    } catch (e) {
-      rethrow;
+      return {
+        'key': fileKey,
+        'mimeType': decoded['mimeType'] as String? ?? 'application/octet-stream',
+        'originalName': decoded['originalName'] as String? ?? fileKey,
+        'fileSize': decoded['fileSize'] as int? ?? 0,
+      };
+    } on DioException catch (e) {
+      debugPrint('[ApiService.uploadFile] DioException: type=${e.type} status=${e.response?.statusCode} body=${e.response?.data}');
+      String errorMsg;
+      if (e.response != null) {
+        final statusCode = e.response!.statusCode;
+        final body = e.response!.data;
+        if (body is Map<String, dynamic>) {
+          errorMsg = body['message'] as String? ?? body['error'] as String? ?? 'HTTP $statusCode';
+        } else {
+          errorMsg = 'HTTP $statusCode: $body';
+        }
+      } else if (e.type == DioExceptionType.connectionTimeout || e.type == DioExceptionType.sendTimeout) {
+        errorMsg = 'Таймаут соединения при загрузке файла';
+      } else if (e.type == DioExceptionType.connectionError) {
+        errorMsg = 'Ошибка сети при загрузке файла: ${e.message}';
+      } else {
+        errorMsg = 'Ошибка загрузки файла: ${e.message}';
+      }
+      throw Exception('Ошибка загрузки файла: $errorMsg');
     }
   }
 

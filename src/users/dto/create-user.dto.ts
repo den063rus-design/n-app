@@ -35,8 +35,4 @@ export class CreateUserDto {
   @IsString()
   notes?: string;
 
-  @ApiPropertyOptional({ example: 'https://example.com/avatar.jpg' })
-  @IsOptional()
-  @IsString()
-  avatarUrl?: string;
 }

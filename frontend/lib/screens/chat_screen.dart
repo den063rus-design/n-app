@@ -341,13 +341,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (auth.currentUser == null) return;
 
     try {
-      final fileKey = await chat.uploadFile(filePath);
-      if (fileKey != null) {
-        // Сервер требует text с MinLength(1), отправляем пробел
+      final result = await chat.uploadFile(filePath);
+      if (result != null) {
+        final fileKey = result['key'] as String;
+        final files = [
+          {
+            'key': fileKey,
+            'originalName': result['originalName'] as String? ?? fileName ?? fileKey,
+            'fileSize': result['fileSize'] as int? ?? 0,
+            'mimeType': result['mimeType'] as String? ?? 'application/octet-stream',
+          },
+        ];
         if (widget.isAdmin) {
-          await chat.sendMessage(' ', widget.userId, fileKeys: [fileKey]);
+          await chat.sendMessage('', widget.userId, files: files);
         } else {
-          await chat.sendMessage(' ', null, fileKeys: [fileKey]);
+          await chat.sendMessage('', null, files: files);
         }
         _scrollToBottom();
       } else {

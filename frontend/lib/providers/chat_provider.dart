@@ -238,16 +238,19 @@ class ChatProvider extends ChangeNotifier {
 
   /// Отправляет текстовое сообщение через HTTP POST /chat
   /// [receiverId] — ID получателя (null для USER, т.к. backend сам найдёт админа)
-  /// [fileKeys] — список MinIO ключей загруженных файлов
-  Future<void> sendMessage(String text, int? receiverId, {List<String>? fileKeys}) async {
-    if (text.trim().isEmpty && (fileKeys == null || fileKeys.isEmpty)) return;
+  /// [fileKeys] — список ключей загруженных файлов (упрощённый вариант)
+  /// [files] — список метаданных загруженных файлов (ключ, оригинальное имя, размер, MIME-тип)
+  Future<void> sendMessage(String text, int? receiverId, {List<String>? fileKeys, List<Map<String, dynamic>>? files}) async {
+    if (text.trim().isEmpty && (fileKeys == null || fileKeys.isEmpty) && (files == null || files.isEmpty)) return;
 
     try {
       final data = <String, dynamic>{'text': text};
       if (receiverId != null) {
         data['userId'] = receiverId;
       }
-      if (fileKeys != null && fileKeys.isNotEmpty) {
+      if (files != null && files.isNotEmpty) {
+        data['files'] = files;
+      } else if (fileKeys != null && fileKeys.isNotEmpty) {
         data['fileKeys'] = fileKeys;
       }
       await _apiService.post(
@@ -284,12 +287,21 @@ class ChatProvider extends ChangeNotifier {
   /// Отправляет файловое сообщение
   Future<void> sendFileMessage(int userId, String filePath, String fileType) async {
     try {
-      final fileKey = await uploadFile(filePath);
-      if (fileKey != null) {
-        await sendMessage('', userId, fileKeys: [fileKey]);
+      final result = await uploadFile(filePath);
+      if (result != null) {
+        final fileKey = result['key'] as String;
+        final files = [
+          {
+            'key': fileKey,
+            'originalName': result['originalName'] as String? ?? fileKey,
+            'fileSize': result['fileSize'] as int? ?? 0,
+            'mimeType': result['mimeType'] as String? ?? 'application/octet-stream',
+          },
+        ];
+        await sendMessage('', userId, files: files);
       }
     } catch (e) {
-      _error = 'Ошибка отправки файла';
+      _error = 'Ошибка отправки файла: $e';
       notifyListeners();
     }
   }
@@ -297,25 +309,34 @@ class ChatProvider extends ChangeNotifier {
   /// Отправляет голосовое сообщение
   Future<void> sendVoiceMessage(int userId, String audioPath) async {
     try {
-      final fileKey = await uploadFile(audioPath);
-      if (fileKey != null) {
-        await sendMessage('', userId, fileKeys: [fileKey]);
+      final result = await uploadFile(audioPath);
+      if (result != null) {
+        final fileKey = result['key'] as String;
+        final files = [
+          {
+            'key': fileKey,
+            'originalName': result['originalName'] as String? ?? fileKey,
+            'fileSize': result['fileSize'] as int? ?? 0,
+            'mimeType': result['mimeType'] as String? ?? 'audio/mp4',
+          },
+        ];
+        await sendMessage('', userId, files: files);
       }
     } catch (e) {
-      _error = 'Ошибка отправки голосового сообщения';
+      _error = 'Ошибка отправки голосового сообщения: $e';
       notifyListeners();
     }
   }
 
-  /// Загружает файл на сервер и возвращает ключ файла (key)
-  Future<String?> uploadFile(String filePath) async {
+  /// Загружает файл на сервер и возвращает Map с key, mimeType, originalName, fileSize
+  Future<Map<String, dynamic>?> uploadFile(String filePath) async {
     try {
       final result = await _apiService.uploadFile(filePath);
       return result;
     } catch (e) {
       _error = 'Ошибка загрузки файла: $e';
       notifyListeners();
-      return null;
+      rethrow;
     }
   }
 

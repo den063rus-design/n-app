@@ -8,7 +8,15 @@ import { CallModule } from './call/call.module';
 import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, UsersModule, ChatModule, FilesModule, CallModule, NotificationsModule],
+  imports: [
+    PrismaModule,
+    AuthModule,
+    UsersModule,
+    ChatModule,
+    FilesModule,
+    CallModule,
+    NotificationsModule,
+  ],
   controllers: [],
   providers: [],
 })

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../models/user.dart';
 import '../services/api_service.dart';
 
@@ -16,7 +16,6 @@ class _EditUserScreenState extends State<EditUserScreen> {
   late final TextEditingController _fullNameController;
   late final TextEditingController _ageController;
   late final TextEditingController _notesController;
-  late final TextEditingController _avatarController;
   final _apiService = ApiService();
   bool _isLoading = false;
 
@@ -30,9 +29,6 @@ class _EditUserScreenState extends State<EditUserScreen> {
     _notesController = TextEditingController(
       text: widget.user.notes ?? '',
     );
-    _avatarController = TextEditingController(
-      text: widget.user.avatarUrl ?? '',
-    );
   }
 
   @override
@@ -40,7 +36,6 @@ class _EditUserScreenState extends State<EditUserScreen> {
     _fullNameController.dispose();
     _ageController.dispose();
     _notesController.dispose();
-    _avatarController.dispose();
     super.dispose();
   }
 
@@ -62,20 +57,19 @@ class _EditUserScreenState extends State<EditUserScreen> {
       }
 
       data['notes'] = _notesController.text.trim();
-      data['avatarUrl'] = _avatarController.text.trim();
 
       await _apiService.updateUser(widget.user.id, data);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Данные пользователя сохранены')),
+          const SnackBar(content: Text('Р”Р°РЅРЅС‹Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ СЃРѕС…СЂР°РЅРµРЅС‹')),
         );
         Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка сохранения: $e')),
+          SnackBar(content: Text('РћС€РёР±РєР° СЃРѕС…СЂР°РЅРµРЅРёСЏ: $e')),
         );
       }
     } finally {
@@ -87,7 +81,7 @@ class _EditUserScreenState extends State<EditUserScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Редактирование данных'),
+        title: const Text('Р РµРґР°РєС‚РёСЂРѕРІР°РЅРёРµ РґР°РЅРЅС‹С…'),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -99,14 +93,14 @@ class _EditUserScreenState extends State<EditUserScreen> {
               TextFormField(
                 controller: _fullNameController,
                 decoration: const InputDecoration(
-                  labelText: 'ФИО',
+                  labelText: 'Р¤РРћ',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.person),
                 ),
                 textCapitalization: TextCapitalization.words,
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
-                    return 'Введите ФИО';
+                    return 'Р’РІРµРґРёС‚Рµ Р¤РРћ';
                   }
                   return null;
                 },
@@ -115,7 +109,7 @@ class _EditUserScreenState extends State<EditUserScreen> {
               TextFormField(
                 controller: _ageController,
                 decoration: const InputDecoration(
-                  labelText: 'Возраст',
+                  labelText: 'Р’РѕР·СЂР°СЃС‚',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.calendar_today),
                 ),
@@ -125,21 +119,12 @@ class _EditUserScreenState extends State<EditUserScreen> {
               TextFormField(
                 controller: _notesController,
                 decoration: const InputDecoration(
-                  labelText: 'Заметки администратора',
+                  labelText: 'Р—Р°РјРµС‚РєРё Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.note),
                   alignLabelWithHint: true,
                 ),
                 maxLines: 3,
-              ),
-              const SizedBox(height: 24),
-              TextFormField(
-                controller: _avatarController,
-                decoration: const InputDecoration(
-                  labelText: 'URL �������',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.image),
-                ),
               ),
               const SizedBox(height: 24),
               ElevatedButton(
@@ -154,7 +139,7 @@ class _EditUserScreenState extends State<EditUserScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Text(
-                        'Сохранить данные',
+                        'РЎРѕС…СЂР°РЅРёС‚СЊ РґР°РЅРЅС‹Рµ',
                         style: TextStyle(fontSize: 16),
                       ),
               ),

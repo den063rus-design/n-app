@@ -5,7 +5,6 @@ class User {
   final String role;
   final String status;
   final String? notes;
-  final String? avatarUrl;
   final bool isOnline;
   final String? lastSeenAt;
   final String createdAt;
@@ -18,7 +17,6 @@ class User {
     required this.role,
     required this.status,
     this.notes,
-    this.avatarUrl,
     this.isOnline = false,
     this.lastSeenAt,
     required this.createdAt,
@@ -32,7 +30,6 @@ class User {
         role: json['role'] as String? ?? 'USER',
         status: json['status'] as String? ?? 'ACTIVE',
         notes: json['notes'] as String?,
-        avatarUrl: json['avatarUrl'] as String?,
         isOnline: json['isOnline'] as bool? ?? false,
         lastSeenAt: json['lastSeenAt'] as String?,
         createdAt: json['createdAt'] as String? ?? DateTime.now().toIso8601String(),
@@ -46,7 +43,6 @@ class User {
         'role': role,
         'status': status,
         'notes': notes,
-        'avatarUrl': avatarUrl,
         'isOnline': isOnline,
         'lastSeenAt': lastSeenAt,
         'createdAt': createdAt,

@@ -1,3 +1,5 @@
+import '../config/api_config.dart';
+
 class Attachment {
   final int id;
   final String url;
@@ -13,13 +15,23 @@ class Attachment {
 
   factory Attachment.fromJson(Map<String, dynamic> json) => Attachment(
         id: json['id'] as int,
-        url: json['url'] as String? ?? '',
+        url: _normalizeUrl(json['url'] as String? ?? ''),
         type: _normalizeAttachmentType(
           json['type'] as String? ?? json['fileType'] as String? ?? '',
           json['fileName'] as String? ?? json['name'] as String? ?? json['key'] as String? ?? '',
         ),
         fileName: json['fileName'] as String? ?? json['name'] as String? ?? json['key'] as String? ?? '',
       );
+
+  static String _normalizeUrl(String rawUrl) {
+    if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
+      return rawUrl;
+    }
+    if (rawUrl.startsWith('/')) {
+      return '${ApiConfig.baseUrl}$rawUrl';
+    }
+    return rawUrl;
+  }
 
   static String _normalizeAttachmentType(String rawType, String fileName) {
     final loweredType = rawType.toLowerCase();

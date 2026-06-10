@@ -228,18 +228,12 @@ class _UserCardScreenState extends State<UserCardScreen> {
                       children: [
                         CircleAvatar(
                           radius: 32,
-                          backgroundImage:
-                              _user.avatarUrl != null && _user.avatarUrl!.isNotEmpty
-                                  ? NetworkImage(_user.avatarUrl!)
-                                  : null,
-                          child: _user.avatarUrl == null || _user.avatarUrl!.isEmpty
-                              ? Text(
-                                  _user.fullName.isNotEmpty
-                                      ? _user.fullName[0].toUpperCase()
-                                      : '?',
-                                  style: const TextStyle(fontSize: 24),
-                                )
-                              : null,
+                          child: Text(
+                            _user.fullName.isNotEmpty
+                                ? _user.fullName[0].toUpperCase()
+                                : '?',
+                            style: const TextStyle(fontSize: 24),
+                          ),
                         ),
                         const SizedBox(width: 16),
                         Expanded(
@@ -345,24 +339,6 @@ class _UserCardScreenState extends State<UserCardScreen> {
                             ),
                           );
                         },
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        icon: Icon(
-                          _user.isBlocked ? Icons.lock_open : Icons.lock,
-                        ),
-                        label: Text(
-                          _user.isBlocked ? 'Разблокировать' : 'Заблокировать',
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor:
-                              _user.isBlocked ? Colors.green : Colors.red,
-                          foregroundColor: Colors.white,
-                        ),
-                        onPressed: null,
                       ),
                     ),
                     const SizedBox(height: 8),

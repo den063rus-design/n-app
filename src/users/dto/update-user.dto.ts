@@ -32,8 +32,4 @@ export class UpdateUserDto {
   @IsString()
   notes?: string;
 
-  @ApiPropertyOptional({ example: 'https://example.com/avatar.jpg' })
-  @IsOptional()
-  @IsString()
-  avatarUrl?: string;
 }

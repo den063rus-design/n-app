@@ -15,7 +15,6 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
   final _fullNameController = TextEditingController();
   final _ageController = TextEditingController();
   final _notesController = TextEditingController();
-  final _avatarController = TextEditingController();
   final _loginController = TextEditingController();
   final _passwordController = TextEditingController();
   final _apiService = ApiService();
@@ -27,7 +26,6 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
     _fullNameController.dispose();
     _ageController.dispose();
     _notesController.dispose();
-    _avatarController.dispose();
     _loginController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -55,11 +53,6 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
       final notesText = _notesController.text.trim();
       if (notesText.isNotEmpty) {
         data['notes'] = notesText;
-      }
-
-      final avatarText = _avatarController.text.trim();
-      if (avatarText.isNotEmpty) {
-        data['avatarUrl'] = avatarText;
       }
 
       await _apiService.createUser(data);
@@ -147,15 +140,6 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
                   alignLabelWithHint: true,
                 ),
                 maxLines: 3,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _avatarController,
-                decoration: const InputDecoration(
-                  labelText: 'URL аватара',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.image),
-                ),
               ),
               const SizedBox(height: 16),
               TextFormField(
