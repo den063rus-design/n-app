@@ -22,6 +22,7 @@ class _CallScreenState extends State<CallScreen> {
   final CallService _callService = CallService();
   final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
   final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
+  Offset _pipOffset = const Offset(20, 80);
 
   @override
   void initState() {
@@ -76,22 +77,60 @@ class _CallScreenState extends State<CallScreen> {
               ),
               // Local video (PiP)
               Positioned(
-                top: 60,
-                right: 20,
-                child: Container(
-                  width: 120,
-                  height: 180,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.white, width: 2),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: RTCVideoView(
-                      _localRenderer,
-                      objectFit: RTCVideoViewObjectFit
-                          .RTCVideoViewObjectFitCover,
-                      mirror: true,
+                left: _pipOffset.dx,
+                top: _pipOffset.dy,
+                child: GestureDetector(
+                  onPanUpdate: (details) {
+                    setState(() {
+                      _pipOffset = Offset(
+                        (_pipOffset.dx + details.delta.dx)
+                            .clamp(12.0, MediaQuery.of(context).size.width - 132.0)
+                            .toDouble(),
+                        (_pipOffset.dy + details.delta.dy)
+                            .clamp(80.0, MediaQuery.of(context).size.height - 232.0)
+                            .toDouble(),
+                      );
+                    });
+                  },
+                  child: Container(
+                    width: 120,
+                    height: 180,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white, width: 2),
+                      color: Colors.black87,
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          RTCVideoView(
+                            _localRenderer,
+                            objectFit: RTCVideoViewObjectFit
+                                .RTCVideoViewObjectFitCover,
+                            mirror: true,
+                          ),
+                          Positioned(
+                            left: 8,
+                            top: 8,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.black54,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                _callService.isCameraOn ? 'Видео' : 'Аудио',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

@@ -21,6 +21,7 @@ export class UsersService {
     fio: true,
     age: true,
     login: true,
+    avatarUrl: true,
     role: true,
     status: true,
     notes: true,
@@ -50,6 +51,7 @@ export class UsersService {
         role: dto.role ?? 'USER',
         status: UserStatus.ACTIVE,
         notes: dto.notes ?? null,
+        avatarUrl: dto.avatarUrl ?? null,
       },
       select: this.userSelect,
     });
@@ -138,6 +140,7 @@ export class UsersService {
       age?: number;
       login?: string;
       notes?: string;
+      avatarUrl?: string | null;
     } = {};
 
     if (dto.fio !== undefined) data.fio = dto.fio;
@@ -145,6 +148,7 @@ export class UsersService {
     if (dto.age !== undefined) data.age = dto.age;
     if (dto.login !== undefined) data.login = dto.login;
     if (dto.notes !== undefined) data.notes = dto.notes;
+    if (dto.avatarUrl !== undefined) data.avatarUrl = dto.avatarUrl;
 
     return this.prisma.user.update({
       where: { id },

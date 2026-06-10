@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
 import '../services/api_service.dart';
 
 class CreateUserScreen extends StatefulWidget {
@@ -13,6 +15,7 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
   final _fullNameController = TextEditingController();
   final _ageController = TextEditingController();
   final _notesController = TextEditingController();
+  final _avatarController = TextEditingController();
   final _loginController = TextEditingController();
   final _passwordController = TextEditingController();
   final _apiService = ApiService();
@@ -24,6 +27,7 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
     _fullNameController.dispose();
     _ageController.dispose();
     _notesController.dispose();
+    _avatarController.dispose();
     _loginController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -53,6 +57,11 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
         data['notes'] = notesText;
       }
 
+      final avatarText = _avatarController.text.trim();
+      if (avatarText.isNotEmpty) {
+        data['avatarUrl'] = avatarText;
+      }
+
       await _apiService.createUser(data);
 
       if (mounted) {
@@ -62,9 +71,27 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
         Navigator.pop(context, true);
       }
     } catch (e) {
+      String errorMessage = 'Ошибка создания пользователя';
+      if (e is DioException && e.response?.data != null) {
+        try {
+          final body = e.response!.data;
+          if (body is Map && body['message'] != null) {
+            final msg = body['message'];
+            if (msg is List) {
+              errorMessage = msg.join('\n');
+            } else {
+              errorMessage = msg.toString();
+            }
+          }
+        } catch (_) {}
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка создания пользователя: $e')),
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: Colors.red.shade700,
+            duration: const Duration(seconds: 5),
+          ),
         );
       }
     } finally {
@@ -123,6 +150,15 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
               ),
               const SizedBox(height: 16),
               TextFormField(
+                controller: _avatarController,
+                decoration: const InputDecoration(
+                  labelText: 'URL аватара',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.image),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
                 controller: _loginController,
                 decoration: const InputDecoration(
                   labelText: 'Логин *',
@@ -157,8 +193,8 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
                   if (value == null || value.isEmpty) {
                     return 'Введите пароль';
                   }
-                  if (value.length < 4) {
-                    return 'Пароль должен быть не менее 4 символов';
+                  if (value.length < 6) {
+                    return 'Пароль должен быть не менее 6 символов';
                   }
                   return null;
                 },

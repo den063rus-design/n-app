@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:record/record.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
 import '../models/message.dart';
@@ -35,6 +36,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _audioRecorder = AudioRecorder();
   bool _isRecording = false;
   String? _recordingPath;
+  bool _isSending = false;
+  bool _isSendingText = false;
 
   @override
   void initState() {
@@ -43,15 +46,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadMessages();
     });
+    // Слушаем изменения текста для обновления кнопки отправки
+    _messageController.addListener(_onTextChanged);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _messageController.removeListener(_onTextChanged);
     _messageController.dispose();
     _scrollController.dispose();
     _audioRecorder.dispose();
     super.dispose();
+  }
+
+  void _onTextChanged() {
+    // Перестраиваем UI при изменении текста (для кнопки отправки)
+    setState(() {});
   }
 
   @override
@@ -82,40 +93,152 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     });
   }
 
-  void _sendTextMessage() {
+  Future<void> _sendTextMessage() async {
+    if (_isSendingText) return;
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
+    _isSendingText = true;
     final chat = context.read<ChatProvider>();
     final auth = context.read<AuthProvider>();
 
-    if (auth.currentUser == null) return;
-
-    if (widget.isAdmin) {
-      chat.sendMessage(text, widget.userId);
-    } else {
-      chat.sendMessage(text, null);
+    if (auth.currentUser == null) {
+      _isSendingText = false;
+      return;
     }
 
-    _messageController.clear();
-    _scrollToBottom();
+    try {
+      if (widget.isAdmin) {
+        await chat.sendMessage(text, widget.userId);
+      } else {
+        await chat.sendMessage(text, null);
+      }
+      _messageController.clear();
+      _scrollToBottom();
+    } finally {
+      _isSendingText = false;
+    }
   }
 
-  Future<void> _pickImage() async {
+  Future<void> _pickImageFromSource(ImageSource source) async {
+    // Запрашиваем разрешение в зависимости от источника
+    if (source == ImageSource.camera) {
+      final status = await Permission.camera.request();
+      if (status.isPermanentlyDenied) {
+        _showPermissionDenied('камеру');
+        return;
+      }
+      if (!status.isGranted) {
+        _showError('Нет разрешения на использование камеры');
+        return;
+      }
+    } else {
+      // Для Android 13+ (API 33+) нужно разрешение READ_MEDIA_IMAGES
+      // Для Android < 13 нужно READ_EXTERNAL_STORAGE
+      Permission photosPermission;
+      try {
+        // Проверяем, доступно ли Permission.photos (Android 13+)
+        final photosStatus = await Permission.photos.status;
+        photosPermission = Permission.photos;
+      } catch (_) {
+        // Permission.photos не доступен (Android < 13)
+        photosPermission = Permission.storage;
+      }
+      
+      final status = await photosPermission.request();
+      if (status.isPermanentlyDenied) {
+        _showPermissionDenied('галерею');
+        return;
+      }
+      if (!status.isGranted) {
+        _showError('Нет разрешения на доступ к галерее');
+        return;
+      }
+    }
+
     try {
       final XFile? image = await _imagePicker.pickImage(
-        source: ImageSource.gallery,
+        source: source,
         imageQuality: 80,
       );
       if (image != null) {
         await _sendFile(image.path, 'image');
+      } else {
+        _showError('Фото не выбрано');
       }
     } catch (e) {
-      _showError('Ошибка выбора фото');
+      _showError('Ошибка выбора фото: $e');
     }
   }
 
+  void _showImageSourcePicker() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Выберите источник',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _attachmentButton(
+                    icon: Icons.photo_library,
+                    label: 'Галерея',
+                    color: Colors.blue,
+                    onTap: () {
+                      Navigator.pop(context);
+                      _pickImageFromSource(ImageSource.gallery);
+                    },
+                  ),
+                  _attachmentButton(
+                    icon: Icons.camera_alt,
+                    label: 'Камера',
+                    color: Colors.teal,
+                    onTap: () {
+                      Navigator.pop(context);
+                      _pickImageFromSource(ImageSource.camera);
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _pickVideo() async {
+    // Запрашиваем разрешение на галерею для видео
+    Permission photosPermission;
+    try {
+      await Permission.photos.status;
+      photosPermission = Permission.photos;
+    } catch (_) {
+      photosPermission = Permission.storage;
+    }
+    
+    final status = await photosPermission.request();
+    if (status.isPermanentlyDenied) {
+      _showPermissionDenied('галерею');
+      return;
+    }
+    if (!status.isGranted) {
+      _showError('Нет разрешения на доступ к галерее');
+      return;
+    }
+
     try {
       final XFile? video = await _imagePicker.pickVideo(
         source: ImageSource.gallery,
@@ -124,7 +247,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         await _sendFile(video.path, 'video');
       }
     } catch (e) {
-      _showError('Ошибка выбора видео');
+      _showError('Ошибка выбора видео: $e');
     }
   }
 
@@ -151,13 +274,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<void> _startRecording() async {
     try {
-      final hasPermission = await _audioRecorder.hasPermission();
-      if (!hasPermission) {
+      // Явно запрашиваем разрешение на микрофон через permission_handler
+      final micStatus = await Permission.microphone.request();
+      if (micStatus.isPermanentlyDenied) {
+        _showPermissionDenied('микрофон');
+        return;
+      }
+      if (!micStatus.isGranted) {
         _showError('Нет разрешения на запись аудио');
         return;
       }
 
-      final path = '${Directory.systemTemp.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      final path =
+          '${Directory.systemTemp.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
       await _audioRecorder.start(
         const RecordConfig(
           encoder: AudioEncoder.aacLc,
@@ -172,7 +301,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _recordingPath = path;
       });
     } catch (e) {
-      _showError('Ошибка начала записи');
+      _showError('Ошибка начала записи: $e');
     }
   }
 
@@ -192,23 +321,42 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _sendFile(String filePath, String fileType, {String? fileName}) async {
+  Future<void> _cancelRecording() async {
+    try {
+      await _audioRecorder.stop();
+    } catch (_) {}
+    setState(() {
+      _isRecording = false;
+      _recordingPath = null;
+    });
+  }
+
+  Future<void> _sendFile(String filePath, String fileType,
+      {String? fileName}) async {
+    if (_isSending) return;
+    _isSending = true;
+
     final chat = context.read<ChatProvider>();
     final auth = context.read<AuthProvider>();
     if (auth.currentUser == null) return;
 
     try {
-      final fileUrl = await chat.uploadFile(filePath);
-      if (fileUrl != null) {
+      final fileKey = await chat.uploadFile(filePath);
+      if (fileKey != null) {
+        // Сервер требует text с MinLength(1), отправляем пробел
         if (widget.isAdmin) {
-          await chat.sendMessage('', widget.userId, attachments: [fileUrl]);
+          await chat.sendMessage(' ', widget.userId, fileKeys: [fileKey]);
         } else {
-          await chat.sendMessage('', null, attachments: [fileUrl]);
+          await chat.sendMessage(' ', null, fileKeys: [fileKey]);
         }
         _scrollToBottom();
+      } else {
+        _showError('Не удалось загрузить файл на сервер');
       }
     } catch (e) {
-      _showError('Ошибка отправки файла');
+      _showError('Ошибка отправки файла: $e');
+    } finally {
+      _isSending = false;
     }
   }
 
@@ -218,6 +366,31 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       SnackBar(
         content: Text(message),
         backgroundColor: Colors.red,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  void _showPermissionDenied(String permissionName) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Доступ запрещён'),
+        content: Text('Разрешение на $permissionName было отклонено навсегда. Пожалуйста, включите его в настройках приложения.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              openAppSettings();
+            },
+            child: const Text('Открыть настройки'),
+          ),
+        ],
       ),
     );
   }
@@ -248,7 +421,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     color: Colors.blue,
                     onTap: () {
                       Navigator.pop(context);
-                      _pickImage();
+                      _showImageSourcePicker();
                     },
                   ),
                   _attachmentButton(
@@ -267,15 +440,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     onTap: () {
                       Navigator.pop(context);
                       _pickDocument();
-                    },
-                  ),
-                  _attachmentButton(
-                    icon: Icons.mic,
-                    label: 'Голосовое',
-                    color: Colors.red,
-                    onTap: () {
-                      Navigator.pop(context);
-                      _toggleRecording();
                     },
                   ),
                 ],
@@ -350,8 +514,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       appBar: AppBar(
         title: Consumer<ChatProvider>(
           builder: (context, chat, _) {
-            // Для admin — берём статус из selectedUser (обновляется через WebSocket)
-            // Для user — используем widget.isOnline (передаётся при навигации)
             bool isOnline;
             String status;
             if (widget.isAdmin && chat.selectedUser != null) {
@@ -426,9 +588,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             itemCount: chat.messages.length,
                             itemBuilder: (context, index) {
                               final message = chat.messages[index];
-                              final isMine = message.senderId == auth.currentUser?.id;
+                              final isMine =
+                                  message.senderId == auth.currentUser?.id;
 
-                              // Отмечаем как прочитанное, если сообщение не наше и статус SENT
                               if (!isMine && message.status == 'SENT') {
                                 chat.markAsRead(message.id);
                               }
@@ -440,114 +602,145 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 onDelete: widget.isAdmin
                                     ? () => _confirmDeleteMessage(message)
                                     : null,
+                                onEdit: isMine
+                                    ? (newText) async {
+                                        await context.read<ChatProvider>().updateMessage(
+                                          message.id,
+                                          newText,
+                                        );
+                                      }
+                                    : null,
                               );
                             },
                           ),
               ),
-              // Индикатор записи
-              if (_isRecording)
-                Container(
-                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                  color: Colors.red[50],
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 12,
-                        height: 12,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.red,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Запись голосового сообщения...',
-                        style: TextStyle(color: Colors.red),
-                      ),
-                      const Spacer(),
-                      GestureDetector(
-                        onTap: _stopRecording,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.red,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Text(
-                            'Стоп',
-                            style: TextStyle(color: Colors.white, fontSize: 12),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               // Поле ввода
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.grey.withValues(alpha: 0.3),
-                      blurRadius: 4,
-                      offset: const Offset(0, -2),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    // Кнопка прикрепления
-                    IconButton(
-                      icon: const Icon(Icons.add_circle_outline),
-                      color: Theme.of(context).colorScheme.primary,
-                      onPressed: _showAttachmentSheet,
-                    ),
-                    const SizedBox(width: 4),
-                    // Текстовое поле
-                    Expanded(
-                      child: TextField(
-                        controller: _messageController,
-                        decoration: InputDecoration(
-                          hintText: _isRecording
-                              ? 'Идёт запись...'
-                              : 'Введите сообщение...',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
-                          ),
-                          filled: true,
-                          fillColor: Colors.grey[100],
-                        ),
-                        onSubmitted: (_) => _sendTextMessage(),
-                        textInputAction: TextInputAction.send,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    // Кнопка голосового сообщения / отправки
-                    if (_messageController.text.isEmpty)
-                      IconButton(
-                        icon: Icon(
-                          _isRecording ? Icons.stop_circle : Icons.mic,
-                          color: _isRecording ? Colors.red : Colors.grey,
-                        ),
-                        onPressed: _toggleRecording,
-                      )
-                    else
-                      IconButton(
-                        icon: const Icon(Icons.send),
-                        color: Theme.of(context).colorScheme.primary,
-                        onPressed: _sendTextMessage,
-                      ),
-                  ],
-                ),
-              ),
+              _buildInputBar(),
             ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildInputBar() {
+    // Режим записи голосового — показываем шкалу как в Telegram
+    if (_isRecording) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.withValues(alpha: 0.3),
+              blurRadius: 4,
+              offset: const Offset(0, -2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            // Кнопка отмены записи
+            IconButton(
+              icon: const Icon(Icons.close),
+              color: Colors.red,
+              onPressed: _cancelRecording,
+            ),
+            const SizedBox(width: 8),
+            // Анимированная шкала записи
+            Expanded(
+              child: Container(
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: const Row(
+                  children: [
+                    SizedBox(width: 16),
+                    Icon(Icons.mic, color: Colors.red, size: 20),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Запись голосового сообщения...',
+                        style: TextStyle(color: Colors.red),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Кнопка отправки записи
+            IconButton(
+              icon: const Icon(Icons.send),
+              color: Colors.red,
+              onPressed: _stopRecording,
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Обычный режим ввода
+    final hasText = _messageController.text.isNotEmpty;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withValues(alpha: 0.3),
+            blurRadius: 4,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Кнопка прикрепления
+          IconButton(
+            icon: const Icon(Icons.add_circle_outline),
+            color: Theme.of(context).colorScheme.primary,
+            onPressed: _showAttachmentSheet,
+          ),
+          const SizedBox(width: 4),
+          // Текстовое поле
+          Expanded(
+            child: TextField(
+              controller: _messageController,
+              decoration: InputDecoration(
+                hintText: 'Введите сообщение...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                filled: true,
+                fillColor: Colors.grey[100],
+              ),
+              onSubmitted: (_) => _sendTextMessage(),
+              textInputAction: TextInputAction.send,
+            ),
+          ),
+          const SizedBox(width: 4),
+          // Кнопка микрофона (когда нет текста) или отправки (когда есть текст)
+          if (hasText)
+            IconButton(
+              icon: const Icon(Icons.send),
+              color: Theme.of(context).colorScheme.primary,
+              onPressed: _sendTextMessage,
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.mic),
+              color: Colors.grey,
+              onPressed: _toggleRecording,
+            ),
+        ],
       ),
     );
   }

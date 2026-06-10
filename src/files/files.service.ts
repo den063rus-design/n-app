@@ -16,14 +16,16 @@ export class FilesService {
   private readonly endpoint: string;
 
   constructor() {
-    this.endpoint = process.env.MINIO_ENDPOINT || 'http://localhost:9000';
-    const port = process.env.MINIO_PORT || '9000';
+    this.endpoint = this.buildBaseUrl(
+      process.env.MINIO_ENDPOINT || 'http://localhost',
+      process.env.MINIO_PORT || '9000',
+    );
     const accessKey = process.env.MINIO_ACCESS_KEY || 'minioadmin';
     const secretKey = process.env.MINIO_SECRET_KEY || 'minioadmin';
     this.bucket = process.env.MINIO_BUCKET || 'n-app-files';
 
     this.s3Client = new S3Client({
-      endpoint: `${this.endpoint}:${port}`,
+      endpoint: this.endpoint,
       region: 'us-east-1',
       credentials: {
         accessKeyId: accessKey,
@@ -97,7 +99,26 @@ export class FilesService {
   }
 
   getFileUrl(key: string): string {
-    const port = process.env.MINIO_PORT || '9000';
-    return `${this.endpoint}:${port}/${this.bucket}/${key}`;
+    return `${this.endpoint}/${this.bucket}/${key}`;
+  }
+
+  private buildBaseUrl(endpoint: string, port: string): string {
+    const normalizedEndpoint = endpoint.replace(/\/+$/, '');
+
+    try {
+      const url = new URL(normalizedEndpoint);
+      if (url.port) {
+        return `${url.protocol}//${url.hostname}:${url.port}`;
+      }
+
+      url.port = port;
+      return `${url.protocol}//${url.hostname}:${url.port}`;
+    } catch {
+      if (/:\d+$/.test(normalizedEndpoint)) {
+        return normalizedEndpoint;
+      }
+
+      return `${normalizedEndpoint}:${port}`;
+    }
   }
 }

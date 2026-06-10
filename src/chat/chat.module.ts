@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthModule } from '../auth/auth.module';
+import { FilesModule } from '../files/files.module';
 import { UsersModule } from '../users/users.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -9,7 +10,7 @@ import { ChatService } from './chat.service';
 import { ChatGateway } from './chat.gateway';
 
 @Module({
-  imports: [AuthModule, JwtModule, UsersModule, PrismaModule, NotificationsModule],
+  imports: [AuthModule, JwtModule, UsersModule, PrismaModule, NotificationsModule, FilesModule],
   controllers: [ChatController],
   providers: [ChatService, ChatGateway],
   exports: [ChatService, ChatGateway],

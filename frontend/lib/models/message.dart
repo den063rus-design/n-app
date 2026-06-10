@@ -14,9 +14,60 @@ class Attachment {
   factory Attachment.fromJson(Map<String, dynamic> json) => Attachment(
         id: json['id'] as int,
         url: json['url'] as String? ?? '',
-        type: json['type'] as String? ?? '',
-        fileName: json['fileName'] as String? ?? '',
+        type: _normalizeAttachmentType(
+          json['type'] as String? ?? json['fileType'] as String? ?? '',
+          json['fileName'] as String? ?? json['name'] as String? ?? json['key'] as String? ?? '',
+        ),
+        fileName: json['fileName'] as String? ?? json['name'] as String? ?? json['key'] as String? ?? '',
       );
+
+  static String _normalizeAttachmentType(String rawType, String fileName) {
+    final loweredType = rawType.toLowerCase();
+    if (loweredType.startsWith('image/')) {
+      return 'image';
+    }
+    if (loweredType.startsWith('video/')) {
+      return 'video';
+    }
+    if (loweredType.startsWith('audio/')) {
+      return 'audio';
+    }
+    if (loweredType == 'application/pdf') {
+      return 'document';
+    }
+    if (loweredType.isNotEmpty &&
+        loweredType != 'application/octet-stream' &&
+        loweredType != 'binary/octet-stream') {
+      return 'document';
+    }
+
+    final extension = fileName.contains('.') ? fileName.split('.').last.toLowerCase() : '';
+    switch (extension) {
+      case 'jpg':
+      case 'jpeg':
+      case 'png':
+      case 'gif':
+      case 'webp':
+      case 'bmp':
+      case 'heic':
+        return 'image';
+      case 'mp4':
+      case 'mov':
+      case 'mkv':
+      case 'webm':
+      case 'avi':
+        return 'video';
+      case 'mp3':
+      case 'wav':
+      case 'm4a':
+      case 'aac':
+      case 'ogg':
+      case 'flac':
+        return 'audio';
+      default:
+        return 'document';
+    }
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,

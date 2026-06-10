@@ -107,6 +107,11 @@ class SocketService {
     _socket?.on('message:new', callback);
   }
 
+  /// РЎР»СѓС€Р°РµС‚ РѕР±РЅРѕРІР»РµРЅРёСЏ СЃРѕРѕР±С‰РµРЅРёР№
+  void onMessageUpdated(void Function(dynamic data) callback) {
+    _socket?.on('message:updated', callback);
+  }
+
   /// Слушает обновления статуса сообщения (DELIVERED / READ)
   void onMessageStatus(void Function(dynamic data) callback) {
     _socket?.on('message:status', callback);

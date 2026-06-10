@@ -26,6 +26,7 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
   final _audioRecorder = AudioRecorder();
   bool _isRecording = false;
   String? _recordingPath;
+  bool _isSendingText = false;
 
   @override
   void initState() {
@@ -64,17 +65,26 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
     });
   }
 
-  void _sendTextMessage() {
+  Future<void> _sendTextMessage() async {
+    if (_isSendingText) return;
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
+    _isSendingText = true;
     final chat = context.read<ChatProvider>();
     final auth = context.read<AuthProvider>();
-    if (auth.currentUser == null) return;
+    if (auth.currentUser == null) {
+      _isSendingText = false;
+      return;
+    }
 
-    chat.sendMessage(text, null);
-    _messageController.clear();
-    _scrollToBottom();
+    try {
+      await chat.sendMessage(text, null);
+      _messageController.clear();
+      _scrollToBottom();
+    } finally {
+      _isSendingText = false;
+    }
   }
 
   Future<void> _pickImage() async {
@@ -173,9 +183,9 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
     if (auth.currentUser == null) return;
 
     try {
-      final fileUrl = await chat.uploadFile(filePath);
-      if (fileUrl != null) {
-        await chat.sendMessage('', null, attachments: [fileUrl]);
+      final fileKey = await chat.uploadFile(filePath);
+      if (fileKey != null) {
+        await chat.sendMessage('', null, fileKeys: [fileKey]);
         _scrollToBottom();
       }
     } catch (e) {
@@ -371,6 +381,14 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
                                 message: message,
                                 isAdmin: false,
                                 isMine: isMine,
+                                onEdit: isMine
+                                    ? (newText) async {
+                                        await context.read<ChatProvider>().updateMessage(
+                                          message.id,
+                                          newText,
+                                        );
+                                      }
+                                    : null,
                               );
                             },
                           ),

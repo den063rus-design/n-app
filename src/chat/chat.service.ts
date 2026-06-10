@@ -7,15 +7,18 @@ import {
 import { MessageStatus, Role, UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatGateway } from './chat.gateway';
+import { FilesService } from '../files/files.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { ChatHistoryQueryDto } from './dto/chat-history-query.dto';
+import { UpdateMessageDto } from './dto/update-message.dto';
 
 @Injectable()
 export class ChatService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly chatGateway: ChatGateway,
+    private readonly filesService: FilesService,
     private readonly notificationsService: NotificationsService,
   ) {}
 
@@ -65,7 +68,7 @@ export class ChatService {
               attachments: {
                 create: dto.fileKeys.map((key) => ({
                   key,
-                  url: `${process.env.MINIO_ENDPOINT || 'http://localhost:9000'}:${process.env.MINIO_PORT || '9000'}/${process.env.MINIO_BUCKET || 'n-app-files'}/${key}`,
+                  url: this.filesService.getFileUrl(key),
                   fileName: key,
                   fileType: 'application/octet-stream',
                   fileSize: 0,
@@ -184,6 +187,40 @@ export class ChatService {
       message: { senderId: message.senderId, receiverId: message.receiverId },
       response: { message: 'Сообщение удалено' },
     };
+  }
+
+  async updateMessage(
+    messageId: number,
+    dto: UpdateMessageDto,
+    currentUserId: number,
+    currentUserRole: string,
+  ) {
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+    });
+
+    if (!message) {
+      throw new NotFoundException('РЎРѕРѕР±С‰РµРЅРёРµ РЅРµ РЅР°Р№РґРµРЅРѕ');
+    }
+
+    if (currentUserRole !== 'ADMIN' && message.senderId !== currentUserId) {
+      throw new ForbiddenException('РўРѕР»СЊРєРѕ Р°РІС‚РѕСЂ СЃРѕРѕР±С‰РµРЅРёСЏ РёР»Рё Р°РґРјРёРЅ РјРѕР¶РµС‚ СЂРµРґР°РєС‚РёСЂРѕРІР°С‚СЊ СЃРѕРѕР±С‰РµРЅРёРµ');
+    }
+
+    const updated = await this.prisma.message.update({
+      where: { id: messageId },
+      data: { text: dto.text },
+      select: this.messageSelect,
+    });
+
+    this.chatGateway.sendToChatParticipants(
+      updated.senderId,
+      updated.receiverId,
+      'message:updated',
+      updated,
+    );
+
+    return updated;
   }
 
   async markAsDelivered(messageId: number) {

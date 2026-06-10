@@ -50,6 +50,7 @@ model User {
   role           Role          @default(USER)
   status         UserStatus    @default(ACTIVE)
   notes          String?
+  avatarUrl      String?
   isOnline       Boolean       @default(false)
   lastSeenAt     DateTime?
   createdAt      DateTime      @default(now())

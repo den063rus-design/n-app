@@ -38,6 +38,15 @@ class ChatProvider extends ChangeNotifier {
       }
     });
 
+    _socketService.onMessageUpdated((data) {
+      try {
+        final updated = Message.fromJson(data as Map<String, dynamic>);
+        _updateMessage(updated);
+      } catch (e) {
+        print('Error parsing updated message: $e');
+      }
+    });
+
     // Обновление статуса (универсальное событие)
     _socketService.onMessageStatus((data) {
       try {
@@ -229,25 +238,41 @@ class ChatProvider extends ChangeNotifier {
 
   /// Отправляет текстовое сообщение через HTTP POST /chat
   /// [receiverId] — ID получателя (null для USER, т.к. backend сам найдёт админа)
-  /// [attachments] — список URL загруженных файлов
-  Future<void> sendMessage(String text, int? receiverId, {List<String>? attachments}) async {
-    if (text.trim().isEmpty && (attachments == null || attachments.isEmpty)) return;
+  /// [fileKeys] — список MinIO ключей загруженных файлов
+  Future<void> sendMessage(String text, int? receiverId, {List<String>? fileKeys}) async {
+    if (text.trim().isEmpty && (fileKeys == null || fileKeys.isEmpty)) return;
 
     try {
       final data = <String, dynamic>{'text': text};
       if (receiverId != null) {
-        data['receiverId'] = receiverId;
+        data['userId'] = receiverId;
       }
-      if (attachments != null && attachments.isNotEmpty) {
-        data['attachments'] = attachments;
+      if (fileKeys != null && fileKeys.isNotEmpty) {
+        data['fileKeys'] = fileKeys;
       }
       await _apiService.post(
         ApiConfig.chat,
         data: data,
       );
     } catch (e) {
-      _error = 'Ошибка отправки сообщения';
+      _error = 'Ошибка отправки сообщения: $e';
       notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<void> updateMessage(int messageId, String text) async {
+    try {
+      final response = await _apiService.patch(
+        '${ApiConfig.chat}/message/$messageId',
+        data: {'text': text},
+      );
+      final updated = Message.fromJson(response as Map<String, dynamic>);
+      _updateMessage(updated);
+    } catch (e) {
+      _error = 'Ошибка редактирования сообщения: $e';
+      notifyListeners();
+      rethrow;
     }
   }
 
@@ -259,9 +284,9 @@ class ChatProvider extends ChangeNotifier {
   /// Отправляет файловое сообщение
   Future<void> sendFileMessage(int userId, String filePath, String fileType) async {
     try {
-      final fileUrl = await uploadFile(filePath);
-      if (fileUrl != null) {
-        await sendMessage('', userId, attachments: [fileUrl]);
+      final fileKey = await uploadFile(filePath);
+      if (fileKey != null) {
+        await sendMessage('', userId, fileKeys: [fileKey]);
       }
     } catch (e) {
       _error = 'Ошибка отправки файла';
@@ -272,9 +297,9 @@ class ChatProvider extends ChangeNotifier {
   /// Отправляет голосовое сообщение
   Future<void> sendVoiceMessage(int userId, String audioPath) async {
     try {
-      final fileUrl = await uploadFile(audioPath);
-      if (fileUrl != null) {
-        await sendMessage('', userId, attachments: [fileUrl]);
+      final fileKey = await uploadFile(audioPath);
+      if (fileKey != null) {
+        await sendMessage('', userId, fileKeys: [fileKey]);
       }
     } catch (e) {
       _error = 'Ошибка отправки голосового сообщения';
@@ -282,13 +307,13 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  /// Загружает файл на сервер и возвращает URL
+  /// Загружает файл на сервер и возвращает ключ файла (key)
   Future<String?> uploadFile(String filePath) async {
     try {
-      final url = await _apiService.uploadFile(filePath);
-      return url;
+      final result = await _apiService.uploadFile(filePath);
+      return result;
     } catch (e) {
-      _error = 'Ошибка загрузки файла';
+      _error = 'Ошибка загрузки файла: $e';
       notifyListeners();
       return null;
     }

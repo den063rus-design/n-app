@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  Patch,
   Get,
   Param,
   ParseIntPipe,
@@ -16,6 +17,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { ChatHistoryQueryDto } from './dto/chat-history-query.dto';
+import { UpdateMessageDto } from './dto/update-message.dto';
 import { ChatService } from './chat.service';
 import { ChatGateway } from './chat.gateway';
 
@@ -100,6 +102,16 @@ export class ChatController {
     );
 
     return result.response;
+  }
+
+  @Patch('message/:messageId')
+  @ApiOperation({ summary: 'Редактировать сообщение' })
+  async updateMessage(
+    @Param('messageId', ParseIntPipe) messageId: number,
+    @Body() dto: UpdateMessageDto,
+    @CurrentUser() user: { id: number; role: string },
+  ) {
+    return this.chatService.updateMessage(messageId, dto, user.id, user.role);
   }
 
   @Delete(':id')

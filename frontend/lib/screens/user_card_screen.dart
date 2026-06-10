@@ -228,12 +228,18 @@ class _UserCardScreenState extends State<UserCardScreen> {
                       children: [
                         CircleAvatar(
                           radius: 32,
-                          child: Text(
-                            _user.fullName.isNotEmpty
-                                ? _user.fullName[0].toUpperCase()
-                                : '?',
-                            style: const TextStyle(fontSize: 24),
-                          ),
+                          backgroundImage:
+                              _user.avatarUrl != null && _user.avatarUrl!.isNotEmpty
+                                  ? NetworkImage(_user.avatarUrl!)
+                                  : null,
+                          child: _user.avatarUrl == null || _user.avatarUrl!.isEmpty
+                              ? Text(
+                                  _user.fullName.isNotEmpty
+                                      ? _user.fullName[0].toUpperCase()
+                                      : '?',
+                                  style: const TextStyle(fontSize: 24),
+                                )
+                              : null,
                         ),
                         const SizedBox(width: 16),
                         Expanded(
@@ -356,7 +362,7 @@ class _UserCardScreenState extends State<UserCardScreen> {
                               _user.isBlocked ? Colors.green : Colors.red,
                           foregroundColor: Colors.white,
                         ),
-                        onPressed: _user.isBlocked ? _unblockUser : _blockUser,
+                        onPressed: null,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -431,6 +437,42 @@ class _UserCardScreenState extends State<UserCardScreen> {
                       style: TextStyle(
                         color: Colors.grey[600],
                         fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Блокировка',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        icon: Icon(
+                          _user.isBlocked ? Icons.lock_open : Icons.lock,
+                        ),
+                        label: Text(
+                          _user.isBlocked ? 'Разблокировать' : 'Заблокировать',
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor:
+                              _user.isBlocked ? Colors.green : Colors.red,
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: _user.isBlocked ? _unblockUser : _blockUser,
                       ),
                     ),
                   ],

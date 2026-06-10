@@ -153,7 +153,7 @@ class ApiService {
   }
 
   Future<List<User>> getArchivedUsers() async {
-    final response = await get('/users/archived');
+    final response = await get('/users/archive');
     return (response as List).map((u) => User.fromJson(u as Map<String, dynamic>)).toList();
   }
 
@@ -176,15 +176,36 @@ class ApiService {
   Future<String> uploadFile(String filePath) async {
     final uri = Uri.parse('$_baseUrl/files/upload');
     final request = http.MultipartRequest('POST', uri);
-    request.headers.addAll(await _headers);
+    final headers = await _headers;
+    headers.remove('Content-Type');
+    request.headers.addAll(headers);
     request.files.add(await http.MultipartFile.fromPath('file', filePath));
-    final response = await request.send();
-    final responseBody = await response.stream.bytesToString();
-    final fileUrl = jsonDecode(responseBody)['url'] as String?;
-    if (fileUrl == null) {
-      throw Exception('Сервер не вернул URL файла');
+    try {
+      final response = await request.send().timeout(const Duration(seconds: 30));
+      final responseBody = await response.stream.bytesToString();
+      
+      if (response.statusCode != 201 && response.statusCode != 200) {
+        String errorMsg;
+        try {
+          final errorDecoded = jsonDecode(responseBody) as Map<String, dynamic>;
+          errorMsg = errorDecoded['message'] as String? ?? errorDecoded['error'] as String? ?? 'HTTP ${response.statusCode}';
+        } catch (_) {
+          errorMsg = 'HTTP ${response.statusCode}: $responseBody';
+        }
+        throw Exception('Ошибка загрузки файла: $errorMsg');
+      }
+      
+      final decoded = jsonDecode(responseBody) as Map<String, dynamic>;
+      final fileKey = decoded['key'] as String?;
+      if (fileKey == null) {
+        throw Exception('Сервер не вернул ключ файла. Ответ: $responseBody');
+      }
+      return fileKey;
+    } on http.ClientException catch (e) {
+      throw Exception('Ошибка сети при загрузке файла: ${e.message}');
+    } catch (e) {
+      rethrow;
     }
-    return fileUrl;
   }
 
   // =================================================================

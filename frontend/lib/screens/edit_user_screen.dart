@@ -16,6 +16,7 @@ class _EditUserScreenState extends State<EditUserScreen> {
   late final TextEditingController _fullNameController;
   late final TextEditingController _ageController;
   late final TextEditingController _notesController;
+  late final TextEditingController _avatarController;
   final _apiService = ApiService();
   bool _isLoading = false;
 
@@ -29,6 +30,9 @@ class _EditUserScreenState extends State<EditUserScreen> {
     _notesController = TextEditingController(
       text: widget.user.notes ?? '',
     );
+    _avatarController = TextEditingController(
+      text: widget.user.avatarUrl ?? '',
+    );
   }
 
   @override
@@ -36,6 +40,7 @@ class _EditUserScreenState extends State<EditUserScreen> {
     _fullNameController.dispose();
     _ageController.dispose();
     _notesController.dispose();
+    _avatarController.dispose();
     super.dispose();
   }
 
@@ -57,6 +62,7 @@ class _EditUserScreenState extends State<EditUserScreen> {
       }
 
       data['notes'] = _notesController.text.trim();
+      data['avatarUrl'] = _avatarController.text.trim();
 
       await _apiService.updateUser(widget.user.id, data);
 
@@ -127,6 +133,15 @@ class _EditUserScreenState extends State<EditUserScreen> {
                 maxLines: 3,
               ),
               const SizedBox(height: 24),
+              TextFormField(
+                controller: _avatarController,
+                decoration: const InputDecoration(
+                  labelText: 'URL аватара',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.image),
+                ),
+              ),
+              const SizedBox(height: 24),
               ElevatedButton(
                 onPressed: _isLoading ? null : _save,
                 style: ElevatedButton.styleFrom(
@@ -150,3 +165,5 @@ class _EditUserScreenState extends State<EditUserScreen> {
     );
   }
 }
+
+
