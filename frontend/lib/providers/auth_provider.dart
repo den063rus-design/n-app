@@ -58,7 +58,7 @@ class AuthProvider extends ChangeNotifier {
       _currentUser = User.fromJson(userData);
 
       // Подключаем Socket.IO
-      final token = data['access_token'] as String;
+      final token = data['accessToken'] as String;
       _socketService.connect(token);
       // Heartbeat запускается автоматически в onConnect внутри SocketService
 
@@ -67,7 +67,17 @@ class AuthProvider extends ChangeNotifier {
       return true;
     } catch (e) {
       _isLoading = false;
-      _error = 'Ошибка входа. Проверьте логин и пароль.';
+      // Показываем реальную ошибку от сервера или сети
+      final errorMsg = e.toString();
+      if (errorMsg.contains('Unauthorized') || errorMsg.contains('401')) {
+        _error = 'Неверный логин или пароль';
+      } else if (errorMsg.contains('SocketException') || errorMsg.contains('Connection refused') || errorMsg.contains('connectTimeout')) {
+        _error = 'Нет соединения с сервером. Проверьте подключение к интернету.';
+      } else if (errorMsg.contains('HandshakeException') || errorMsg.contains('XMLHttpRequest')) {
+        _error = 'Ошибка соединения. Возможно, сервер недоступен.';
+      } else {
+        _error = 'Ошибка: ${errorMsg.length > 100 ? errorMsg.substring(0, 100) : errorMsg}';
+      }
       notifyListeners();
       return false;
     }

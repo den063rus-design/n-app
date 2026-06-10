@@ -18,7 +18,7 @@ class AuthService {
       );
 
       final data = response.data as Map<String, dynamic>;
-      final token = data['access_token'] as String;
+      final token = data['accessToken'] as String;
 
       await setToken(token);
 

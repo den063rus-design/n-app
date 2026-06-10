@@ -271,7 +271,7 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
+              color: color.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(icon, color: color, size: 28),
@@ -424,7 +424,7 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
                   color: Colors.white,
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.grey.withOpacity(0.3),
+                      color: Colors.grey.withValues(alpha: 0.3),
                       blurRadius: 4,
                       offset: const Offset(0, -2),
                     ),

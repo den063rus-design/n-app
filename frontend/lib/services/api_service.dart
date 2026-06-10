@@ -4,7 +4,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../models/user.dart';
-import '../models/message.dart';
 import '../models/notification.dart';
 import '../models/call.dart';
 
