@@ -57,6 +57,30 @@ fi
 
 cd "$FRONTEND_DIR"
 
+# Проверка наличия Android-платформы
+if [ ! -d "android" ]; then
+    echo ""
+    echo "[!] Android-платформа не найдена. Генерация через flutter create..."
+    echo ""
+    
+    # Создаём временный проект для генерации android/
+    TEMP_DIR=$(mktemp -d)
+    cd "$TEMP_DIR"
+    
+    flutter create --org com.napp --project-name n_app_frontend_temp .
+    
+    # Копируем android/ в наш проект
+    cp -r "$TEMP_DIR/android" "$FRONTEND_DIR/"
+    cp -r "$TEMP_DIR/ios" "$FRONTEND_DIR/" 2>/dev/null || true
+    
+    # Очищаем временный проект
+    rm -rf "$TEMP_DIR"
+    
+    cd "$FRONTEND_DIR"
+    echo "  Android-платформа создана!"
+    echo ""
+fi
+
 # 1. Очистка
 echo "[1/4] Очистка проекта..."
 flutter clean
