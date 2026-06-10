@@ -49,6 +49,7 @@ model Message {
   text       String
   status     MessageStatus @default(SENT)
   createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
 
   sender     User          @relation("SentMessages", fields: [senderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   receiver   User          @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Restrict, onUpdate: Cascade)

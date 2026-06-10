@@ -19,6 +19,7 @@ export class ChatService {
     text: true,
     status: true,
     createdAt: true,
+    updatedAt: true,
   } as const;
 
   async createMessage(senderId: number, senderRole: Role, dto: CreateMessageDto) {
@@ -64,6 +65,21 @@ export class ChatService {
         OR: [{ senderId: userId }, { receiverId: userId }],
       },
       orderBy: { createdAt: 'asc' },
+      select: this.messageSelect,
+    });
+  }
+
+  async deleteMessage(messageId: number) {
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+    });
+
+    if (!message) {
+      throw new NotFoundException('Сообщение не найдено');
+    }
+
+    return this.prisma.message.delete({
+      where: { id: messageId },
       select: this.messageSelect,
     });
   }

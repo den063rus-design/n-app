@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -41,5 +50,13 @@ export class ChatController {
   @ApiOperation({ summary: 'Получить сообщения пользователя' })
   async findByUser(@Param('userId', ParseIntPipe) userId: number) {
     return this.chatService.findByUser(userId);
+  }
+
+  @Delete(':id')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Удалить сообщение (только администратор)' })
+  async delete(@Param('id', ParseIntPipe) id: number) {
+    return this.chatService.deleteMessage(id);
   }
 }
