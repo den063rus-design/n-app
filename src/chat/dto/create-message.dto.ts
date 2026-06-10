@@ -1,13 +1,16 @@
-import { IsString, IsInt, MinLength } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import { IsInt, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreateMessageDto {
-  @ApiProperty({ example: 'Привет, администратор!' })
+  @ApiProperty({ example: 'Привет, нужна помощь' })
   @IsString()
   @MinLength(1)
   text!: string;
 
-  @ApiProperty({ example: 1 })
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  @Type(() => Number)
   @IsInt()
-  userId!: number;
+  receiverId?: number;
 }

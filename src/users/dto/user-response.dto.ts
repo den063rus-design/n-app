@@ -1,20 +1,24 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Role, UserStatus } from '@prisma/client';
 
 export class UserResponseDto {
   @ApiProperty()
   id!: number;
 
   @ApiProperty()
-  email!: string;
+  fio!: string;
 
   @ApiProperty()
-  name!: string;
+  age!: number;
 
   @ApiProperty()
-  role!: string;
+  login!: string;
 
-  @ApiProperty()
-  isActive!: boolean;
+  @ApiProperty({ enum: Role })
+  role!: Role;
+
+  @ApiProperty({ enum: UserStatus })
+  status!: UserStatus;
 
   @ApiProperty()
   createdAt!: Date;

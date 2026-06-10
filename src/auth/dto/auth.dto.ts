@@ -1,15 +1,12 @@
-import { IsEmail, IsString, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { Role, UserStatus } from '@prisma/client';
+import { IsString, MinLength } from 'class-validator';
 
-export class RegisterDto {
-  @ApiProperty({ example: 'user@example.com' })
-  @IsEmail()
-  email!: string;
-
-  @ApiProperty({ example: 'John Doe' })
+export class LoginDto {
+  @ApiProperty({ example: 'admin' })
   @IsString()
-  @MinLength(2)
-  name!: string;
+  @MinLength(3)
+  login!: string;
 
   @ApiProperty({ example: 'password123' })
   @IsString()
@@ -17,12 +14,26 @@ export class RegisterDto {
   password!: string;
 }
 
-export class LoginDto {
-  @ApiProperty({ example: 'user@example.com' })
-  @IsEmail()
-  email!: string;
+export class AuthResponseDto {
+  @ApiProperty({ example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...' })
+  accessToken!: string;
 
-  @ApiProperty({ example: 'password123' })
-  @IsString()
-  password!: string;
+  @ApiProperty({
+    example: {
+      id: 1,
+      fio: 'Иван Иванов',
+      age: 28,
+      login: 'admin',
+      role: 'ADMIN',
+      status: 'ACTIVE',
+    },
+  })
+  user!: {
+    id: number;
+    fio: string;
+    age: number;
+    login: string;
+    role: Role;
+    status: UserStatus;
+  };
 }

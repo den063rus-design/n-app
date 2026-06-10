@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { MessageStatus, Role, UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateMessageDto } from './dto/create-message.dto';
 
@@ -8,57 +14,65 @@ export class ChatService {
 
   private readonly messageSelect = {
     id: true,
+    senderId: true,
+    receiverId: true,
     text: true,
-    userId: true,
-    isDeleted: true,
+    status: true,
     createdAt: true,
-    updatedAt: true,
   } as const;
 
-  async create(dto: CreateMessageDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: dto.userId },
+  async createMessage(senderId: number, senderRole: Role, dto: CreateMessageDto) {
+    const sender = await this.prisma.user.findUnique({
+      where: { id: senderId },
     });
 
-    if (!user) {
-      throw new NotFoundException('Пользователь не найден');
+    if (!sender || sender.status !== UserStatus.ACTIVE) {
+      throw new ForbiddenException('Пользователь недоступен');
     }
 
-    return this.prisma.message.create({
+    const receiver = await this.resolveReceiver(senderRole, dto.receiverId);
+
+    if (sender.id === receiver.id) {
+      throw new BadRequestException('Нельзя отправить сообщение самому себе');
+    }
+
+    this.assertAdminUserChat(sender.role, receiver.role);
+
+    const message = await this.prisma.message.create({
       data: {
+        senderId: sender.id,
+        receiverId: receiver.id,
         text: dto.text,
-        userId: dto.userId,
+        status: MessageStatus.SENT,
       },
+      select: this.messageSelect,
+    });
+
+    return message;
+  }
+
+  async findAll() {
+    return this.prisma.message.findMany({
+      orderBy: { createdAt: 'asc' },
       select: this.messageSelect,
     });
   }
 
   async findByUser(userId: number) {
     return this.prisma.message.findMany({
-      where: { userId, isDeleted: false },
+      where: {
+        OR: [{ senderId: userId }, { receiverId: userId }],
+      },
       orderBy: { createdAt: 'asc' },
       select: this.messageSelect,
     });
   }
 
-  async findAll() {
-    return this.prisma.message.findMany({
-      where: { isDeleted: false },
-      orderBy: { createdAt: 'asc' },
-      select: {
-        ...this.messageSelect,
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
-    });
+  async markDelivered(messageId: number) {
+    return this.updateStatus(messageId, MessageStatus.DELIVERED);
   }
 
-  async remove(messageId: number, userId: number, userRole: string) {
+  async markRead(messageId: number, readerId: number) {
     const message = await this.prisma.message.findUnique({
       where: { id: messageId },
     });
@@ -67,16 +81,101 @@ export class ChatService {
       throw new NotFoundException('Сообщение не найдено');
     }
 
-    // Только администратор может удалять сообщения
-    if (userRole !== 'admin') {
-      throw new ForbiddenException('Только администратор может удалять сообщения');
+    if (message.receiverId !== readerId) {
+      throw new ForbiddenException('Только получатель может отметить сообщение прочитанным');
     }
 
-    // Soft delete — помечаем как удалённое
+    return this.updateStatus(messageId, MessageStatus.READ);
+  }
+
+  async getMessageWithParticipants(messageId: number) {
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      select: {
+        ...this.messageSelect,
+        sender: {
+          select: {
+            id: true,
+            login: true,
+            role: true,
+          },
+        },
+        receiver: {
+          select: {
+            id: true,
+            login: true,
+            role: true,
+          },
+        },
+      },
+    });
+
+    if (!message) {
+      throw new NotFoundException('Сообщение не найдено');
+    }
+
+    return message;
+  }
+
+  private async updateStatus(messageId: number, status: MessageStatus) {
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+    });
+
+    if (!message) {
+      throw new NotFoundException('Сообщение не найдено');
+    }
+
     return this.prisma.message.update({
       where: { id: messageId },
-      data: { isDeleted: true },
+      data: { status },
       select: this.messageSelect,
     });
+  }
+
+  private async resolveReceiver(senderRole: Role, receiverId?: number) {
+    if (senderRole === Role.ADMIN) {
+      if (!receiverId) {
+        throw new BadRequestException('Для администратора необходимо указать получателя');
+      }
+
+      const receiver = await this.prisma.user.findUnique({
+        where: { id: receiverId },
+      });
+
+      if (!receiver) {
+        throw new NotFoundException('Получатель не найден');
+      }
+
+      if (receiver.status !== UserStatus.ACTIVE) {
+        throw new BadRequestException('Получатель недоступен');
+      }
+
+      return receiver;
+    }
+
+    const admin = await this.prisma.user.findFirst({
+      where: {
+        role: Role.ADMIN,
+        status: UserStatus.ACTIVE,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (!admin) {
+      throw new NotFoundException('Активный администратор не найден');
+    }
+
+    return admin;
+  }
+
+  private assertAdminUserChat(senderRole: Role, receiverRole: Role) {
+    const validPair =
+      (senderRole === Role.ADMIN && receiverRole === Role.USER) ||
+      (senderRole === Role.USER && receiverRole === Role.ADMIN);
+
+    if (!validPair) {
+      throw new BadRequestException('Чат доступен только между пользователем и администратором');
+    }
   }
 }

@@ -1,8 +1,9 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
-import { LoginDto, RegisterDto } from './dto/auth.dto';
+import { AuthResponseDto, LoginDto } from './dto/auth.dto';
 
 @Injectable()
 export class AuthService {
@@ -11,50 +12,40 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
-  async register(dto: RegisterDto) {
-    const hashedPassword = await bcrypt.hash(dto.password, 10);
-
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        name: dto.name,
-        password: hashedPassword,
-        role: 'user',
-      },
-    });
-
-    const { password, ...result } = user;
-    return result;
-  }
-
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto): Promise<AuthResponseDto> {
     const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+      where: { login: dto.login },
     });
 
     if (!user) {
-      throw new UnauthorizedException('Неверный email или пароль');
+      throw new UnauthorizedException('Неверный логин или пароль');
     }
 
-    const isPasswordValid = await bcrypt.compare(dto.password, user.password);
+    if (user.status === UserStatus.BLOCKED || user.status === UserStatus.ARCHIVED) {
+      throw new UnauthorizedException('Пользователь заблокирован или архивирован');
+    }
+
+    const isPasswordValid = await bcrypt.compare(dto.password, user.passwordHash);
 
     if (!isPasswordValid) {
-      throw new UnauthorizedException('Неверный email или пароль');
+      throw new UnauthorizedException('Неверный логин или пароль');
     }
 
-    if (!user.isActive) {
-      throw new UnauthorizedException('Пользователь заблокирован');
-    }
-
-    const payload = { sub: user.id, email: user.email, role: user.role };
+    const payload = {
+      sub: user.id,
+      login: user.login,
+      role: user.role,
+    };
 
     return {
-      access_token: this.jwtService.sign(payload),
+      accessToken: this.jwtService.sign(payload),
       user: {
         id: user.id,
-        email: user.email,
-        name: user.name,
+        fio: user.fio,
+        age: user.age,
+        login: user.login,
         role: user.role,
+        status: user.status,
       },
     };
   }
@@ -64,11 +55,17 @@ export class AuthService {
       where: { id: userId },
     });
 
-    if (!user || !user.isActive) {
+    if (!user || user.status !== UserStatus.ACTIVE) {
       return null;
     }
 
-    const { password, ...result } = user;
-    return result;
+    return {
+      id: user.id,
+      fio: user.fio,
+      age: user.age,
+      login: user.login,
+      role: user.role,
+      status: user.status,
+    };
   }
 }

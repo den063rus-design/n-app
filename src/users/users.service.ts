@@ -1,11 +1,9 @@
-import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
-} from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { Role, UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 
 @Injectable()
 export class UsersService {
@@ -13,32 +11,34 @@ export class UsersService {
 
   private readonly userSelect = {
     id: true,
-    email: true,
-    name: true,
+    fio: true,
+    age: true,
+    login: true,
     role: true,
-    isActive: true,
+    status: true,
     createdAt: true,
     updatedAt: true,
   } as const;
 
   async create(dto: CreateUserDto) {
     const existing = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+      where: { login: dto.login },
     });
 
     if (existing) {
-      throw new ConflictException('Пользователь с таким email уже существует');
+      throw new ConflictException('Пользователь с таким логином уже существует');
     }
 
-    const hashedPassword = await bcrypt.hash(dto.password, 10);
+    const passwordHash = await bcrypt.hash(dto.password, 10);
 
     return this.prisma.user.create({
       data: {
-        email: dto.email,
-        name: dto.name,
-        password: hashedPassword,
-        role: 'user',
-        isActive: dto.isActive ?? true,
+        fio: dto.fio,
+        age: dto.age,
+        login: dto.login,
+        passwordHash,
+        role: dto.role ?? Role.USER,
+        status: UserStatus.ACTIVE,
       },
       select: this.userSelect,
     });
@@ -64,20 +64,39 @@ export class UsersService {
     return user;
   }
 
-  async update(id: number, dto: Partial<CreateUserDto>) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
+  async update(id: number, dto: UpdateUserDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+    });
 
     if (!user) {
       throw new NotFoundException('Пользователь не найден');
     }
 
-    const data: Record<string, unknown> = {};
+    if (dto.login && dto.login !== user.login) {
+      const existing = await this.prisma.user.findUnique({
+        where: { login: dto.login },
+      });
 
-    if (dto.email) data.email = dto.email;
-    if (dto.name) data.name = dto.name;
-    if (dto.isActive !== undefined) data.isActive = dto.isActive;
-    if (dto.password) {
-      data.password = await bcrypt.hash(dto.password, 10);
+      if (existing) {
+        throw new ConflictException('Пользователь с таким логином уже существует');
+      }
+    }
+
+    const data: {
+      fio?: string;
+      age?: number;
+      login?: string;
+      passwordHash?: string;
+      role?: Role;
+    } = {};
+
+    if (dto.fio !== undefined) data.fio = dto.fio;
+    if (dto.age !== undefined) data.age = dto.age;
+    if (dto.login !== undefined) data.login = dto.login;
+    if (dto.role !== undefined) data.role = dto.role;
+    if (dto.password !== undefined) {
+      data.passwordHash = await bcrypt.hash(dto.password, 10);
     }
 
     return this.prisma.user.update({
@@ -87,15 +106,35 @@ export class UsersService {
     });
   }
 
-  async remove(id: number) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
+  async block(id: number) {
+    return this.setStatus(id, UserStatus.BLOCKED);
+  }
+
+  async unblock(id: number) {
+    return this.setStatus(id, UserStatus.ACTIVE);
+  }
+
+  async archive(id: number) {
+    return this.setStatus(id, UserStatus.ARCHIVED);
+  }
+
+  async restore(id: number) {
+    return this.setStatus(id, UserStatus.ACTIVE);
+  }
+
+  private async setStatus(id: number, status: UserStatus) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+    });
 
     if (!user) {
       throw new NotFoundException('Пользователь не найден');
     }
 
-    await this.prisma.user.delete({ where: { id } });
-
-    return { message: 'Пользователь удалён' };
+    return this.prisma.user.update({
+      where: { id },
+      data: { status },
+      select: this.userSelect,
+    });
   }
 }

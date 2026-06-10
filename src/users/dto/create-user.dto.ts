@@ -1,23 +1,32 @@
-import { IsEmail, IsString, MinLength, IsOptional, IsBoolean } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Role } from '@prisma/client';
+import { Type } from 'class-transformer';
+import { IsEnum, IsInt, IsOptional, IsString, Min, MinLength } from 'class-validator';
 
 export class CreateUserDto {
-  @ApiProperty({ example: 'user@example.com' })
-  @IsEmail()
-  email!: string;
-
-  @ApiProperty({ example: 'John Doe' })
+  @ApiProperty({ example: 'Иван Иванов' })
   @IsString()
   @MinLength(2)
-  name!: string;
+  fio!: string;
+
+  @ApiProperty({ example: 28 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  age!: number;
+
+  @ApiProperty({ example: 'ivan.ivanov' })
+  @IsString()
+  @MinLength(3)
+  login!: string;
 
   @ApiProperty({ example: 'password123' })
   @IsString()
   @MinLength(6)
   password!: string;
 
-  @ApiPropertyOptional({ example: true })
+  @ApiPropertyOptional({ enum: Role, example: Role.USER })
   @IsOptional()
-  @IsBoolean()
-  isActive?: boolean;
+  @IsEnum(Role)
+  role?: Role;
 }
