@@ -199,7 +199,7 @@ pm2 stop n-app-backend
 
 ## 4. Сборка APK
 
-Сборка выполняется на машине с установленным Flutter SDK.
+Сборка может выполняться как на локальной машине, так и на сервере Debian с установленным Flutter SDK.
 
 ### 4.1. Настройка production-конфигурации
 
@@ -212,23 +212,103 @@ static const bool isProduction = true; // Меняем на true
 И укажите URL вашего сервера:
 
 ```dart
-static const String prodBaseUrl = 'https://ваш-сервер.ru';
-static const String prodWsUrl = 'wss://ваш-сервер.ru';
+static const String prodBaseUrl = 'http://95.170.111.146:3000';
+static const String prodWsUrl = 'ws://95.170.111.146:3000';
 ```
 
-### 4.2. Запуск сборки
+> **Важно:** Если приложение и сервер на одной машине (тестирование), можно использовать `localhost:3000`. Для продакшена — укажите реальный IP или домен сервера.
+
+### 4.2. Установка Flutter SDK на Debian сервер
+
+Если вы собираете APK прямо на сервере, установите Flutter SDK:
+
+```bash
+# 1. Перейдите в /opt
+cd /opt
+
+# 2. Скачайте стабильную версию Flutter
+wget https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.27.1-stable.tar.xz
+
+# 3. Распакуйте
+tar -xf flutter_linux_3.27.1-stable.tar.xz
+
+# 4. Добавьте Flutter в PATH (временно)
+export PATH="/opt/flutter/bin:$PATH"
+
+# 5. Добавьте в ~/.bashrc (постоянно)
+echo 'export PATH="/opt/flutter/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+
+# 6. Проверьте версию
+flutter --version
+# Ожидаемый вывод: Flutter 3.27.1 • channel stable • ...
+```
+
+#### Решение проблем с Flutter на Debian
+
+**Проблема: `fatal: detected dubious ownership in repository at '/opt/flutter'`**
+
+```bash
+git config --global --add safe.directory /opt/flutter
+```
+
+**Проблема: `The current Flutter SDK version is 0.0.0-unknown`**
+
+Это означает, что Flutter SDK повреждён или установлен некорректно. Решение — переустановить:
+
+```bash
+cd /opt
+rm -rf flutter
+wget https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.27.1-stable.tar.xz
+tar -xf flutter_linux_3.27.1-stable.tar.xz
+export PATH="/opt/flutter/bin:$PATH"
+flutter --version
+```
+
+**Проблема: `Flutter requires Android SDK`**
+
+Установите Android SDK Command Line Tools:
+
+```bash
+# 1. Установите Java (требуется для Android SDK)
+sudo apt install openjdk-17-jdk -y
+
+# 2. Скачайте Android SDK command line tools
+cd /opt
+wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+unzip commandlinetools-linux-11076708_latest.zip -d android-sdk
+rm commandlinetools-linux-11076708_latest.zip
+
+# 3. Настройте переменные
+export ANDROID_HOME="/opt/android-sdk"
+export PATH="$ANDROID_HOME/cmdline-tools/bin:$PATH"
+echo 'export ANDROID_HOME="/opt/android-sdk"' >> ~/.bashrc
+echo 'export PATH="$ANDROID_HOME/cmdline-tools/bin:$PATH"' >> ~/.bashrc
+
+# 4. Примите лицензии
+yes | sdkmanager --sdk_root=$ANDROID_HOME --licenses
+
+# 5. Установите необходимые компоненты
+sdkmanager --sdk_root=$ANDROID_HOME "platforms;android-34" "build-tools;34.0.0"
+```
+
+### 4.3. Запуск сборки
+
+Используйте готовый скрипт:
 
 ```bash
 chmod +x deploy/build-apk.sh
 ./deploy/build-apk.sh
 ```
 
+Скрипт автоматически проверит наличие Flutter SDK и его версию.
+
 APK будет создан по пути:
 ```
 frontend/build/app/outputs/flutter-apk/app-release.apk
 ```
 
-### 4.3. Установка на устройство
+### 4.4. Установка на устройство
 
 **Через ADB (подключённое устройство):**
 ```bash
@@ -240,6 +320,16 @@ adb install frontend/build/app/outputs/flutter-apk/app-release.apk
 2. Откройте файл через файловый менеджер
 3. Разрешите установку из неизвестных источников
 4. Установите
+
+**С сервера на локальный ПК (через SCP):**
+```bash
+# На локальном ПК выполните:
+scp root@koha-server:/opt/n-app/frontend/build/app/outputs/flutter-apk/app-release.apk ./
+```
+
+**Через Telegram:** можно отправить APK самому себе в Telegram (работает как файл).
+
+**Через облако:** загрузите на Dropbox, Google Drive или Яндекс.Диск и скачайте на телефон.
 
 ---
 
