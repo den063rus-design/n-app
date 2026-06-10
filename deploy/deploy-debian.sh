@@ -59,9 +59,9 @@ elif [ ! -f .env ]; then
     fi
 fi
 
-# 5. Установить зависимости
+# 5. Установить зависимости (включая devDependencies — нужен @nestjs/cli для сборки)
 echo -e "\n${YELLOW}📦 Устанавливаю npm зависимости...${NC}"
-npm install --production
+npm install
 
 # 6. Собрать проект
 echo -e "\n${YELLOW}🔨 Собираю проект...${NC}"
