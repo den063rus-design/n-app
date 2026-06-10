@@ -29,4 +29,9 @@ export class CreateUserDto {
   @IsOptional()
   @IsEnum(Role)
   role?: Role;
+
+  @ApiPropertyOptional({ example: 'Заметка о пользователе' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }

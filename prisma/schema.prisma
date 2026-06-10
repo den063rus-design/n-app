@@ -7,6 +7,8 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ========== ENUMS ==========
+
 enum Role {
   ADMIN
   USER
@@ -24,6 +26,21 @@ enum MessageStatus {
   READ
 }
 
+enum CallStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  ENDED
+  MISSED
+}
+
+enum NotificationType {
+  MESSAGE
+  CALL
+}
+
+// ========== MODELS ==========
+
 model User {
   id             Int           @id @default(autoincrement())
   fio            String
@@ -32,10 +49,18 @@ model User {
   passwordHash   String
   role           Role          @default(USER)
   status         UserStatus    @default(ACTIVE)
+  notes          String?
+  isOnline       Boolean       @default(false)
+  lastSeenAt     DateTime?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
-  sentMessages   Message[]     @relation("SentMessages")
-  receivedMessages Message[]    @relation("ReceivedMessages")
+
+  sentMessages       Message[]     @relation("SentMessages")
+  receivedMessages   Message[]     @relation("ReceivedMessages")
+  callerCalls        Call[]        @relation("CallerCalls")
+  calleeCalls        Call[]        @relation("CalleeCalls")
+  notifications      Notification[]
+  sessions           UserSession[]
 
   @@index([role])
   @@index([status])
@@ -67,7 +92,60 @@ model Attachment {
   fileName  String
   fileType  String
   fileSize  Int
+  key       String   @unique
+  url       String
   createdAt DateTime @default(now())
 
   @@index([messageId])
+}
+
+// ========== NEW MODELS ==========
+
+model Call {
+  id        Int        @id @default(autoincrement())
+  callerId  Int
+  calleeId  Int
+  status    CallStatus @default(PENDING)
+  startedAt DateTime?
+  endedAt   DateTime?
+  createdAt DateTime   @default(now())
+
+  caller  User  @relation("CallerCalls", fields: [callerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  callee  User  @relation("CalleeCalls", fields: [calleeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([callerId])
+  @@index([calleeId])
+  @@index([callerId, calleeId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        Int              @id @default(autoincrement())
+  userId    Int
+  type      NotificationType
+  title     String
+  body      String?
+  data      Json?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+}
+
+model UserSession {
+  id        String   @id @default(cuid())
+  userId    Int
+  socketId  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([userId, isActive])
+  @@index([socketId])
 }

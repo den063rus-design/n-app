@@ -7,6 +7,7 @@ import {
 import { MessageStatus, Role, UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatGateway } from './chat.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { ChatHistoryQueryDto } from './dto/chat-history-query.dto';
 
@@ -15,6 +16,7 @@ export class ChatService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly chatGateway: ChatGateway,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   private readonly messageSelect = {
@@ -25,7 +27,14 @@ export class ChatService {
     status: true,
     createdAt: true,
     updatedAt: true,
-    attachments: true,
+    attachments: {
+      select: {
+        id: true,
+        url: true,
+        fileType: true,
+        fileName: true,
+      },
+    },
   } as const;
 
   async create(dto: CreateMessageDto, senderId: number) {
@@ -51,6 +60,19 @@ export class ChatService {
         receiverId: receiver.id,
         text: dto.text,
         status: MessageStatus.SENT,
+        ...(dto.fileKeys && dto.fileKeys.length > 0
+          ? {
+              attachments: {
+                create: dto.fileKeys.map((key) => ({
+                  key,
+                  url: `${process.env.MINIO_ENDPOINT || 'http://localhost:9000'}:${process.env.MINIO_PORT || '9000'}/${process.env.MINIO_BUCKET || 'n-app-files'}/${key}`,
+                  fileName: key,
+                  fileType: 'application/octet-stream',
+                  fileSize: 0,
+                })),
+              },
+            }
+          : {}),
       },
       select: this.messageSelect,
     });
@@ -62,6 +84,15 @@ export class ChatService {
       'message:new',
       message,
     );
+
+    // Создаём уведомление для получателя
+    this.notificationsService.createNotification({
+      userId: message.receiverId,
+      type: 'MESSAGE',
+      title: 'Новое сообщение',
+      body: message.text.substring(0, 100),
+      data: { messageId: message.id, senderId: message.senderId },
+    });
 
     return message;
   }

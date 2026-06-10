@@ -38,10 +38,10 @@ export class UsersController {
   @ApiOperation({
     summary: 'Получить список пользователей (с поиском, сортировкой, фильтрацией)',
   })
-  @ApiQuery({ name: 'search', required: false, description: 'Поиск по ФИО' })
-  @ApiQuery({ name: 'sort', required: false, enum: ['name', 'age', 'created'] })
-  @ApiQuery({ name: 'order', required: false, enum: ['asc', 'desc'] })
-  @ApiQuery({ name: 'status', required: false, enum: ['ACTIVE', 'BLOCKED', 'ARCHIVED'] })
+  @ApiQuery({ name: 'search', required: false, description: 'Поиск по fullName' })
+  @ApiQuery({ name: 'sortBy', required: false, enum: ['fullName', 'age', 'createdAt'] })
+  @ApiQuery({ name: 'sortOrder', required: false, enum: ['asc', 'desc'] })
+  @ApiQuery({ name: 'status', required: false, enum: ['ACTIVE', 'BLOCKED'] })
   async findAll(@Query() query: QueryUsersDto) {
     return this.usersService.findAll(query);
   }
@@ -62,6 +62,15 @@ export class UsersController {
   @ApiOperation({ summary: 'Обновить данные пользователя' })
   async update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
     return this.usersService.update(id, dto);
+  }
+
+  @Patch(':id/online')
+  @ApiOperation({ summary: 'Обновить онлайн-статус пользователя' })
+  async updateOnlineStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('isOnline') isOnline: boolean,
+  ) {
+    return this.usersService.updateOnlineStatus(id, isOnline);
   }
 
   @Patch(':id/block')

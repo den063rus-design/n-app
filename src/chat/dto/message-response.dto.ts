@@ -1,5 +1,19 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { MessageStatus } from '@prisma/client';
+
+class AttachmentDto {
+  @ApiProperty()
+  id!: number;
+
+  @ApiProperty()
+  url!: string;
+
+  @ApiProperty()
+  type!: string;
+
+  @ApiProperty()
+  fileName!: string;
+}
 
 export class MessageResponseDto {
   @ApiProperty()
@@ -19,4 +33,7 @@ export class MessageResponseDto {
 
   @ApiProperty()
   createdAt!: Date;
+
+  @ApiPropertyOptional({ type: [AttachmentDto] })
+  attachments?: AttachmentDto[];
 }

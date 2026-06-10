@@ -8,6 +8,12 @@ export class UpdateUserDto {
   @MinLength(2)
   fio?: string;
 
+  @ApiPropertyOptional({ example: 'Иван Петров' })
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  fullName?: string;
+
   @ApiPropertyOptional({ example: 25 })
   @IsOptional()
   @IsInt()
@@ -20,4 +26,9 @@ export class UpdateUserDto {
   @IsString()
   @MinLength(3)
   login?: string;
+
+  @ApiPropertyOptional({ example: 'Заметка о пользователе' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }

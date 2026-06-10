@@ -1,10 +1,12 @@
 import 'package:flutter/foundation.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
+import '../services/api_service.dart';
 import '../services/socket_service.dart';
 
 class AuthProvider extends ChangeNotifier {
   final AuthService _authService = AuthService();
+  final ApiService _apiService = ApiService();
   final SocketService _socketService = SocketService();
 
   User? _currentUser;
@@ -17,16 +19,30 @@ class AuthProvider extends ChangeNotifier {
   bool get isAuthenticated => _currentUser != null;
   bool get isAdmin => _currentUser?.isAdmin ?? false;
 
-  /// Проверяет, есть ли сохранённый токен
+  /// Проверяет, есть ли сохранённый токен, и загружает профиль
   Future<bool> checkAuth() async {
     final isLoggedIn = await _authService.isLoggedIn();
     if (isLoggedIn) {
       final token = await _authService.getToken();
       if (token != null) {
         _socketService.connect(token);
+        // Heartbeat запускается автоматически в onConnect внутри SocketService
+        // Загружаем полную информацию о пользователе
+        await getCurrentUser();
       }
     }
     return isLoggedIn;
+  }
+
+  /// Загружает профиль текущего пользователя с сервера
+  Future<void> getCurrentUser() async {
+    try {
+      final user = await _apiService.getUserById(0); // /users/me или /users/profile
+      _currentUser = user;
+      notifyListeners();
+    } catch (e) {
+      print('Failed to load current user: $e');
+    }
   }
 
   /// Выполняет вход
@@ -44,6 +60,7 @@ class AuthProvider extends ChangeNotifier {
       // Подключаем Socket.IO
       final token = data['access_token'] as String;
       _socketService.connect(token);
+      // Heartbeat запускается автоматически в onConnect внутри SocketService
 
       _isLoading = false;
       notifyListeners();
@@ -58,7 +75,7 @@ class AuthProvider extends ChangeNotifier {
 
   /// Выполняет выход
   Future<void> logout() async {
-    _socketService.disconnect();
+    _socketService.disconnect(); // stopHeartbeat вызывается внутри disconnect
     await _authService.logout();
     _currentUser = null;
     _error = null;

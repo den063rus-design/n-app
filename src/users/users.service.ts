@@ -23,6 +23,9 @@ export class UsersService {
     login: true,
     role: true,
     status: true,
+    notes: true,
+    isOnline: true,
+    lastSeenAt: true,
     createdAt: true,
     updatedAt: true,
   } as const;
@@ -46,41 +49,41 @@ export class UsersService {
         passwordHash,
         role: dto.role ?? 'USER',
         status: UserStatus.ACTIVE,
+        notes: dto.notes ?? null,
       },
       select: this.userSelect,
     });
   }
 
   async findAll(query: QueryUsersDto) {
-    const { search, sort, order, status } = query;
+    const { search, sortBy, sortOrder, status } = query;
 
     const where: Record<string, unknown> = {};
 
+    // Исключаем ARCHIVED из общего списка
+    where.status = status ?? { not: UserStatus.ARCHIVED };
+
     if (search) {
-      where.fio = {
+      where.fullName = {
         contains: search,
         mode: 'insensitive' as const,
       };
     }
 
-    if (status) {
-      where.status = status;
-    }
-
     let orderBy: Record<string, string> = { createdAt: 'asc' };
 
-    if (sort) {
+    if (sortBy) {
       const sortFieldMap: Record<string, string> = {
-        name: 'fio',
+        fullName: 'fullName',
         age: 'age',
-        created: 'createdAt',
+        createdAt: 'createdAt',
       };
 
       orderBy = {
-        [sortFieldMap[sort] || 'createdAt']: order || 'asc',
+        [sortFieldMap[sortBy] || 'createdAt']: sortOrder || 'asc',
       };
-    } else if (order) {
-      orderBy = { createdAt: order };
+    } else if (sortOrder) {
+      orderBy = { createdAt: sortOrder };
     }
 
     return this.prisma.user.findMany({
@@ -132,13 +135,17 @@ export class UsersService {
 
     const data: {
       fio?: string;
+      fullName?: string;
       age?: number;
       login?: string;
+      notes?: string;
     } = {};
 
     if (dto.fio !== undefined) data.fio = dto.fio;
+    if (dto.fullName !== undefined) data.fullName = dto.fullName;
     if (dto.age !== undefined) data.age = dto.age;
     if (dto.login !== undefined) data.login = dto.login;
+    if (dto.notes !== undefined) data.notes = dto.notes;
 
     return this.prisma.user.update({
       where: { id },
@@ -180,6 +187,13 @@ export class UsersService {
       where: { id },
       data,
       select: this.userSelect,
+    });
+  }
+
+  async updateOnlineStatus(userId: number, isOnline: boolean): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { isOnline, lastSeenAt: isOnline ? undefined : new Date() },
     });
   }
 

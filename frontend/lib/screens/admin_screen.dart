@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/user.dart';
-import '../models/message.dart';
 import '../providers/auth_provider.dart';
-import '../providers/chat_provider.dart';
-import '../services/api_service.dart';
-import '../config/api_config.dart';
+import '../providers/user_provider.dart';
+import '../providers/notification_provider.dart';
+import '../widgets/notification_badge.dart';
+import 'user_card_screen.dart';
+import 'create_user_screen.dart';
+import 'archive_screen.dart';
+import 'notifications_screen.dart';
 
 class AdminScreen extends StatefulWidget {
   const AdminScreen({super.key});
@@ -15,418 +18,27 @@ class AdminScreen extends StatefulWidget {
 }
 
 class _AdminScreenState extends State<AdminScreen> {
-  final _messageController = TextEditingController();
-  final _fioController = TextEditingController();
-  final _ageController = TextEditingController();
-  final _loginController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final ApiService _apiService = ApiService();
+  final _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<ChatProvider>().loadUsers();
+      context.read<UserProvider>().loadUsers();
     });
   }
 
   @override
   void dispose() {
-    _messageController.dispose();
-    _fioController.dispose();
-    _ageController.dispose();
-    _loginController.dispose();
-    _passwordController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
-  void _sendMessage(ChatProvider chatProvider, AuthProvider authProvider) {
-    final selectedUser = chatProvider.selectedUser;
-    if (selectedUser == null) return;
-
-    chatProvider.sendMessage(
-      _messageController.text,
-      selectedUser.id,
-    );
-    _messageController.clear();
-  }
-
-  Future<void> _createUser() async {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Создать пользователя'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: _fioController,
-                decoration: const InputDecoration(labelText: 'ФИО'),
-              ),
-              TextField(
-                controller: _ageController,
-                decoration: const InputDecoration(labelText: 'Возраст'),
-                keyboardType: TextInputType.number,
-              ),
-              TextField(
-                controller: _loginController,
-                decoration: const InputDecoration(labelText: 'Логин'),
-              ),
-              TextField(
-                controller: _passwordController,
-                decoration: const InputDecoration(labelText: 'Пароль'),
-                obscureText: true,
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Отмена'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              try {
-                await _apiService.post(
-                  ApiConfig.users,
-                  data: {
-                    'fio': _fioController.text,
-                    'age': int.tryParse(_ageController.text) ?? 0,
-                    'login': _loginController.text,
-                    'password': _passwordController.text,
-                  },
-                );
-                _fioController.clear();
-                _ageController.clear();
-                _loginController.clear();
-                _passwordController.clear();
-                if (ctx.mounted) Navigator.pop(ctx);
-                context.read<ChatProvider>().loadUsers();
-              } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Ошибка создания пользователя')),
-                );
-              }
-            },
-            child: const Text('Создать'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _blockUser(User user) async {
-    try {
-      await _apiService.patch('${ApiConfig.users}/${user.id}/block');
-      context.read<ChatProvider>().loadUsers();
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ошибка')),
-      );
-    }
-  }
-
-  Future<void> _unblockUser(User user) async {
-    try {
-      await _apiService.patch('${ApiConfig.users}/${user.id}/unblock');
-      context.read<ChatProvider>().loadUsers();
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ошибка')),
-      );
-    }
-  }
-
-  Future<void> _archiveUser(User user) async {
-    try {
-      await _apiService.patch('${ApiConfig.users}/${user.id}/archive');
-      context.read<ChatProvider>().loadUsers();
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ошибка')),
-      );
-    }
-  }
-
-  Future<void> _restoreUser(User user) async {
-    try {
-      await _apiService.patch('${ApiConfig.users}/${user.id}/restore');
-      context.read<ChatProvider>().loadUsers();
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ошибка')),
-      );
-    }
-  }
-
-  Future<void> _deleteUser(User user) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Удалить пользователя'),
-        content: Text('Вы уверены, что хотите удалить ${user.fio}?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Отмена'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Удалить'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-      try {
-        await _apiService.delete('${ApiConfig.users}/${user.id}');
-        context.read<ChatProvider>().loadUsers();
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Ошибка удаления')),
-        );
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Администратор'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.person_add),
-            onPressed: _createUser,
-            tooltip: 'Создать пользователя',
-          ),
-          IconButton(
-            icon: const Icon(Icons.exit_to_app),
-            onPressed: () {
-              context.read<AuthProvider>().logout();
-              Navigator.pushReplacementNamed(context, '/login');
-            },
-          ),
-        ],
-      ),
-      body: Row(
-        children: [
-          // Список пользователей
-          SizedBox(
-            width: 300,
-            child: Consumer<ChatProvider>(
-              builder: (context, chat, _) {
-                if (chat.isLoading) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                return ListView.builder(
-                  itemCount: chat.users.length,
-                  itemBuilder: (context, index) {
-                    final user = chat.users[index];
-                    return _buildUserCard(user, chat);
-                  },
-                );
-              },
-            ),
-          ),
-          const VerticalDivider(width: 1),
-          // Чат
-          Expanded(
-            child: Consumer2<ChatProvider, AuthProvider>(
-              builder: (context, chat, auth, _) {
-                if (chat.selectedUser == null) {
-                  return const Center(
-                    child: Text('Выберите пользователя для чата'),
-                  );
-                }
-
-                return Column(
-                  children: [
-                    // Заголовок чата
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      color: Colors.grey[100],
-                      child: Row(
-                        children: [
-                          CircleAvatar(
-                            child: Text(
-                              chat.selectedUser!.fio[0].toUpperCase(),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Text(
-                            'Чат с ${chat.selectedUser!.fio}',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    // Сообщения
-                    Expanded(
-                      child: ListView.builder(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: chat.messages.length,
-                        itemBuilder: (context, index) {
-                          final message = chat.messages[index];
-                          final isMine =
-                              message.senderId == auth.currentUser?.id;
-                          return _buildMessageBubble(message, isMine, chat);
-                        },
-                      ),
-                    ),
-                    // Поле ввода
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.grey.withOpacity(0.3),
-                            blurRadius: 4,
-                            offset: const Offset(0, -2),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _messageController,
-                              decoration: const InputDecoration(
-                                hintText: 'Введите сообщение...',
-                                border: OutlineInputBorder(),
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 12,
-                                ),
-                              ),
-                              onSubmitted: (_) =>
-                                  _sendMessage(chat, auth),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          IconButton(
-                            icon: const Icon(Icons.send),
-                            color: Theme.of(context).colorScheme.primary,
-                            onPressed: () =>
-                                _sendMessage(chat, auth),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildUserCard(User user, ChatProvider chat) {
-    final isSelected = chat.selectedUser?.id == user.id;
-    final statusColor = user.isActive
-        ? Colors.green
-        : user.isBlocked
-            ? Colors.red
-            : Colors.orange;
-
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      color: isSelected ? Colors.blue[50] : null,
-      child: ListTile(
-        leading: CircleAvatar(
-          child: Text(user.fio[0].toUpperCase()),
-        ),
-        title: Text(
-          user.fio,
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Возраст: ${user.age}'),
-            Row(
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: statusColor,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Text(_statusLabel(user.status)),
-              ],
-            ),
-          ],
-        ),
-        selected: isSelected,
-        onTap: () => chat.selectUser(user),
-        trailing: PopupMenuButton<String>(
-          onSelected: (value) {
-            switch (value) {
-              case 'block':
-                _blockUser(user);
-                break;
-              case 'unblock':
-                _unblockUser(user);
-                break;
-              case 'archive':
-                _archiveUser(user);
-                break;
-              case 'restore':
-                _restoreUser(user);
-                break;
-              case 'delete':
-                _deleteUser(user);
-                break;
-            }
-          },
-          itemBuilder: (context) => [
-            if (user.isActive) ...[
-              const PopupMenuItem(
-                value: 'block',
-                child: Text('Заблокировать'),
-              ),
-              const PopupMenuItem(
-                value: 'archive',
-                child: Text('Архивировать'),
-              ),
-            ],
-            if (user.isBlocked) ...[
-              const PopupMenuItem(
-                value: 'unblock',
-                child: Text('Разблокировать'),
-              ),
-              const PopupMenuItem(
-                value: 'archive',
-                child: Text('Архивировать'),
-              ),
-            ],
-            if (user.isArchived) ...[
-              const PopupMenuItem(
-                value: 'restore',
-                child: Text('Восстановить'),
-              ),
-            ],
-            const PopupMenuItem(
-              value: 'delete',
-              child: Text('Удалить', style: TextStyle(color: Colors.red)),
-            ),
-          ],
-        ),
-      ),
-    );
+  String _statusIndicator(User user) {
+    if (user.isBlocked) return '🔴';
+    if (user.isOnline && user.isActive) return '🟢';
+    if (!user.isOnline && user.isActive) return '⚪';
+    return '⚪';
   }
 
   String _statusLabel(String status) {
@@ -436,68 +48,262 @@ class _AdminScreenState extends State<AdminScreen> {
       case 'BLOCKED':
         return 'Заблокирован';
       case 'ARCHIVED':
-        return 'Архивирован';
+        return 'В архиве';
       default:
         return status;
     }
   }
 
-  Widget _buildMessageBubble(Message message, bool isMine, ChatProvider chat) {
-    return Align(
-      alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
-      child: Stack(
-        children: [
-          Container(
-            margin: const EdgeInsets.only(bottom: 8, right: isMine ? 36 : 0, left: isMine ? 0 : 36),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: isMine
-                  ? Theme.of(context).colorScheme.primary
-                  : Colors.grey[200],
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(16),
-                topRight: const Radius.circular(16),
-                bottomLeft: isMine
-                    ? const Radius.circular(16)
-                    : const Radius.circular(4),
-                bottomRight: isMine
-                    ? const Radius.circular(4)
-                    : const Radius.circular(16),
-              ),
-            ),
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.5,
-            ),
-            child: Text(
-              message.text,
-              style: TextStyle(
-                color: isMine ? Colors.white : Colors.black87,
-                fontSize: 15,
-              ),
-            ),
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Администратор'),
+        actions: [
+          Consumer<NotificationProvider>(
+            builder: (context, provider, _) {
+              return Stack(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.notifications_outlined),
+                    tooltip: 'Уведомления',
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const NotificationsScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  if (provider.unreadCount > 0)
+                    Positioned(
+                      right: 6,
+                      top: 6,
+                      child: NotificationBadge(count: provider.unreadCount),
+                    ),
+                ],
+              );
+            },
           ),
-          // Кнопка удаления сообщения (только для админа)
-          if (!isMine && message.id != null)
-            Positioned(
-              right: 0,
-              top: 0,
-              child: GestureDetector(
-                onTap: () => chat.deleteMessage(message.id!),
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: Colors.red[100],
-                    shape: BoxShape.circle,
+          IconButton(
+            icon: const Icon(Icons.exit_to_app),
+            tooltip: 'Выйти',
+            onPressed: () {
+              context.read<AuthProvider>().logout();
+              Navigator.pushReplacementNamed(context, '/login');
+            },
+          ),
+        ],
+      ),
+      body: Consumer<UserProvider>(
+        builder: (context, userProvider, _) {
+          return Column(
+            children: [
+              // Поле поиска
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Поиск по ФИО...',
+                    prefixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
                   ),
-                  child: Icon(
-                    Icons.close,
-                    size: 14,
-                    color: Colors.red[700],
-                  ),
+                  onChanged: (value) {
+                    userProvider.setSearchQuery(value);
+                  },
                 ),
               ),
+              // Row с сортировкой
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Row(
+                  children: [
+                    const Text('Сортировать по:'),
+                    const SizedBox(width: 8),
+                    DropdownButton<String>(
+                      value: userProvider.sortBy,
+                      items: const [
+                        DropdownMenuItem(value: 'fullName', child: Text('ФИО')),
+                        DropdownMenuItem(value: 'age', child: Text('Возрасту')),
+                        DropdownMenuItem(value: 'createdAt', child: Text('Дате создания')),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          userProvider.setSortBy(value);
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 16),
+                    IconButton(
+                      icon: Icon(
+                        userProvider.sortOrder == 'asc'
+                            ? Icons.arrow_upward
+                            : Icons.arrow_downward,
+                      ),
+                      tooltip: userProvider.sortOrder == 'asc'
+                          ? 'По возрастанию'
+                          : 'По убыванию',
+                      onPressed: () {
+                        userProvider.setSortOrder(
+                          userProvider.sortOrder == 'asc' ? 'desc' : 'asc',
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              // Row с фильтрами
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Row(
+                  children: [
+                    _buildFilterChip('Все', '', userProvider),
+                    const SizedBox(width: 8),
+                    _buildFilterChip('Активные', 'ACTIVE', userProvider),
+                    const SizedBox(width: 8),
+                    _buildFilterChip('Заблокированные', 'BLOCKED', userProvider),
+                  ],
+                ),
+              ),
+              // Кнопки действий
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  children: [
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.person_add),
+                      label: const Text('Добавить пользователя'),
+                      onPressed: () async {
+                        final result = await Navigator.push<bool>(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const CreateUserScreen(),
+                          ),
+                        );
+                        if (result == true) {
+                          userProvider.loadUsers();
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 12),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.archive),
+                      label: const Text('Архив'),
+                      onPressed: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const ArchiveScreen(),
+                          ),
+                        );
+                        userProvider.loadUsers();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              // Список пользователей
+              Expanded(
+                child: _buildUserList(userProvider),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildFilterChip(String label, String value, UserProvider provider) {
+    final isSelected = provider.statusFilter == value;
+    return ChoiceChip(
+      label: Text(label),
+      selected: isSelected,
+      onSelected: (_) {
+        provider.setStatusFilter(value);
+      },
+    );
+  }
+
+  Widget _buildUserList(UserProvider provider) {
+    if (provider.isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (provider.error != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text('Ошибка: ${provider.error}'),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () => provider.loadUsers(),
+              child: const Text('Повторить'),
             ),
-        ],
+          ],
+        ),
+      );
+    }
+
+    if (provider.users.isEmpty) {
+      return const Center(
+        child: Text('Пользователи не найдены'),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: () => provider.loadUsers(),
+      child: ListView.builder(
+        padding: const EdgeInsets.all(8),
+        itemCount: provider.users.length,
+        itemBuilder: (context, index) {
+          final user = provider.users[index];
+          return Card(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            child: ListTile(
+              leading: CircleAvatar(
+                child: Text(user.fullName.isNotEmpty
+                    ? user.fullName[0].toUpperCase()
+                    : '?'),
+              ),
+              title: Text(
+                user.fullName,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              subtitle: Row(
+                children: [
+                  Text(_statusIndicator(user)),
+                  const SizedBox(width: 4),
+                  Text(_statusLabel(user.status)),
+                  if (user.age != null) ...[
+                    const SizedBox(width: 12),
+                    Text('${user.age} лет'),
+                  ],
+                ],
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => UserCardScreen(user: user),
+                  ),
+                );
+                // Обновляем список после возврата
+                provider.loadUsers();
+              },
+            ),
+          );
+        },
       ),
     );
   }

@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Role, UserStatus } from '@prisma/client';
 
 export class UserResponseDto {
@@ -9,7 +9,7 @@ export class UserResponseDto {
   fio!: string;
 
   @ApiProperty()
-  age!: number;
+  age!: number | null;
 
   @ApiProperty()
   login!: string;
@@ -19,6 +19,15 @@ export class UserResponseDto {
 
   @ApiProperty({ enum: UserStatus })
   status!: UserStatus;
+
+  @ApiPropertyOptional()
+  notes!: string | null;
+
+  @ApiProperty()
+  isOnline!: boolean;
+
+  @ApiPropertyOptional()
+  lastSeenAt!: string | null;
 
   @ApiProperty()
   createdAt!: Date;

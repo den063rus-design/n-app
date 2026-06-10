@@ -27,6 +27,7 @@ class ChatProvider extends ChangeNotifier {
 
   /// Настраивает слушатели Socket.IO
   void _setupSocketListeners() {
+    // Новое сообщение
     _socketService.onNewMessage((data) {
       try {
         final message = Message.fromJson(data as Map<String, dynamic>);
@@ -37,31 +38,127 @@ class ChatProvider extends ChangeNotifier {
       }
     });
 
+    // Обновление статуса (универсальное событие)
+    _socketService.onMessageStatus((data) {
+      try {
+        final updated = Message.fromJson(data as Map<String, dynamic>);
+        _updateMessage(updated);
+      } catch (e) {
+        print('Error parsing message status: $e');
+      }
+    });
+
+    // Статус доставки (обратная совместимость)
     _socketService.onMessageDelivered((data) {
       try {
         final updated = Message.fromJson(data as Map<String, dynamic>);
-        final index = _messages.indexWhere((m) => m.id == updated.id);
-        if (index != -1) {
-          _messages[index] = updated;
-          notifyListeners();
-        }
+        _updateMessage(updated);
       } catch (e) {
         print('Error parsing delivered message: $e');
       }
     });
 
+    // Статус прочтения (обратная совместимость)
     _socketService.onMessageRead((data) {
       try {
         final updated = Message.fromJson(data as Map<String, dynamic>);
-        final index = _messages.indexWhere((m) => m.id == updated.id);
-        if (index != -1) {
-          _messages[index] = updated;
-          notifyListeners();
-        }
+        _updateMessage(updated);
       } catch (e) {
         print('Error parsing read message: $e');
       }
     });
+
+    // Удаление сообщения
+    _socketService.onMessageDeleted((data) {
+      try {
+        final messageId = data is Map<String, dynamic>
+            ? data['messageId'] as int
+            : data as int;
+        _messages.removeWhere((m) => m.id == messageId);
+        notifyListeners();
+      } catch (e) {
+        print('Error processing deleted message: $e');
+      }
+    });
+
+    // ========== Online status listeners ==========
+
+    // Пользователь стал онлайн
+    _socketService.onUserOnline((data) {
+      try {
+        final userId = data['userId'] as int;
+        final isOnline = data['isOnline'] as bool;
+        _updateUserOnlineStatus(userId, isOnline);
+      } catch (e) {
+        print('Error processing user:online event: $e');
+      }
+    });
+
+    // Пользователь стал офлайн
+    _socketService.onUserOffline((data) {
+      try {
+        final userId = data['userId'] as int;
+        final isOnline = data['isOnline'] as bool;
+        _updateUserOnlineStatus(userId, isOnline);
+      } catch (e) {
+        print('Error processing user:offline event: $e');
+      }
+    });
+  }
+
+  /// Обновляет онлайн-статус пользователя в списке _users
+  void _updateUserOnlineStatus(int userId, bool isOnline) {
+    bool changed = false;
+
+    // Обновляем в списке пользователей
+    for (int i = 0; i < _users.length; i++) {
+      if (_users[i].id == userId) {
+        _users[i] = User(
+          id: _users[i].id,
+          fullName: _users[i].fullName,
+          age: _users[i].age,
+          role: _users[i].role,
+          status: _users[i].status,
+          notes: _users[i].notes,
+          isOnline: isOnline,
+          lastSeenAt: _users[i].lastSeenAt,
+          createdAt: _users[i].createdAt,
+          login: _users[i].login,
+        );
+        changed = true;
+        break;
+      }
+    }
+
+    // Обновляем _selectedUser если это тот же пользователь
+    if (_selectedUser != null && _selectedUser!.id == userId) {
+      _selectedUser = User(
+        id: _selectedUser!.id,
+        fullName: _selectedUser!.fullName,
+        age: _selectedUser!.age,
+        role: _selectedUser!.role,
+        status: _selectedUser!.status,
+        notes: _selectedUser!.notes,
+        isOnline: isOnline,
+        lastSeenAt: _selectedUser!.lastSeenAt,
+        createdAt: _selectedUser!.createdAt,
+        login: _selectedUser!.login,
+      );
+      changed = true;
+    }
+
+    if (changed) {
+      notifyListeners();
+    }
+  }
+
+  /// Обновляет сообщение в списке
+  void _updateMessage(Message updated) {
+    final index = _messages.indexWhere((m) => m.id == updated.id);
+    if (index != -1) {
+      _messages[index] = updated;
+      notifyListeners();
+    }
   }
 
   /// Загружает список пользователей (для админа)
@@ -71,7 +168,7 @@ class ChatProvider extends ChangeNotifier {
 
     try {
       final response = await _apiService.get(ApiConfig.users);
-      final list = response.data as List<dynamic>;
+      final list = response as List<dynamic>;
       _users = list
           .map((e) => User.fromJson(e as Map<String, dynamic>))
           .toList();
@@ -91,7 +188,7 @@ class ChatProvider extends ChangeNotifier {
 
     try {
       final response = await _apiService.get(ApiConfig.chatMy);
-      final list = response.data as List<dynamic>;
+      final list = response as List<dynamic>;
       _messages = list
           .map((e) => Message.fromJson(e as Map<String, dynamic>))
           .toList();
@@ -111,7 +208,7 @@ class ChatProvider extends ChangeNotifier {
 
     try {
       final response = await _apiService.get('${ApiConfig.chat}/user/$userId');
-      final list = response.data as List<dynamic>;
+      final list = response as List<dynamic>;
       _messages = list
           .map((e) => Message.fromJson(e as Map<String, dynamic>))
           .toList();
@@ -130,15 +227,19 @@ class ChatProvider extends ChangeNotifier {
     loadUserMessages(user.id);
   }
 
-  /// Отправляет сообщение через HTTP POST /chat
+  /// Отправляет текстовое сообщение через HTTP POST /chat
   /// [receiverId] — ID получателя (null для USER, т.к. backend сам найдёт админа)
-  Future<void> sendMessage(String text, int? receiverId) async {
-    if (text.trim().isEmpty) return;
+  /// [attachments] — список URL загруженных файлов
+  Future<void> sendMessage(String text, int? receiverId, {List<String>? attachments}) async {
+    if (text.trim().isEmpty && (attachments == null || attachments.isEmpty)) return;
 
     try {
       final data = <String, dynamic>{'text': text};
       if (receiverId != null) {
         data['receiverId'] = receiverId;
+      }
+      if (attachments != null && attachments.isNotEmpty) {
+        data['attachments'] = attachments;
       }
       await _apiService.post(
         ApiConfig.chat,
@@ -147,6 +248,49 @@ class ChatProvider extends ChangeNotifier {
     } catch (e) {
       _error = 'Ошибка отправки сообщения';
       notifyListeners();
+    }
+  }
+
+  /// Отправляет текстовое сообщение (удобный метод)
+  Future<void> sendTextMessage(int userId, String text) async {
+    await sendMessage(text, userId);
+  }
+
+  /// Отправляет файловое сообщение
+  Future<void> sendFileMessage(int userId, String filePath, String fileType) async {
+    try {
+      final fileUrl = await uploadFile(filePath);
+      if (fileUrl != null) {
+        await sendMessage('', userId, attachments: [fileUrl]);
+      }
+    } catch (e) {
+      _error = 'Ошибка отправки файла';
+      notifyListeners();
+    }
+  }
+
+  /// Отправляет голосовое сообщение
+  Future<void> sendVoiceMessage(int userId, String audioPath) async {
+    try {
+      final fileUrl = await uploadFile(audioPath);
+      if (fileUrl != null) {
+        await sendMessage('', userId, attachments: [fileUrl]);
+      }
+    } catch (e) {
+      _error = 'Ошибка отправки голосового сообщения';
+      notifyListeners();
+    }
+  }
+
+  /// Загружает файл на сервер и возвращает URL
+  Future<String?> uploadFile(String filePath) async {
+    try {
+      final url = await _apiService.uploadFile(filePath);
+      return url;
+    } catch (e) {
+      _error = 'Ошибка загрузки файла';
+      notifyListeners();
+      return null;
     }
   }
 
@@ -160,6 +304,11 @@ class ChatProvider extends ChangeNotifier {
       _error = 'Ошибка удаления сообщения';
       notifyListeners();
     }
+  }
+
+  /// Отмечает сообщение как прочитанное через Socket
+  void markAsRead(int messageId) {
+    _socketService.markAsRead(messageId);
   }
 
   /// Добавляет сообщение из Socket.IO в реальном времени

@@ -1,25 +1,24 @@
 import { IsOptional, IsString, IsEnum } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { UserStatus } from '@prisma/client';
 
 export class QueryUsersDto {
-  @ApiPropertyOptional({ description: 'Поиск по ФИО (частичный, без учета регистра)' })
+  @ApiPropertyOptional({ description: 'Поиск по fullName (частичный, без учета регистра)' })
   @IsOptional()
   @IsString()
   search?: string;
 
-  @ApiPropertyOptional({ enum: ['name', 'age', 'created'], description: 'Поле для сортировки' })
+  @ApiPropertyOptional({ enum: ['fullName', 'age', 'createdAt'], description: 'Поле для сортировки' })
   @IsOptional()
   @IsString()
-  sort?: 'name' | 'age' | 'created';
+  sortBy?: 'fullName' | 'age' | 'createdAt';
 
   @ApiPropertyOptional({ enum: ['asc', 'desc'], description: 'Направление сортировки' })
   @IsOptional()
   @IsString()
-  order?: 'asc' | 'desc';
+  sortOrder?: 'asc' | 'desc';
 
-  @ApiPropertyOptional({ enum: UserStatus, description: 'Фильтр по статусу' })
+  @ApiPropertyOptional({ enum: ['ACTIVE', 'BLOCKED'], description: 'Фильтр по статусу' })
   @IsOptional()
-  @IsEnum(UserStatus)
-  status?: UserStatus;
+  @IsString()
+  status?: 'ACTIVE' | 'BLOCKED';
 }

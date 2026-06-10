@@ -3,9 +3,14 @@ import 'package:provider/provider.dart';
 import '../config/theme.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
+import '../providers/user_provider.dart';
+import '../providers/notification_provider.dart';
+import '../services/api_service.dart';
+import '../services/socket_service.dart';
 import '../screens/login_screen.dart';
 import '../screens/admin_screen.dart';
 import '../screens/user_screen.dart';
+import '../screens/notifications_screen.dart';
 
 class NApp extends StatelessWidget {
   const NApp({super.key});
@@ -16,6 +21,10 @@ class NApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => ChatProvider()),
+        ChangeNotifierProvider(create: (_) => UserProvider()),
+        ChangeNotifierProvider(
+          create: (_) => NotificationProvider(ApiService(), SocketService()),
+        ),
       ],
       child: MaterialApp(
         title: 'N App',
@@ -26,6 +35,7 @@ class NApp extends StatelessWidget {
           '/login': (context) => const LoginScreen(),
           '/admin': (context) => const AdminScreen(),
           '/user': (context) => const UserScreen(),
+          '/notifications': (context) => const NotificationsScreen(),
         },
       ),
     );
@@ -55,10 +65,6 @@ class _AuthGateState extends State<_AuthGate> {
     if (!mounted) return;
 
     if (hasToken) {
-      // Токен есть, но пользователя нет — нужно получить через login
-      // В текущей реализации checkAuth только проверяет наличие токена
-      // и подключает Socket.IO. Пользователь будет загружен при логине.
-      // Если токен есть, но пользователь не загружен — идём на login.
       if (auth.currentUser == null) {
         Navigator.pushReplacementNamed(context, '/login');
       } else {
