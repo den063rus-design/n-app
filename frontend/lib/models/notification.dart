@@ -21,11 +21,11 @@ class AppNotification {
       AppNotification(
         id: json['id'] as int,
         userId: json['userId'] as int,
-        type: json['type'] as String,
-        title: json['title'] as String,
+        type: json['type'] as String? ?? '',
+        title: json['title'] as String? ?? '',
         body: json['body'] as String?,
         isRead: json['isRead'] as bool? ?? false,
-        createdAt: json['createdAt'] as String,
+        createdAt: json['createdAt'] as String? ?? DateTime.now().toIso8601String(),
       );
 
   Map<String, dynamic> toJson() => {

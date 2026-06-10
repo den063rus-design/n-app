@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
 import '../providers/notification_provider.dart';
-import '../models/message.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/notification_badge.dart';
 import 'dart:io';

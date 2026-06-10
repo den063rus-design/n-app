@@ -64,7 +64,7 @@ export class UsersService {
     where.status = status ?? { not: UserStatus.ARCHIVED };
 
     if (search) {
-      where.fullName = {
+      where.fio = {
         contains: search,
         mode: 'insensitive' as const,
       };
@@ -74,7 +74,7 @@ export class UsersService {
 
     if (sortBy) {
       const sortFieldMap: Record<string, string> = {
-        fullName: 'fullName',
+        fullName: 'fio',
         age: 'age',
         createdAt: 'createdAt',
       };
@@ -135,14 +135,13 @@ export class UsersService {
 
     const data: {
       fio?: string;
-      fullName?: string;
       age?: number;
       login?: string;
       notes?: string;
     } = {};
 
     if (dto.fio !== undefined) data.fio = dto.fio;
-    if (dto.fullName !== undefined) data.fullName = dto.fullName;
+    if (dto.fullName !== undefined) data.fio = dto.fullName;
     if (dto.age !== undefined) data.age = dto.age;
     if (dto.login !== undefined) data.login = dto.login;
     if (dto.notes !== undefined) data.notes = dto.notes;

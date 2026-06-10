@@ -30,6 +30,11 @@ class ApiService {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
+          // Не добавляем токен для запроса логина
+          if (options.path.contains('/auth/login')) {
+            handler.next(options);
+            return;
+          }
           final token = await _storage.read(key: 'jwt_token');
           if (token != null) {
             options.headers['Authorization'] = 'Bearer $token';
@@ -163,13 +168,17 @@ class ApiService {
   // =================================================================
 
   Future<String> uploadFile(String filePath) async {
-    final url = Uri.parse('$_baseUrl/files/upload');
-    final request = http.MultipartRequest('POST', url);
+    final uri = Uri.parse('$_baseUrl/files/upload');
+    final request = http.MultipartRequest('POST', uri);
     request.headers.addAll(await _headers);
     request.files.add(await http.MultipartFile.fromPath('file', filePath));
     final response = await request.send();
     final responseBody = await response.stream.bytesToString();
-    return jsonDecode(responseBody)['url'] as String;
+    final fileUrl = jsonDecode(responseBody)['url'] as String?;
+    if (fileUrl == null) {
+      throw Exception('Сервер не вернул URL файла');
+    }
+    return fileUrl;
   }
 
   // =================================================================

@@ -54,11 +54,17 @@ class AuthProvider extends ChangeNotifier {
     try {
       final data = await _authService.login(login, password);
 
-      final userData = data['user'] as Map<String, dynamic>;
+      final userData = data['user'];
+      if (userData is! Map<String, dynamic>) {
+        throw Exception('Сервер не вернул данные пользователя');
+      }
       _currentUser = User.fromJson(userData);
 
       // Подключаем Socket.IO
-      final token = data['accessToken'] as String;
+      final token = data['accessToken'];
+      if (token == null || token is! String) {
+        throw Exception('Сервер не вернул токен доступа');
+      }
       _socketService.connect(token);
       // Heartbeat запускается автоматически в onConnect внутри SocketService
 

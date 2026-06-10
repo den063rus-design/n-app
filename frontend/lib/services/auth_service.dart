@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'api_service.dart';
 import '../config/api_config.dart';
@@ -9,7 +10,7 @@ class AuthService {
   /// Выполняет вход и сохраняет JWT токен
   Future<Map<String, dynamic>> login(String login, String password) async {
     try {
-      final response = await _apiService.post(
+      final rawResponse = await _apiService.post(
         ApiConfig.login,
         data: {
           'login': login,
@@ -17,13 +18,34 @@ class AuthService {
         },
       );
 
-      final data = response.data as Map<String, dynamic>;
-      final token = data['accessToken'] as String;
+      debugPrint('AuthService.login: raw response type = ${rawResponse.runtimeType}');
+      debugPrint('AuthService.login: raw response = $rawResponse');
+
+      if (rawResponse is! Map<String, dynamic>) {
+        throw Exception('Неожиданный тип ответа от сервера: ${rawResponse.runtimeType}');
+      }
+
+      final data = rawResponse as Map<String, dynamic>;
+
+      if (!data.containsKey('accessToken')) {
+        debugPrint('AuthService.login: ERROR - no accessToken key in response. Keys: ${data.keys}');
+        throw Exception('Сервер не вернул accessToken. Ключи ответа: ${data.keys}');
+      }
+
+      final tokenValue = data['accessToken'];
+      debugPrint('AuthService.login: accessToken value = $tokenValue (type: ${tokenValue.runtimeType})');
+
+      if (tokenValue == null) {
+        throw Exception('accessToken равен null. Полный ответ: $data');
+      }
+
+      final token = tokenValue as String;
 
       await setToken(token);
 
       return data;
     } catch (e) {
+      debugPrint('AuthService.login: caught error: $e');
       rethrow;
     }
   }

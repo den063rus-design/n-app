@@ -25,14 +25,14 @@ class User {
 
   factory User.fromJson(Map<String, dynamic> json) => User(
         id: json['id'] as int,
-        fullName: json['fullName'] as String? ?? json['fio'] as String,
+        fullName: (json['fullName'] as String?) ?? (json['fio'] as String? ?? ''),
         age: json['age'] as int?,
-        role: json['role'] as String,
-        status: json['status'] as String,
+        role: json['role'] as String? ?? 'USER',
+        status: json['status'] as String? ?? 'ACTIVE',
         notes: json['notes'] as String?,
         isOnline: json['isOnline'] as bool? ?? false,
         lastSeenAt: json['lastSeenAt'] as String?,
-        createdAt: json['createdAt'] as String,
+        createdAt: json['createdAt'] as String? ?? DateTime.now().toIso8601String(),
         login: json['login'] as String?,
       );
 

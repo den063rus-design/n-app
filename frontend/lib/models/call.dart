@@ -21,10 +21,10 @@ class Call {
         id: json['id'] as int,
         callerId: json['callerId'] as int,
         calleeId: json['calleeId'] as int,
-        status: json['status'] as String,
+        status: json['status'] as String? ?? 'MISSED',
         startedAt: json['startedAt'] as String?,
         endedAt: json['endedAt'] as String?,
-        createdAt: json['createdAt'] as String,
+        createdAt: json['createdAt'] as String? ?? DateTime.now().toIso8601String(),
       );
 
   Map<String, dynamic> toJson() => {

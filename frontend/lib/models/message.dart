@@ -13,9 +13,9 @@ class Attachment {
 
   factory Attachment.fromJson(Map<String, dynamic> json) => Attachment(
         id: json['id'] as int,
-        url: json['url'] as String,
-        type: json['type'] as String,
-        fileName: json['fileName'] as String,
+        url: json['url'] as String? ?? '',
+        type: json['type'] as String? ?? '',
+        fileName: json['fileName'] as String? ?? '',
       );
 
   Map<String, dynamic> toJson() => {
@@ -49,14 +49,14 @@ class Message {
         id: json['id'] as int,
         senderId: json['senderId'] as int,
         receiverId: json['receiverId'] as int,
-        content: json['content'] as String? ?? json['text'] as String,
+        content: (json['content'] as String?) ?? (json['text'] as String? ?? ''),
         status: json['status'] as String? ?? 'SENT',
         attachments: json['attachments'] != null
             ? (json['attachments'] as List)
                 .map((a) => Attachment.fromJson(a as Map<String, dynamic>))
                 .toList()
             : null,
-        createdAt: json['createdAt'] as String,
+        createdAt: json['createdAt'] as String? ?? DateTime.now().toIso8601String(),
       );
 
   Map<String, dynamic> toJson() => {
