@@ -73,16 +73,44 @@ npx prisma generate
 
 # 8. Применить миграции
 echo -e "\n${YELLOW}🗄️  Применяю миграции БД...${NC}"
-npx prisma migrate deploy
+if npx prisma migrate deploy 2>&1; then
+    echo -e "${GREEN}✅ Миграции применены${NC}"
+else
+    echo -e "${YELLOW}⚠️ Нет существующих миграций. Создаю начальную миграцию...${NC}"
+    npx prisma migrate dev --name init --skip-generate
+    echo -e "${GREEN}✅ Начальная миграция создана и применена${NC}"
+fi
 
 # 9. Запустить seed
 echo -e "\n${YELLOW}🌱 Запускаю seed...${NC}"
 npx prisma db seed || echo -e "${YELLOW}⚠️ Seed пропущен (возможно уже есть данные)${NC}"
 
-# 10. Перезапустить PM2
+# 10. Найти собранный файл (module:nodenext может создать dist/main.js или dist/main.mjs)
+echo -e "\n${YELLOW}🔍 Ищу собранный файл...${NC}"
+BUILD_FILE=""
+if [ -f dist/main.js ]; then
+    BUILD_FILE="dist/main.js"
+elif [ -f dist/main.mjs ]; then
+    BUILD_FILE="dist/main.mjs"
+elif [ -f dist/src/main.js ]; then
+    BUILD_FILE="dist/src/main.js"
+else
+    BUILD_FILE=$(find dist -name "main.*" -type f 2>/dev/null | head -1)
+fi
+
+if [ -z "$BUILD_FILE" ]; then
+    echo -e "${RED}❌ Не найден собранный файл main.js/main.mjs в dist/${NC}"
+    echo -e "${YELLOW}📌 Содержимое dist/:${NC}"
+    ls -la dist/ 2>/dev/null || echo "dist/ не существует"
+    exit 1
+fi
+
+echo -e "${GREEN}✅ Найден файл: $BUILD_FILE${NC}"
+
+# 11. Перезапустить PM2
 echo -e "\n${YELLOW}🔄 Перезапускаю PM2...${NC}"
 pm2 delete n-app-backend 2>/dev/null || true
-pm2 start dist/main.js --name n-app-backend
+pm2 start "$BUILD_FILE" --name n-app-backend
 pm2 save
 
 # 11. Проверить статус
