@@ -28,16 +28,127 @@ sudo ./deploy/setup-vps.sh
 
 ---
 
-## 2. Деплой бэкенда
+## 2. Связь GitHub с Debian сервером
 
-### 2.1. Копирование файлов на сервер
+Этот раздел описывает, как связать GitHub-репозиторий с вашим Debian-сервером для автоматического деплоя через `git pull`.
+
+### 2.1. Установка Git на Debian
+
+```bash
+sudo apt update
+sudo apt install git -y
+git --version
+```
+
+### 2.2. Клонирование репозитория на сервер
+
+```bash
+sudo mkdir -p /opt/n-app
+sudo chown $USER:$USER /opt/n-app
+git clone https://github.com/den063rus-design/n-app.git /opt/n-app
+cd /opt/n-app
+```
+
+### 2.3. Настройка SSH deploy key (рекомендуется)
+
+SSH-ключ позволяет пулить без ввода пароля.
+
+**На сервере Debian** сгенерируйте ключ:
+
+```bash
+ssh-keygen -t ed25519 -C "deploy-key" -f ~/.ssh/deploy_key
+cat ~/.ssh/deploy_key.pub
+```
+
+**В GitHub:**
+1. Перейдите: `Settings → SSH and GPG keys → New SSH key`
+2. Title: `N App Debian Server`
+3. Key: вставьте содержимое `~/.ssh/deploy_key.pub`
+4. Нажмите **Add SSH key**
+
+**На сервере** смените remote на SSH:
+
+```bash
+cd /opt/n-app
+git remote set-url origin git@github.com:den063rus-design/n-app.git
+```
+
+Проверьте подключение:
+
+```bash
+ssh -T git@github.com
+# Ожидаемый ответ: Hi den063rus-design/n-app! You've successfully authenticated...
+```
+
+### 2.4. Быстрый деплой одной командой
+
+После настройки SSH ключа деплой делается одной командой:
+
+```bash
+cd /opt/n-app && git pull && npm install && npm run build && npx prisma generate && npx prisma migrate deploy && pm2 restart n-app-backend
+```
+
+Или через готовый скрипт:
+
+```bash
+chmod +x deploy/deploy-debian.sh
+./deploy/deploy-debian.sh
+```
+
+### 2.5. Что делает скрипт deploy-debian.sh
+
+Скрипт [`deploy/deploy-debian.sh`](deploy/deploy-debian.sh) автоматически:
+
+1. Переходит в `/opt/n-app`
+2. Сохраняет текущий `.env` (чтобы не потерять настройки)
+3. Выполняет `git fetch origin && git reset --hard origin/main` — стягивает последнюю версию
+4. Восстанавливает `.env` из бэкапа (или создаёт из `.env.production`)
+5. Устанавливает npm-зависимости (`npm install --production`)
+6. Собирает проект (`npm run build`)
+7. Генерирует Prisma Client (`npx prisma generate`)
+8. Применяет миграции БД (`npx prisma migrate deploy`)
+9. Запускает seed (если нужно)
+10. Перезапускает PM2 процесс
+11. Проверяет, что сервер запустился
+
+### 2.6. Рабочий процесс
+
+```
+[Локальный ПК]           [GitHub]              [Debian Server]
+     │                      │                       │
+     ├── git add . ────────►│                       │
+     ├── git commit ───────►│                       │
+     ├── git push ─────────►│                       │
+     │                      │                       │
+     │                      │                       │◄── ssh
+     │                      ├── git pull ───────────┤
+     │                      │                       ├── npm install
+     │                      │                       ├── npm run build
+     │                      │                       ├── prisma migrate
+     │                      │                       └── pm2 restart
+```
+
+**Процесс обновления:**
+1. Вносите изменения локально
+2. Коммитите и пушите в GitHub
+3. Заходите на сервер по SSH
+4. Запускаете `./deploy/deploy-debian.sh`
+5. Готово! 🚀
+
+---
+
+## 3. Деплой бэкенда
+
+### 3.1. Копирование файлов на сервер (без Git)
+
+Если вы не используете Git-связку, можно скопировать файлы вручную:
 
 ```bash
 # Замените user и server на ваши данные
 scp -r . user@your-server:/opt/n-app
 ```
 
-### 2.2. Настройка окружения
+### 3.2. Настройка окружения
 
 ```bash
 ssh user@your-server
@@ -49,7 +160,7 @@ cp .env.production .env
 - Замените `JWT_SECRET` на сгенерированную случайную строку (можно использовать `openssl rand -hex 32`)
 - Укажите реальный `MINIO_ENDPOINT`, если MinIO на другом сервере
 
-### 2.3. Запуск деплоя
+### 3.3. Запуск деплоя
 
 ```bash
 chmod +x deploy/deploy-backend.sh
@@ -63,7 +174,7 @@ chmod +x deploy/deploy-backend.sh
 4. Заполнение БД начальными данными (seed)
 5. Запуск через PM2 с авторестартом
 
-### 2.4. Управление бэкендом
+### 3.4. Управление бэкендом
 
 ```bash
 # Статус
@@ -81,11 +192,11 @@ pm2 stop n-app-backend
 
 ---
 
-## 3. Сборка APK
+## 4. Сборка APK
 
 Сборка выполняется на машине с установленным Flutter SDK.
 
-### 3.1. Настройка production-конфигурации
+### 4.1. Настройка production-конфигурации
 
 Перед сборкой отредактируйте [`frontend/lib/config/api_config.dart`](frontend/lib/config/api_config.dart):
 
@@ -100,7 +211,7 @@ static const String prodBaseUrl = 'https://ваш-сервер.ru';
 static const String prodWsUrl = 'wss://ваш-сервер.ru';
 ```
 
-### 3.2. Запуск сборки
+### 4.2. Запуск сборки
 
 ```bash
 chmod +x deploy/build-apk.sh
@@ -112,7 +223,7 @@ APK будет создан по пути:
 frontend/build/app/outputs/flutter-apk/app-release.apk
 ```
 
-### 3.3. Установка на устройство
+### 4.3. Установка на устройство
 
 **Через ADB (подключённое устройство):**
 ```bash
@@ -127,31 +238,31 @@ adb install frontend/build/app/outputs/flutter-apk/app-release.apk
 
 ---
 
-## 4. Проверка работоспособности
+## 5. Проверка работоспособности
 
 После деплоя проверьте:
 
-### 4.1. API сервер
+### 5.1. API сервер
 
 ```bash
 curl http://localhost:3000/api/health
 # Ожидаемый ответ: { "status": "ok" }
 ```
 
-### 4.2. База данных
+### 5.2. База данных
 
 ```bash
 sudo -u postgres psql -c "\l" | grep n_app
 # Должна быть база n_app
 ```
 
-### 4.3. MinIO
+### 5.3. MinIO
 
 Откройте в браузере: `http://your-server:9001`
 - Логин: `minioadmin`
 - Пароль: `minioadmin`
 
-### 4.4. Приложение
+### 5.4. Приложение
 
 1. Откройте приложение на устройстве
 2. Войдите как администратор: `admin` / `admin123`
@@ -161,9 +272,9 @@ sudo -u postgres psql -c "\l" | grep n_app
 
 ---
 
-## 5. Дополнительная информация
+## 6. Дополнительная информация
 
-### 5.1. Обновление бэкенда
+### 6.1. Обновление бэкенда
 
 ```bash
 cd /opt/n-app
@@ -175,25 +286,26 @@ npx prisma migrate deploy
 pm2 restart n-app-backend
 ```
 
-### 5.2. Бэкап базы данных
+### 6.2. Бэкап базы данных
 
 ```bash
 pg_dump -U postgres n_app > backup_$(date +%Y%m%d).sql
 ```
 
-### 5.3. Восстановление базы данных
+### 6.3. Восстановление базы данных
 
 ```bash
 psql -U postgres n_app < backup.sql
 ```
 
-### 5.4. Структура проекта
+### 6.4. Структура проекта
 
 ```
 n-app/
 ├── deploy/                  # Скрипты деплоя
 │   ├── setup-vps.sh        # Настройка сервера
 │   ├── deploy-backend.sh   # Деплой бэкенда
+│   ├── deploy-debian.sh    # Деплой на Debian через Git
 │   └── build-apk.sh        # Сборка APK
 ├── frontend/               # Flutter приложение
 ├── prisma/                 # Prisma схема и миграции
