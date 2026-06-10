@@ -31,8 +31,7 @@ class ChatProvider extends ChangeNotifier {
     _socketService.onNewMessage((data) {
       try {
         final message = Message.fromJson(data as Map<String, dynamic>);
-        _messages.add(message);
-        notifyListeners();
+        _addMessageIfNotDuplicate(message);
       } catch (e) {
         print('Error parsing new message: $e');
       }
@@ -357,10 +356,18 @@ class ChatProvider extends ChangeNotifier {
     _socketService.markAsRead(messageId);
   }
 
-  /// Добавляет сообщение из Socket.IO в реальном времени
-  void addMessage(Message message) {
+  /// Добавляет сообщение с защитой от дублей по message.id
+  void _addMessageIfNotDuplicate(Message message) {
+    if (_messages.any((m) => m.id == message.id)) {
+      return;
+    }
     _messages.add(message);
     notifyListeners();
+  }
+
+  /// Добавляет сообщение из Socket.IO в реальном времени (с защитой от дублей)
+  void addMessage(Message message) {
+    _addMessageIfNotDuplicate(message);
   }
 
   /// Очищает ошибку

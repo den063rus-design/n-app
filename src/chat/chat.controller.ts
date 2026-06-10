@@ -38,15 +38,6 @@ export class ChatController {
       dto.userId = user.id;
     }
     const message = await this.chatService.create(dto, user.id);
-
-    // Эмитим событие через socket
-    this.chatGateway.sendToChatParticipants(
-      message.senderId,
-      message.receiverId,
-      'message:new',
-      message,
-    );
-
     return message;
   }
 
@@ -92,15 +83,6 @@ export class ChatController {
     @CurrentUser() user: { id: number; role: string },
   ) {
     const result = await this.chatService.deleteMessage(messageId, user.id, user.role);
-
-    // Эмитим событие удаления
-    this.chatGateway.sendToChatParticipants(
-      result.message.senderId,
-      result.message.receiverId,
-      'message:deleted',
-      { messageId },
-    );
-
     return result.response;
   }
 
@@ -123,14 +105,6 @@ export class ChatController {
     @CurrentUser() user: { id: number; role: string },
   ) {
     const result = await this.chatService.deleteMessage(id, user.id, user.role);
-
-    this.chatGateway.sendToChatParticipants(
-      result.message.senderId,
-      result.message.receiverId,
-      'message:deleted',
-      { messageId: id },
-    );
-
     return result.response;
   }
 }
