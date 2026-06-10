@@ -121,6 +121,31 @@ class _AdminScreenState extends State<AdminScreen> {
                   },
                 ),
               ),
+              // Кнопка "Добавить пользователя" сразу после поиска
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () async {
+                      final result = await Navigator.push<bool>(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const CreateUserScreen(),
+                        ),
+                      );
+                      if (result == true) {
+                        userProvider.loadUsers();
+                      }
+                    },
+                    icon: const Icon(Icons.person_add),
+                    label: const Text('Добавить пользователя'),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
+                ),
+              ),
               // Row с сортировкой
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -176,24 +201,10 @@ class _AdminScreenState extends State<AdminScreen> {
               // Кнопки действий
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Row(
+                child: Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
                   children: [
-                    ElevatedButton.icon(
-                      icon: const Icon(Icons.person_add),
-                      label: const Text('Добавить пользователя'),
-                      onPressed: () async {
-                        final result = await Navigator.push<bool>(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const CreateUserScreen(),
-                          ),
-                        );
-                        if (result == true) {
-                          userProvider.loadUsers();
-                        }
-                      },
-                    ),
-                    const SizedBox(width: 12),
                     OutlinedButton.icon(
                       icon: const Icon(Icons.archive),
                       label: const Text('Архив'),

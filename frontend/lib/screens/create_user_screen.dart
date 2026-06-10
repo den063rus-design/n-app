@@ -36,7 +36,7 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
 
     try {
       final data = <String, dynamic>{
-        'fullName': _fullNameController.text.trim(),
+        'fio': _fullNameController.text.trim(),
         'login': _loginController.text.trim(),
         'password': _passwordController.text,
       };

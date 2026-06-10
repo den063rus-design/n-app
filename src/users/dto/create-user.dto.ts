@@ -9,11 +9,12 @@ export class CreateUserDto {
   @MinLength(2)
   fio!: string;
 
-  @ApiProperty({ example: 28 })
+  @ApiPropertyOptional({ example: 28 })
   @Type(() => Number)
+  @IsOptional()
   @IsInt()
   @Min(1)
-  age!: number;
+  age?: number;
 
   @ApiProperty({ example: 'ivan.ivanov' })
   @IsString()
