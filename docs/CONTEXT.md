@@ -230,10 +230,10 @@
 
 ### Backend (Debian сервер)
 
-- **Сервер:** `root@95.170.111.146`, порт 3000
-- **Пароль сервера:** `qe7G1hetfo2E`
-- **PM2 процесс:** `n-app-backend` (PID 1690596)
-- **Путь:** `/opt/n-app`
+- **Сервер:** `your-user@YOUR_SERVER_IP`, порт 3000
+- **Пароль сервера:** `YOUR_SERVER_PASSWORD`
+- **PM2 процесс:** `n-app-backend`
+- **Путь:** `your-project-path`
 - **Деплой:** `git pull` → `npm run build` → `pm2 restart n-app-backend`
 - **Скрипты:**
   - [`deploy/deploy-backend.sh`](deploy/deploy-backend.sh) — деплой без Git
@@ -270,8 +270,8 @@ module.exports = {
 
 **API Config** ([`frontend/lib/config/api_config.dart`](frontend/lib/config/api_config.dart)):
 ```dart
-static const String prodBaseUrl = 'http://95.170.111.146:3000';
-static const String prodWsUrl = 'ws://95.170.111.146:3000';
+static const String prodBaseUrl = 'http://YOUR_SERVER_IP:3000';
+static const String prodWsUrl = 'ws://YOUR_SERVER_IP:3000';
 static const bool isProduction = true; // Переключатель dev/prod
 ```
 
@@ -279,7 +279,7 @@ static const bool isProduction = true; // Переключатель dev/prod
 
 ## 🔐 Безопасность
 
-- **JWT_SECRET:** `my-super-secret-key-n-app-2026` (в .env на сервере)
+- **JWT_SECRET:** `YOUR_JWT_SECRET` (в .env на сервере)
 - **Срок действия JWT:** 7 дней
 - **Все эндпоинты защищены** `JwtAuthGuard` (кроме `/auth/login`)
 - **Ролевая защита:** `RolesGuard` + декоратор `@Roles('ADMIN')`
@@ -292,7 +292,7 @@ static const bool isProduction = true; // Переключатель dev/prod
 ### Переменные окружения (.env)
 ```
 DATABASE_URL=postgresql://...
-JWT_SECRET=my-super-secret-key-n-app-2026
+JWT_SECRET=YOUR_JWT_SECRET
 PORT=3000
 MINIO_ENDPOINT=http://localhost
 MINIO_PORT=9000
@@ -501,7 +501,7 @@ adb install build/app/outputs/flutter-apk/app-release.apk
 ### Деплой на сервер
 ```bash
 # SSH на сервер
-ssh root@95.170.111.146
+ssh your-user@YOUR_SERVER_IP
 
 # Быстрый деплой
 cd /opt/n-app && git pull && npm install && npm run build && npx prisma generate && npx prisma migrate deploy && pm2 restart n-app-backend
@@ -517,8 +517,8 @@ cd /opt/n-app && git pull && npm install && npm run build && npx prisma generate
 
 ## 📚 Полезные ссылки
 
-- **Swagger документация API:** `http://95.170.111.146:3000/api`
-- **MinIO Console:** `http://95.170.111.146:9001` (логин: `minioadmin`, пароль: `minioadmin`)
+- **Swagger документация API:** `http://YOUR_SERVER_IP:3000/api`
+- **MinIO Console:** `http://YOUR_SERVER_IP:9001` (логин: `minioadmin`, пароль: `minioadmin`)
 - **PM2 статус:** `pm2 status` (на сервере)
 - **PM2 логи:** `pm2 logs n-app-backend` (на сервере)
 - **GitHub репозиторий:** `github.com/den063rus-design/n-app`

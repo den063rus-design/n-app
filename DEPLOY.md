@@ -212,8 +212,8 @@ static const bool isProduction = true; // Меняем на true
 И укажите URL вашего сервера:
 
 ```dart
-static const String prodBaseUrl = 'http://95.170.111.146:3000';
-static const String prodWsUrl = 'ws://95.170.111.146:3000';
+static const String prodBaseUrl = 'http://YOUR_SERVER_IP:3000';
+static const String prodWsUrl = 'ws://YOUR_SERVER_IP:3000';
 ```
 
 > **Важно:** Если приложение и сервер на одной машине (тестирование), можно использовать `localhost:3000`. Для продакшена — укажите реальный IP или домен сервера.
@@ -318,7 +318,7 @@ adb install frontend/build/app/outputs/flutter-apk/app-release.apk
 **С сервера на локальный ПК (через SCP):**
 ```bash
 # На локальном ПК выполните:
-scp root@koha-server:/opt/n-app/frontend/build/app/outputs/flutter-apk/app-release.apk ./
+scp your-user@YOUR_SERVER_IP:your-project-path/frontend/build/app/outputs/flutter-apk/app-release.apk ./
 ```
 
 **Через Telegram:** можно отправить APK самому себе в Telegram (работает как файл).

@@ -1,4 +1,4 @@
-import { PrismaClient, Role, UserStatus } from '@prisma/client';
+﻿import { PrismaClient, Role, UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -9,7 +9,7 @@ async function main() {
   });
 
   if (existingAdmin) {
-    console.log('⚠️  Администратор уже существует, пропускаем seed.');
+    console.log('⚠️  Администратор уже существует, seed пропущен.');
     return;
   }
 

@@ -47,18 +47,18 @@ export class ChatService {
     });
 
     if (!sender || sender.status !== UserStatus.ACTIVE) {
-      throw new ForbiddenException('Пользователь недоступен');
+      throw new ForbiddenException('РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµРґРѕСЃС‚СѓРїРµРЅ');
     }
 
     const receiver = await this.resolveReceiver(sender.role, dto.userId);
 
     if (sender.id === receiver.id) {
-      throw new BadRequestException('Нельзя отправить сообщение самому себе');
+      throw new BadRequestException('РќРµР»СЊР·СЏ РѕС‚РїСЂР°РІРёС‚СЊ СЃРѕРѕР±С‰РµРЅРёРµ СЃР°РјРѕРјСѓ СЃРµР±Рµ');
     }
 
     this.assertAdminUserChat(sender.role, receiver.role);
 
-    // Определяем вложения: сначала из нового поля files, затем из старого fileKeys (для обратной совместимости)
+    // РћРїСЂРµРґРµР»СЏРµРј РІР»РѕР¶РµРЅРёСЏ: СЃРЅР°С‡Р°Р»Р° РёР· РЅРѕРІРѕРіРѕ РїРѕР»СЏ files, Р·Р°С‚РµРј РёР· СЃС‚Р°СЂРѕРіРѕ fileKeys (РґР»СЏ РѕР±СЂР°С‚РЅРѕР№ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚Рё)
     let attachmentsData: Array<{
       key: string;
       url: string;
@@ -76,7 +76,7 @@ export class ChatService {
         fileSize: f.fileSize,
       }));
     } else if (dto.fileKeys && dto.fileKeys.length > 0) {
-      // Обратная совместимость: fileKeys без метаданных
+      // РћР±СЂР°С‚РЅР°СЏ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚СЊ: fileKeys Р±РµР· РјРµС‚Р°РґР°РЅРЅС‹С…
       attachmentsData = dto.fileKeys.map((key) => {
         const ext = key.includes('.') ? key.split('.').pop()?.toLowerCase() : '';
         const fileType = this.getMimeTypeFromExtension(ext || '');
@@ -107,7 +107,7 @@ export class ChatService {
       select: this.messageSelect,
     });
 
-    // Эмитим событие через gateway
+    // Р­РјРёС‚РёРј СЃРѕР±С‹С‚РёРµ С‡РµСЂРµР· gateway
     this.chatGateway.sendToChatParticipants(
       message.senderId,
       message.receiverId,
@@ -115,11 +115,11 @@ export class ChatService {
       message,
     );
 
-    // Создаём уведомление для получателя (realtime-событие отправляется внутри createNotification)
+    // РЎРѕР·РґР°С‘Рј СѓРІРµРґРѕРјР»РµРЅРёРµ РґР»СЏ РїРѕР»СѓС‡Р°С‚РµР»СЏ (realtime-СЃРѕР±С‹С‚РёРµ РѕС‚РїСЂР°РІР»СЏРµС‚СЃСЏ РІРЅСѓС‚СЂРё createNotification)
     await this.notificationsService.createNotification({
       userId: message.receiverId,
       type: 'MESSAGE',
-      title: 'Новое сообщение',
+      title: 'РќРѕРІРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ',
       body: message.text.substring(0, 100),
       data: { messageId: message.id, senderId: message.senderId },
     });
@@ -133,9 +133,9 @@ export class ChatService {
     currentUserId: number,
     currentUserRole: string,
   ) {
-    // Если роль USER — проверяем, что userId === currentUserId
+    // Р•СЃР»Рё СЂРѕР»СЊ USER вЂ” РїСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ userId === currentUserId
     if (currentUserRole !== 'ADMIN' && userId !== currentUserId) {
-      throw new ForbiddenException('Доступ запрещён');
+      throw new ForbiddenException('Р”РѕСЃС‚СѓРї Р·Р°РїСЂРµС‰С‘РЅ');
     }
 
     const page = query.page ?? 1;
@@ -182,7 +182,7 @@ export class ChatService {
 
   async deleteMessage(messageId: number, currentUserId: number, currentUserRole: string) {
     if (currentUserRole !== 'ADMIN') {
-      throw new ForbiddenException('Только администратор может удалять сообщения');
+      throw new ForbiddenException('РўРѕР»СЊРєРѕ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ РјРѕР¶РµС‚ СѓРґР°Р»СЏС‚СЊ СЃРѕРѕР±С‰РµРЅРёСЏ');
     }
 
     const message = await this.prisma.message.findUnique({
@@ -195,14 +195,14 @@ export class ChatService {
     });
 
     if (!message) {
-      throw new NotFoundException('Сообщение не найдено');
+      throw new NotFoundException('РЎРѕРѕР±С‰РµРЅРёРµ РЅРµ РЅР°Р№РґРµРЅРѕ');
     }
 
     await this.prisma.message.delete({
       where: { id: messageId },
     });
 
-    // Эмитим событие удаления обоим участникам
+    // Р­РјРёС‚РёРј СЃРѕР±С‹С‚РёРµ СѓРґР°Р»РµРЅРёСЏ РѕР±РѕРёРј СѓС‡Р°СЃС‚РЅРёРєР°Рј
     this.chatGateway.sendToChatParticipants(
       message.senderId,
       message.receiverId,
@@ -212,7 +212,7 @@ export class ChatService {
 
     return {
       message: { senderId: message.senderId, receiverId: message.receiverId },
-      response: { message: 'Сообщение удалено' },
+      response: { message: 'РЎРѕРѕР±С‰РµРЅРёРµ СѓРґР°Р»РµРЅРѕ' },
     };
   }
 
@@ -227,11 +227,11 @@ export class ChatService {
     });
 
     if (!message) {
-      throw new NotFoundException('РЎРѕРѕР±С‰РµРЅРёРµ РЅРµ РЅР°Р№РґРµРЅРѕ');
+      throw new NotFoundException('Сообщение не найдено');
     }
 
     if (currentUserRole !== 'ADMIN' && message.senderId !== currentUserId) {
-      throw new ForbiddenException('РўРѕР»СЊРєРѕ Р°РІС‚РѕСЂ СЃРѕРѕР±С‰РµРЅРёСЏ РёР»Рё Р°РґРјРёРЅ РјРѕР¶РµС‚ СЂРµРґР°РєС‚РёСЂРѕРІР°С‚СЊ СЃРѕРѕР±С‰РµРЅРёРµ');
+      throw new ForbiddenException('Только автор сообщения или админ может редактировать сообщение');
     }
 
     const updated = await this.prisma.message.update({
@@ -268,7 +268,7 @@ export class ChatService {
     });
 
     if (!message) {
-      throw new NotFoundException('Сообщение не найдено');
+      throw new NotFoundException('РЎРѕРѕР±С‰РµРЅРёРµ РЅРµ РЅР°Р№РґРµРЅРѕ');
     }
 
     const updated = await this.prisma.message.update({
@@ -277,7 +277,7 @@ export class ChatService {
       select: this.messageSelect,
     });
 
-    // Эмитим событие обоим участникам
+    // Р­РјРёС‚РёРј СЃРѕР±С‹С‚РёРµ РѕР±РѕРёРј СѓС‡Р°СЃС‚РЅРёРєР°Рј
     this.chatGateway.sendToChatParticipants(updated.senderId, updated.receiverId, event, updated);
 
     return updated;
@@ -286,7 +286,7 @@ export class ChatService {
   private async resolveReceiver(senderRole: Role, receiverId?: number) {
     if (senderRole === Role.ADMIN) {
       if (!receiverId) {
-        throw new BadRequestException('Для администратора необходимо указать получателя');
+        throw new BadRequestException('Р”Р»СЏ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР° РЅРµРѕР±С…РѕРґРёРјРѕ СѓРєР°Р·Р°С‚СЊ РїРѕР»СѓС‡Р°С‚РµР»СЏ');
       }
 
       const receiver = await this.prisma.user.findUnique({
@@ -294,11 +294,11 @@ export class ChatService {
       });
 
       if (!receiver) {
-        throw new NotFoundException('Получатель не найден');
+        throw new NotFoundException('РџРѕР»СѓС‡Р°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ');
       }
 
       if (receiver.status !== UserStatus.ACTIVE) {
-        throw new BadRequestException('Получатель недоступен');
+        throw new BadRequestException('РџРѕР»СѓС‡Р°С‚РµР»СЊ РЅРµРґРѕСЃС‚СѓРїРµРЅ');
       }
 
       return receiver;
@@ -313,7 +313,7 @@ export class ChatService {
     });
 
     if (!admin) {
-      throw new NotFoundException('Активный администратор не найден');
+      throw new NotFoundException('РђРєС‚РёРІРЅС‹Р№ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ РЅРµ РЅР°Р№РґРµРЅ');
     }
 
     return admin;
@@ -356,7 +356,7 @@ export class ChatService {
       (senderRole === Role.USER && receiverRole === Role.ADMIN);
 
     if (!validPair) {
-      throw new BadRequestException('Чат доступен только между пользователем и администратором');
+      throw new BadRequestException('Р§Р°С‚ РґРѕСЃС‚СѓРїРµРЅ С‚РѕР»СЊРєРѕ РјРµР¶РґСѓ РїРѕР»СЊР·РѕРІР°С‚РµР»РµРј Рё Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂРѕРј');
     }
   }
 }

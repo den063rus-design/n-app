@@ -74,18 +74,6 @@ export class ChatController {
     return this.chatService.findByUser(userId);
   }
 
-  @Delete('message/:messageId')
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN')
-  @ApiOperation({ summary: 'Удалить сообщение (только admin)' })
-  async deleteMessage(
-    @Param('messageId', ParseIntPipe) messageId: number,
-    @CurrentUser() user: { id: number; role: string },
-  ) {
-    const result = await this.chatService.deleteMessage(messageId, user.id, user.role);
-    return result.response;
-  }
-
   @Patch('message/:messageId')
   @ApiOperation({ summary: 'Редактировать сообщение' })
   async updateMessage(

@@ -144,7 +144,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         // Permission.photos не доступен (Android < 13)
         photosPermission = Permission.storage;
       }
-      
+
       final status = await photosPermission.request();
       if (status.isPermanentlyDenied) {
         _showPermissionDenied('галерею');
@@ -228,7 +228,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     } catch (_) {
       photosPermission = Permission.storage;
     }
-    
+
     final status = await photosPermission.request();
     if (status.isPermanentlyDenied) {
       _showPermissionDenied('галерею');
@@ -347,9 +347,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final files = [
           {
             'key': fileKey,
-            'originalName': result['originalName'] as String? ?? fileName ?? fileKey,
+            'originalName':
+                result['originalName'] as String? ?? fileName ?? fileKey,
             'fileSize': result['fileSize'] as int? ?? 0,
-            'mimeType': result['mimeType'] as String? ?? 'application/octet-stream',
+            'mimeType':
+                result['mimeType'] as String? ?? 'application/octet-stream',
           },
         ];
         if (widget.isAdmin) {
@@ -385,7 +387,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Доступ запрещён'),
-        content: Text('Разрешение на $permissionName было отклонено навсегда. Пожалуйста, включите его в настройках приложения.'),
+        content: Text(
+            'Разрешение на $permissionName было отклонено навсегда. Пожалуйста, включите его в настройках приложения.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -612,10 +615,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     : null,
                                 onEdit: isMine
                                     ? (newText) async {
-                                        await context.read<ChatProvider>().updateMessage(
-                                          message.id,
-                                          newText,
-                                        );
+                                        await context
+                                            .read<ChatProvider>()
+                                            .updateMessage(
+                                              message.id,
+                                              newText,
+                                            );
                                       }
                                     : null,
                               );
@@ -634,8 +639,72 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Widget _buildInputBar() {
     // Режим записи голосового — показываем шкалу как в Telegram
     if (_isRecording) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      return SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.grey.withValues(alpha: 0.3),
+                blurRadius: 4,
+                offset: const Offset(0, -2),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              // Кнопка отмены записи
+              IconButton(
+                icon: const Icon(Icons.close),
+                color: Colors.red,
+                onPressed: _cancelRecording,
+              ),
+              const SizedBox(width: 8),
+              // Анимированная шкала записи
+              Expanded(
+                child: Container(
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: Colors.red[50],
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: const Row(
+                    children: [
+                      SizedBox(width: 16),
+                      Icon(Icons.mic, color: Colors.red, size: 20),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Запись голосового сообщения...',
+                          style: TextStyle(color: Colors.red),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Кнопка отправки записи
+              IconButton(
+                icon: const Icon(Icons.send),
+                color: Colors.red,
+                onPressed: _stopRecording,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Обычный режим ввода
+    final hasText = _messageController.text.isNotEmpty;
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: Colors.white,
           boxShadow: [
@@ -648,107 +717,49 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ),
         child: Row(
           children: [
-            // Кнопка отмены записи
+            // Кнопка прикрепления
             IconButton(
-              icon: const Icon(Icons.close),
-              color: Colors.red,
-              onPressed: _cancelRecording,
+              icon: const Icon(Icons.add_circle_outline),
+              color: Theme.of(context).colorScheme.primary,
+              onPressed: _showAttachmentSheet,
             ),
-            const SizedBox(width: 8),
-            // Анимированная шкала записи
+            const SizedBox(width: 4),
+            // Текстовое поле
             Expanded(
-              child: Container(
-                height: 48,
-                decoration: BoxDecoration(
-                  color: Colors.red[50],
-                  borderRadius: BorderRadius.circular(24),
+              child: TextField(
+                controller: _messageController,
+                decoration: InputDecoration(
+                  hintText: 'Введите сообщение...',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  filled: true,
+                  fillColor: Colors.grey[100],
                 ),
-                child: const Row(
-                  children: [
-                    SizedBox(width: 16),
-                    Icon(Icons.mic, color: Colors.red, size: 20),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Запись голосового сообщения...',
-                        style: TextStyle(color: Colors.red),
-                      ),
-                    ),
-                  ],
-                ),
+                onSubmitted: (_) => _sendTextMessage(),
+                textInputAction: TextInputAction.send,
               ),
             ),
-            const SizedBox(width: 8),
-            // Кнопка отправки записи
-            IconButton(
-              icon: const Icon(Icons.send),
-              color: Colors.red,
-              onPressed: _stopRecording,
-            ),
+            const SizedBox(width: 4),
+            // Кнопка микрофона (когда нет текста) или отправки (когда есть текст)
+            if (hasText)
+              IconButton(
+                icon: const Icon(Icons.send),
+                color: Theme.of(context).colorScheme.primary,
+                onPressed: _sendTextMessage,
+              )
+            else
+              IconButton(
+                icon: const Icon(Icons.mic),
+                color: Colors.grey,
+                onPressed: _toggleRecording,
+              ),
           ],
         ),
-      );
-    }
-
-    // Обычный режим ввода
-    final hasText = _messageController.text.isNotEmpty;
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withValues(alpha: 0.3),
-            blurRadius: 4,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          // Кнопка прикрепления
-          IconButton(
-            icon: const Icon(Icons.add_circle_outline),
-            color: Theme.of(context).colorScheme.primary,
-            onPressed: _showAttachmentSheet,
-          ),
-          const SizedBox(width: 4),
-          // Текстовое поле
-          Expanded(
-            child: TextField(
-              controller: _messageController,
-              decoration: InputDecoration(
-                hintText: 'Введите сообщение...',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-                filled: true,
-                fillColor: Colors.grey[100],
-              ),
-              onSubmitted: (_) => _sendTextMessage(),
-              textInputAction: TextInputAction.send,
-            ),
-          ),
-          const SizedBox(width: 4),
-          // Кнопка микрофона (когда нет текста) или отправки (когда есть текст)
-          if (hasText)
-            IconButton(
-              icon: const Icon(Icons.send),
-              color: Theme.of(context).colorScheme.primary,
-              onPressed: _sendTextMessage,
-            )
-          else
-            IconButton(
-              icon: const Icon(Icons.mic),
-              color: Colors.grey,
-              onPressed: _toggleRecording,
-            ),
-        ],
       ),
     );
   }

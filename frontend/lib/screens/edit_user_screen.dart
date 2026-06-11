@@ -62,14 +62,14 @@ class _EditUserScreenState extends State<EditUserScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Р”Р°РЅРЅС‹Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ СЃРѕС…СЂР°РЅРµРЅС‹')),
+          const SnackBar(content: Text('Данные пользователя сохранены')),
         );
         Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('РћС€РёР±РєР° СЃРѕС…СЂР°РЅРµРЅРёСЏ: $e')),
+          SnackBar(content: Text('Ошибка сохранения: $e')),
         );
       }
     } finally {
@@ -81,7 +81,7 @@ class _EditUserScreenState extends State<EditUserScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Р РµРґР°РєС‚РёСЂРѕРІР°РЅРёРµ РґР°РЅРЅС‹С…'),
+        title: const Text('Редактирование данных'),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -93,14 +93,14 @@ class _EditUserScreenState extends State<EditUserScreen> {
               TextFormField(
                 controller: _fullNameController,
                 decoration: const InputDecoration(
-                  labelText: 'Р¤РРћ',
+                  labelText: 'ФИО',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.person),
                 ),
                 textCapitalization: TextCapitalization.words,
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
-                    return 'Р’РІРµРґРёС‚Рµ Р¤РРћ';
+                    return 'Введите ФИО';
                   }
                   return null;
                 },
@@ -109,7 +109,7 @@ class _EditUserScreenState extends State<EditUserScreen> {
               TextFormField(
                 controller: _ageController,
                 decoration: const InputDecoration(
-                  labelText: 'Р’РѕР·СЂР°СЃС‚',
+                  labelText: 'Возраст',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.calendar_today),
                 ),
@@ -119,7 +119,7 @@ class _EditUserScreenState extends State<EditUserScreen> {
               TextFormField(
                 controller: _notesController,
                 decoration: const InputDecoration(
-                  labelText: 'Р—Р°РјРµС‚РєРё Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°',
+                  labelText: 'Заметки администратора',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.note),
                   alignLabelWithHint: true,
@@ -139,7 +139,7 @@ class _EditUserScreenState extends State<EditUserScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Text(
-                        'РЎРѕС…СЂР°РЅРёС‚СЊ РґР°РЅРЅС‹Рµ',
+                        'Сохранить данные',
                         style: TextStyle(fontSize: 16),
                       ),
               ),

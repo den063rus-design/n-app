@@ -191,7 +191,8 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
             'key': fileKey,
             'originalName': result['originalName'] as String? ?? fileKey,
             'fileSize': result['fileSize'] as int? ?? 0,
-            'mimeType': result['mimeType'] as String? ?? 'application/octet-stream',
+            'mimeType':
+                result['mimeType'] as String? ?? 'application/octet-stream',
           },
         ];
         await chat.sendMessage('', null, files: files);
@@ -392,10 +393,12 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
                                 isMine: isMine,
                                 onEdit: isMine
                                     ? (newText) async {
-                                        await context.read<ChatProvider>().updateMessage(
-                                          message.id,
-                                          newText,
-                                        );
+                                        await context
+                                            .read<ChatProvider>()
+                                            .updateMessage(
+                                              message.id,
+                                              newText,
+                                            );
                                       }
                                     : null,
                               );
@@ -404,106 +407,112 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
               ),
               // Индикатор записи
               if (_isRecording)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                  color: Colors.red[50],
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 12,
-                        height: 12,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.red,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Запись голосового сообщения...',
-                        style: TextStyle(color: Colors.red),
-                      ),
-                      const Spacer(),
-                      GestureDetector(
-                        onTap: _stopRecording,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 4),
-                          decoration: BoxDecoration(
+                SafeArea(
+                  top: false,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                    color: Colors.red[50],
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 12,
+                          height: 12,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
                             color: Colors.red,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Text(
-                            'Стоп',
-                            style:
-                                TextStyle(color: Colors.white, fontSize: 12),
                           ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Запись голосового сообщения...',
+                          style: TextStyle(color: Colors.red),
+                        ),
+                        const Spacer(),
+                        GestureDetector(
+                          onTap: _stopRecording,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Text(
+                              'Стоп',
+                              style:
+                                  TextStyle(color: Colors.white, fontSize: 12),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               // Поле ввода
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.grey.withValues(alpha: 0.3),
-                      blurRadius: 4,
-                      offset: const Offset(0, -2),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    // Кнопка прикрепления
-                    IconButton(
-                      icon: const Icon(Icons.add_circle_outline),
-                      color: Theme.of(context).colorScheme.primary,
-                      onPressed: _showAttachmentSheet,
-                    ),
-                    const SizedBox(width: 4),
-                    // Текстовое поле
-                    Expanded(
-                      child: TextField(
-                        controller: _messageController,
-                        decoration: InputDecoration(
-                          hintText: _isRecording
-                              ? 'Идёт запись...'
-                              : 'Введите сообщение...',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
-                          ),
-                          filled: true,
-                          fillColor: Colors.grey[100],
-                        ),
-                        onSubmitted: (_) => _sendTextMessage(),
-                        textInputAction: TextInputAction.send,
+              SafeArea(
+                top: false,
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.grey.withValues(alpha: 0.3),
+                        blurRadius: 4,
+                        offset: const Offset(0, -2),
                       ),
-                    ),
-                    const SizedBox(width: 4),
-                    // Кнопка голосового сообщения / отправки
-                    if (_messageController.text.isEmpty)
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      // Кнопка прикрепления
                       IconButton(
-                        icon: Icon(
-                          _isRecording ? Icons.stop_circle : Icons.mic,
-                          color: _isRecording ? Colors.red : Colors.grey,
-                        ),
-                        onPressed: _toggleRecording,
-                      )
-                    else
-                      IconButton(
-                        icon: const Icon(Icons.send),
+                        icon: const Icon(Icons.add_circle_outline),
                         color: Theme.of(context).colorScheme.primary,
-                        onPressed: _sendTextMessage,
+                        onPressed: _showAttachmentSheet,
                       ),
-                  ],
+                      const SizedBox(width: 4),
+                      // Текстовое поле
+                      Expanded(
+                        child: TextField(
+                          controller: _messageController,
+                          decoration: InputDecoration(
+                            hintText: _isRecording
+                                ? 'Идёт запись...'
+                                : 'Введите сообщение...',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(24),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            filled: true,
+                            fillColor: Colors.grey[100],
+                          ),
+                          onSubmitted: (_) => _sendTextMessage(),
+                          textInputAction: TextInputAction.send,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      // Кнопка голосового сообщения / отправки
+                      if (_messageController.text.isEmpty)
+                        IconButton(
+                          icon: Icon(
+                            _isRecording ? Icons.stop_circle : Icons.mic,
+                            color: _isRecording ? Colors.red : Colors.grey,
+                          ),
+                          onPressed: _toggleRecording,
+                        )
+                      else
+                        IconButton(
+                          icon: const Icon(Icons.send),
+                          color: Theme.of(context).colorScheme.primary,
+                          onPressed: _sendTextMessage,
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ],

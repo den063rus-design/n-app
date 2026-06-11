@@ -334,6 +334,11 @@ erDiagram
 
 **Хранение соединений:** `Map<userId, Set<socketId>>` в памяти (ChatGateway) / `Map<userId, string>` (CallGateway, NotificationsGateway)
 
+> **⚠️ Важно:** В проекте реализованы **только in-app уведомления через WebSocket (Socket.IO)**.
+> Push-уведомления (FCM) при свернутом или закрытом приложении **не работают**.
+> Для полноценных push-уведомлений требуется отдельный этап внедрения Firebase Cloud Messaging.
+> Подробнее: [план внедрения push-уведомлений](plans/push-notifications.md).
+
 ---
 
 ## 3. Frontend архитектура
@@ -419,13 +424,19 @@ frontend/lib/
 - Сигнализация через Socket.IO (`call:signal`)
 - Поддерживает: переключение камеры, отключение микрофона, отключение видео
 
+> **⚠️ Важно:** В проекте настроен **только STUN-сервер** (`stun:stun.l.google.com:19302`).
+> TURN-сервер отсутствует. В реальных сетях (симметричные NAT, корпоративные файрволы)
+> видеозвонки могут работать нестабильно или не устанавливаться.
+> Для production-надёжности требуется развернуть TURN-сервер (например, coturn).
+> Подробнее: [план внедрения TURN](plans/turn-server.md).
+
 ---
 
 ## 4. Безопасность
 
 ### 4.1. JWT токены
 - Токен подписывается секретом из `JWT_SECRET` (env)
-- **Production secret:** `my-super-secret-key-n-app-2026`
+- **Production secret:** `YOUR_JWT_SECRET`
 - Токен содержит: `sub` (userId), `login`, `role` — без чувствительных данных
 - Срок действия: 7 дней
 
@@ -521,17 +532,17 @@ frontend/lib/
 ## 7. Инфраструктура
 
 ### 7.1. Production сервер
-- **IP:** `95.170.111.146`
+- **IP:** `YOUR_SERVER_IP`
 - **Порт:** 3000
-- **Пользователь:** `root`
-- **Пароль:** `qe7G1hetfo2E`
-- **Путь:** `/opt/n-app`
-- **PM2 процесс:** `n-app-backend` (PID 1690596)
+- **Пользователь:** `your-user`
+- **Пароль:** `YOUR_SERVER_PASSWORD`
+- **Путь:** `your-project-path`
+- **PM2 процесс:** `n-app-backend`
 
 ### 7.2. Переменные окружения (.env)
 ```
 DATABASE_URL=postgresql://...
-JWT_SECRET=my-super-secret-key-n-app-2026
+JWT_SECRET=YOUR_JWT_SECRET
 PORT=3000
 MINIO_ENDPOINT=http://localhost
 MINIO_PORT=9000
@@ -569,7 +580,7 @@ CORS_ORIGIN=http://localhost:3000
 1. Внедрение Repository слоя (UserRepository, MessageRepository)
 2. Добавление `@nestjs/config` для управления конфигурацией
 3. Refresh token механизм
-4. Push-уведомления (FCM)
+4. Push-уведомления (FCM) — [план](plans/push-notifications.md) (не начато)
 5. Docker контейнеризация
 
 ### 8.3. Долгосрочные задачи

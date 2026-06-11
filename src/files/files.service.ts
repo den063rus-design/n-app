@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -45,7 +45,15 @@ export class FilesService {
     }
   }
 
-  async uploadFile(file: Express.Multer.File): Promise<{ url: string; key: string; mimeType: string; originalName: string; fileSize: number }> {
+  async uploadFile(
+    file: Express.Multer.File,
+  ): Promise<{
+    url: string;
+    key: string;
+    mimeType: string;
+    originalName: string;
+    fileSize: number;
+  }> {
     if (!file) {
       throw new InternalServerErrorException('Файл не был передан');
     }

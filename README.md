@@ -1,451 +1,357 @@
-# N App — Система коммуникации администратора и пользователей
+﻿# N App
 
-## 📋 Описание проекта
+Закрытая система общения администратора с пользователями.
 
-**N App** — это полнофункциональное чат-приложение для коммуникации между администратором и пользователями. Система позволяет администратору управлять пользователями (создавать, блокировать, архивировать, редактировать), общаться с ними в реальном времени через текстовые сообщения с вложениями (фото, видео, голосовые, документы), а также совершать видеозвонки через WebRTC.
+- Backend: `NestJS`, `Prisma`, `PostgreSQL`, `Socket.IO`, `JWT`, `bcrypt`
+- Frontend: `Flutter`
+- Файлы: локальное хранилище `uploads/` сейчас, `MinIO` можно подключить позже
+- Архитектура: `Controller -> Service -> PrismaService`
 
-**Архитектура:** NestJS (backend) + Flutter (frontend) + PostgreSQL (БД) + MinIO (файловое хранилище)
+## Что умеет проект
 
----
+- вход по логину и паролю без самостоятельной регистрации
+- создание пользователей только администратором
+- чат `user <-> admin`
+- текст, фото, видео, голосовые и документы
+- статусы сообщений `SENT / DELIVERED / READ`
+- блокировка, разблокировка, архивирование, восстановление пользователей
+- in-app уведомления через `Socket.IO`
+- WebRTC-звонки
 
-## 🏗 Архитектура
+## Важные ограничения
 
-### Frontend (Flutter)
+- в проекте нет `Docker`, `Docker Compose`, `Kubernetes`, `Nginx`, `SSL`
+- push-уведомления `FCM` пока не реализованы
+- для WebRTC сейчас настроен только `STUN`, без `TURN`, поэтому в некоторых сетях звонки могут работать нестабильно
 
-| Компонент | Технология | Версия |
-|-----------|-----------|--------|
-| Flutter SDK | Flutter | 3.44.1 |
-| Dart SDK | Dart | >=3.0.0 |
-| State management | Provider | ^6.1.1 |
-| HTTP клиент | Dio | ^5.4.0 |
-| WebSocket | socket_io_client | ^2.0.3+1 |
-| Secure Storage | flutter_secure_storage | ^9.0.0 |
-| WebRTC | flutter_webrtc | ^1.0.0 |
-| Image picker | image_picker | ^1.0.7 |
-| File picker | file_picker | ^8.0.0 |
-| Audio record | record | ^7.0.0 |
-| Audio player | audioplayers | ^5.2.1 |
-| Video player | video_player | ^2.8.2 |
-| Permissions | permission_handler | ^11.0.0 |
-| Connectivity | connectivity_plus | ^6.0.3 |
-| Intl | intl | ^0.19.0 |
+## Структура
 
-**Сборка:** Android APK (release), подпись через apksigner
-- **Минимальный SDK:** 21 (Android 5.0+)
-- **Target SDK:** 34 (Android 14)
-- **Compile SDK:** 34
-- **Gradle:** 8.14 (через Tencent mirror)
-- **AGP:** 8.9.1
-- **Kotlin:** 2.0.0
-- **NDK:** 27.0.12077973
-- **Keystore:** upload-keystore.jks (PKCS12, пароль: `napp123`, alias: `upload`)
-- **Подпись:** apksigner.jar из build-tools 34.0.0
-
-### Backend (NestJS)
-
-| Компонент | Технология | Версия |
-|-----------|-----------|--------|
-| Framework | NestJS | ^11.0.1 |
-| ORM | Prisma | ^6.19.3 |
-| База данных | PostgreSQL (через Prisma) | — |
-| Аутентификация | JWT + Passport | ^11.0.2 / ^11.0.5 |
-| Хеширование | bcrypt | ^6.0.0 |
-| Real-time | Socket.IO | ^4.8.3 |
-| Валидация | class-validator + class-transformer | ^0.15.1 / ^0.5.1 |
-| Документация API | Swagger | ^11.4.4 |
-| S3-клиент | @aws-sdk/client-s3 | ^3.1065.0 |
-| UUID | uuid | ^14.0.0 |
-
-### База данных (PostgreSQL)
-
-**Модели:** User, Message, Attachment, Call, Notification, UserSession
-
-**User:**
-- `id` (Int, PK, autoincrement)
-- `fio` (String) — ФИО
-- `age` (Int) — возраст
-- `login` (String, @unique) — логин
-- `passwordHash` (String) — хеш пароля (bcrypt)
-- `role` (Role: ADMIN | USER)
-- `status` (UserStatus: ACTIVE | BLOCKED | ARCHIVED)
-- `notes` (String?) — заметки администратора
-- `isOnline` (Boolean) — онлайн-статус
-- `lastSeenAt` (DateTime?) — время последней активности
-- `createdAt` / `updatedAt` (DateTime)
-
-**Message:**
-- `id` (Int, PK)
-- `senderId` / `receiverId` (Int, FK → User)
-- `text` (String) — текст сообщения
-- `status` (MessageStatus: SENT | DELIVERED | READ)
-- `createdAt` / `updatedAt` (DateTime)
-- `attachments` (Attachment[])
-
-**Attachment:**
-- `id` (Int, PK)
-- `messageId` (Int, FK → Message, onDelete: Cascade)
-- `fileName`, `fileType`, `fileSize`, `key` (@unique), `url`
-- `createdAt` (DateTime)
-
-**Call:**
-- `id` (Int, PK)
-- `callerId` / `calleeId` (Int, FK → User)
-- `status` (CallStatus: PENDING | ACCEPTED | REJECTED | ENDED | MISSED)
-- `startedAt` / `endedAt` (DateTime?)
-- `createdAt` (DateTime)
-
-**Notification:**
-- `id` (Int, PK)
-- `userId` (Int, FK → User)
-- `type` (NotificationType: MESSAGE | CALL)
-- `title`, `body?`, `data?` (Json)
-- `isRead` (Boolean, default: false)
-- `createdAt` (DateTime)
-
-**UserSession:**
-- `id` (String, PK, cuid)
-- `userId` (Int, FK → User)
-- `socketId` (String?)
-- `isActive` (Boolean)
-- `createdAt` / `updatedAt`
-
----
-
-## 🔌 API Endpoints
-
-### Auth
-| Метод | Путь | Доступ | Описание |
-|-------|------|--------|----------|
-| POST | `/auth/login` | Публичный | Вход (возвращает JWT + user) |
-
-### Users (только ADMIN)
-| Метод | Путь | Описание |
-|-------|------|----------|
-| POST | `/users` | Создать пользователя |
-| GET | `/users` | Список (с поиском, сортировкой, фильтрацией) |
-| GET | `/users/me` | Текущий пользователь по JWT |
-| GET | `/users/archive` | Архивные пользователи |
-| GET | `/users/:id` | Получить пользователя |
-| PATCH | `/users/:id` | Обновить данные |
-| PATCH | `/users/:id/block` | Заблокировать |
-| PATCH | `/users/:id/unblock` | Разблокировать |
-| PATCH | `/users/:id/archive` | Архивировать |
-| PATCH | `/users/:id/restore` | Восстановить из архива |
-| PATCH | `/users/:id/credentials` | Сменить логин/пароль |
-| PATCH | `/users/:id/online` | Обновить онлайн-статус |
-| DELETE | `/users/:id` | Удалить (только ARCHIVED) |
-
-### Chat
-| Метод | Путь | Доступ | Описание |
-|-------|------|--------|----------|
-| POST | `/chat` | Любой | Отправить сообщение |
-| GET | `/chat/my` | Любой | Свои сообщения |
-| GET | `/chat` | ADMIN | Все сообщения |
-| GET | `/chat/user/:userId` | ADMIN | Сообщения пользователя |
-| GET | `/chat/history/:userId` | Любой | История с пагинацией |
-| DELETE | `/chat/:id` | ADMIN | Удалить сообщение |
-| DELETE | `/chat/message/:messageId` | ADMIN | Удалить сообщение |
-
-### Files
-| Метод | Путь | Доступ | Описание |
-|-------|------|--------|----------|
-| POST | `/files/upload` | JWT | Загрузить файл (multipart) |
-| GET | `/files/:key` | JWT | Получить файл |
-| DELETE | `/files/:key` | JWT | Удалить файл |
-
-### Notifications
-| Метод | Путь | Доступ | Описание |
-|-------|------|--------|----------|
-| GET | `/notifications/my` | JWT | Мои уведомления |
-| PATCH | `/notifications/:id/read` | JWT | Отметить прочитанным |
-| PATCH | `/notifications/read-all` | JWT | Всё прочитано |
-| GET | `/notifications/unread-count` | JWT | Количество непрочитанных |
-
-### Call
-| Метод | Путь | Доступ | Описание |
-|-------|------|--------|----------|
-| GET | `/call/my` | JWT | Мои звонки |
-| GET | `/call/history/:userId` | ADMIN | История звонков пользователя |
-
-### WebSocket (Socket.IO) — порт 3000
-- **Аутентификация:** JWT токен через `handshake.auth.token`
-- **События:**
-  - `message:send` — отправка сообщения
-  - `message:read` — отметка о прочтении
-  - `message:new` — новое сообщение (для получателя)
-  - `message:delivered` — сообщение доставлено
-  - `message:deleted` — сообщение удалено
-  - `user:online` / `user:offline` — статус пользователя
-  - `heartbeat` — обновление lastSeenAt (каждые 30 сек)
-  - `call:start`, `call:accept`, `call:reject`, `call:end`, `call:signal`, `call:missed` — звонки
-  - `notification:new` — новое уведомление
-  - `notification:unread_count` — количество непрочитанных
-
----
-
-## 📱 Frontend Screens
-
-| Экран | Описание |
-|-------|----------|
-| **LoginScreen** | Вход по логину/паролю |
-| **AdminScreen** | Панель администратора: список пользователей, поиск, сортировка, фильтрация |
-| **UserScreen** | Чат пользователя с администратором |
-| **ChatScreen** | Полноценный чат: текст, фото, видео, голосовые, документы |
-| **ArchiveScreen** | Архивные пользователи (admin) |
-| **CreateUserScreen** | Создание нового пользователя (admin) |
-| **EditUserScreen** | Редактирование пользователя (admin) |
-| **UserCardScreen** | Карточка пользователя с полной информацией |
-| **CallScreen** | WebRTC видеозвонки |
-| **NotificationsScreen** | Уведомления |
-
----
-
-## 🔧 Сборка и деплой
-
-### Backend (Debian сервер)
-
-- **Сервер:** `root@95.170.111.146`, порт 3000
-- **Пароль сервера:** `qe7G1hetfo2E`
-- **PM2 процесс:** `n-app-backend` (PID 1690596)
-- **Путь:** `/opt/n-app`
-- **Деплой:** `git pull` → `npm run build` → `pm2 restart n-app-backend`
-- **Скрипты:**
-  - [`deploy/deploy-backend.sh`](deploy/deploy-backend.sh) — деплой без Git
-  - [`deploy/deploy-debian.sh`](deploy/deploy-debian.sh) — деплой через Git (сохраняет .env)
-  - [`deploy/setup-vps.sh`](deploy/setup-vps.sh) — настройка сервера с нуля
-
-**PM2 конфигурация** ([`ecosystem.config.js`](ecosystem.config.js)):
-```js
-module.exports = {
-  apps: [{
-    name: 'n-app-backend',
-    script: 'dist/main.js',
-    instances: 1,
-    autorestart: true,
-    watch: false,
-    max_memory_restart: '1G',
-    env: { NODE_ENV: 'production' },
-  }],
-};
+```text
+prisma/
+src/
+  auth/
+  chat/
+  common/
+  config/
+  files/
+  notifications/
+  prisma/
+  users/
+frontend/
+deploy/
+plans/
+README.md
+ARCHITECTURE.md
+DEPLOY.md
+ecosystem.config.js
 ```
 
-### Frontend (Windows 11)
+## Backend: установка на чистый Debian
 
-- **Flutter SDK:** 3.44.1
-- **Android SDK:** build-tools 34.0.0, platform-tools
-- **Gradle:** 8.14 (Tencent mirror: `https://mirrors.cloud.tencent.com/gradle/gradle-8.14-all.zip`)
-- **AGP:** 8.9.1, **Kotlin:** 2.0.0
-- **Java:** Android Studio JBR
-- **Keystore:** [`frontend/android/upload-keystore.jks`](frontend/android/upload-keystore.jks) (PKCS12, пароль: `napp123`, alias: `upload`)
-- **Установка:** ADB (USB) через platform-tools
-- **Команда сборки:** `flutter build apk --release`
-- **Подпись:** [`deploy/sign-apk.bat`](deploy/sign-apk.bat) (apksigner.jar из build-tools 34.0.0)
-- **Скрипт сборки:** [`deploy/build-apk.sh`](deploy/build-apk.sh)
+Ниже инструкция для чистого сервера Debian 12.
 
-**API Config** ([`frontend/lib/config/api_config.dart`](frontend/lib/config/api_config.dart)):
-```dart
-static const String prodBaseUrl = 'http://95.170.111.146:3000';
-static const String prodWsUrl = 'ws://95.170.111.146:3000';
-static const bool isProduction = true; // Переключатель dev/prod
+### 1. Обновить систему
+
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y git curl ca-certificates gnupg build-essential unzip
 ```
 
----
+### 2. Установить Node.js 20
 
-## 🔐 Безопасность
-
-- **JWT_SECRET:** `my-super-secret-key-n-app-2026` (в .env на сервере)
-- **Срок действия JWT:** 7 дней
-- **Все эндпоинты защищены** `JwtAuthGuard` (кроме `/auth/login`)
-- **Ролевая защита:** `RolesGuard` + декоратор `@Roles('ADMIN')`
-- **Валидация:** глобальный `ValidationPipe` с `whitelist: true`, `forbidNonWhitelisted: true`
-- **Пароли:** bcrypt с солью 10 раундов, `passwordHash` никогда не возвращается в API
-- **Файлы:** может загружать любой авторизованный пользователь (через MinIO/S3)
-- **CORS:** `origin: '*'` (в production рекомендуется ограничить)
-- **WebSocket CORS:** `origin: process.env.CORS_ORIGIN ?? 'http://localhost:3000'`
-
----
-
-## 🐛 Известные проблемы и решения
-
-### Исправленные баги
-
-| # | Проблема | Файл | Решение |
-|---|----------|------|---------|
-| 1 | **JWT_SECRET fallback в коде** — был указан `'super-secret-key-change-in-production'` | [`src/config/constants.ts`](src/config/constants.ts:2) | Убран fallback, теперь выбрасывается ошибка, если JWT_SECRET не задан в .env |
-| 2 | **Несоответствие полей Message** — frontend использовал `content` вместо `text`, `isRead` (bool) вместо `status` (enum) | [`frontend/lib/models/message.dart`](frontend/lib/models/message.dart:33-34) | Добавлена поддержка обоих полей через fallback в `fromJson`, статус теперь enum |
-| 3 | **Event names Socket.IO** — frontend эмитил `sendMessage`, а gateway слушал `message:send` | [`frontend/lib/services/socket_service.dart`](frontend/lib/services/socket_service.dart:85) | Исправлены все event names на соответствующие backend |
-| 4 | **Отправка сообщений от пользователя** — receiverId был ID текущего пользователя вместо ID админа | [`frontend/lib/providers/chat_provider.dart`](frontend/lib/providers/chat_provider.dart:233-253) | Backend сам находит администратора, если receiverId не указан |
-| 5 | **Нет try/catch в ChatGateway** — ошибки падали в сокет | [`src/chat/chat.gateway.ts`](src/chat/chat.gateway.ts:28-83) | Добавлены try/catch во все обработчики |
-| 6 | **CORS origin: '*'** —不安全ная конфигурация | [`src/main.ts`](src/main.ts:10-15) | Оставлено для разработки, в production через CORS_ORIGIN |
-| 7 | **Пустой ConfigModule** — не использовался | [`src/config/config.module.ts`](src/config/config.module.ts) | Оставлен как заглушка |
-| 8 | **Отсутствие валидации DTO в gateway** | [`src/chat/chat.gateway.ts`](src/chat/chat.gateway.ts) | Валидация пока только в HTTP контроллере |
-| 9 | **Нет rate limiting на WebSocket** | — | Рекомендуется добавить throttle |
-| 10 | **Нет Repository слоя** — сервисы напрямую зависят от PrismaService | Все сервисы | Рекомендуется внедрить абстракции UserRepository, MessageRepository |
-| 11 | **MessageResponseDto не включает updatedAt** | [`src/chat/dto/message-response.dto.ts`](src/chat/dto/message-response.dto.ts) | Синхронизировать DTO с select |
-| 12 | **AdminScreen использует ApiService напрямую** | [`frontend/lib/screens/admin_screen.dart`](frontend/lib/screens/admin_screen.dart) | Вынести логику в UserProvider |
-| 13 | **Нет валидации полей при создании пользователя на клиенте** | [`frontend/lib/screens/create_user_screen.dart`](frontend/lib/screens/create_user_screen.dart) | Добавить валидацию перед отправкой |
-
----
-
-## 📁 Структура проекта
-
-```
-n-app/
-├── deploy/                          # Скрипты деплоя
-│   ├── setup-vps.sh                 # Настройка сервера (PostgreSQL, MinIO, Node.js, PM2)
-│   ├── deploy-backend.sh            # Деплой бэкенда (npm install → build → prisma → pm2)
-│   ├── deploy-debian.sh             # Деплой на Debian через Git (с сохранением .env)
-│   ├── build-apk.sh                 # Сборка APK (flutter clean → pub get → build)
-│   ├── sign-apk.bat                 # Подпись APK через apksigner (Windows)
-│   └── setup-android-sdk.sh         # Установка Android SDK на Debian
-├── docs/
-│   ├── architecture.md              # Детальные архитектурные диаграммы (Mermaid)
-│   └── CONTEXT.md                   # Полный контекст проекта (этот файл)
-├── frontend/                        # Flutter приложение
-│   ├── pubspec.yaml                 # Зависимости Flutter
-│   ├── lib/
-│   │   ├── main.dart                # Точка входа
-│   │   ├── app/
-│   │   │   └── app.dart             # MaterialApp + MultiProvider + AuthGate + мониторинг сети
-│   │   ├── config/
-│   │   │   ├── api_config.dart      # URL сервера, таймауты, endpoints
-│   │   │   └── theme.dart           # Material 3 тема (primary: #1976D2)
-│   │   ├── models/
-│   │   │   ├── user.dart            # User модель (fullName, role, status, isOnline)
-│   │   │   ├── message.dart         # Message + Attachment модели
-│   │   │   ├── notification.dart    # AppNotification модель
-│   │   │   └── call.dart            # Call модель
-│   │   ├── services/
-│   │   │   ├── api_service.dart     # Dio singleton + JWT interceptor + все HTTP методы
-│   │   │   ├── auth_service.dart    # Login/logout/token management (SecureStorage)
-│   │   │   ├── socket_service.dart  # Socket.IO singleton + heartbeat + все события
-│   │   │   └── call_service.dart    # WebRTC + CallState management
-│   │   ├── providers/
-│   │   │   ├── auth_provider.dart   # AuthProvider (ChangeNotifier) — вход/выход/проверка
-│   │   │   ├── chat_provider.dart   # ChatProvider — сообщения, пользователи, файлы
-│   │   │   ├── user_provider.dart   # UserProvider — список пользователей, поиск, сортировка
-│   │   │   └── notification_provider.dart  # NotificationProvider — уведомления
-│   │   ├── screens/
-│   │   │   ├── login_screen.dart    # Экран входа
-│   │   │   ├── admin_screen.dart    # Панель администратора
-│   │   │   ├── user_screen.dart     # Чат пользователя
-│   │   │   ├── chat_screen.dart     # Полноценный чат
-│   │   │   ├── archive_screen.dart  # Архивные пользователи
-│   │   │   ├── create_user_screen.dart  # Создание пользователя
-│   │   │   ├── edit_user_screen.dart    # Редактирование пользователя
-│   │   │   ├── user_card_screen.dart    # Карточка пользователя
-│   │   │   ├── call_screen.dart     # WebRTC видеозвонки
-│   │   │   └── notifications_screen.dart # Уведомления
-│   │   └── widgets/
-│   │       ├── attachment_viewer.dart   # Просмотр вложений
-│   │       ├── message_bubble.dart      # Пузырёк сообщения
-│   │       └── notification_badge.dart  # Бейдж уведомлений
-│   ├── android/
-│   │   ├── build.gradle             # Корневой Gradle (AGP 8.9.1, Kotlin 2.0.0)
-│   │   ├── settings.gradle          # Настройки Gradle
-│   │   ├── gradle.properties        # minSdk=21, targetSdk=34, compileSdk=34
-│   │   ├── key.properties           # storePassword=napp123, keyAlias=upload
-│   │   ├── upload-keystore.jks      # Keystore для подписи APK
-│   │   ├── gradle/wrapper/
-│   │   │   └── gradle-wrapper.properties  # Gradle 8.14 (Tencent mirror)
-│   │   └── app/
-│   │       └── build.gradle         # Модуль app: applicationId=com.napp.app
-│   └── assets/
-│       └── icon.png                 # Иконка приложения
-├── prisma/
-│   ├── schema.prisma                # Prisma схема (6 моделей, 5 enum)
-│   └── seed.ts                      # Seed: создаёт admin/admin123
-├── src/                             # NestJS backend
-│   ├── main.ts                      # Точка входа: CORS, ValidationPipe, Swagger, порт 3000
-│   ├── app.module.ts                # Корневой модуль (7 модулей)
-│   ├── auth/                        # Модуль аутентификации
-│   │   ├── auth.module.ts
-│   │   ├── auth.controller.ts       # POST /auth/login
-│   │   ├── auth.service.ts          # Логика login + validateUser
-│   │   ├── jwt.strategy.ts          # Passport JWT Strategy
-│   │   ├── dto/auth.dto.ts          # LoginDto, AuthResponseDto
-│   │   └── guards/
-│   │       ├── jwt-auth.guard.ts    # JwtAuthGuard
-│   │       └── roles.guard.ts       # RolesGuard
-│   ├── users/                       # Модуль управления пользователями
-│   │   ├── users.module.ts
-│   │   ├── users.controller.ts      # CRUD + block/unblock/archive/restore/credentials
-│   │   ├── users.service.ts         # Бизнес-логика (bcrypt, поиск, сортировка)
-│   │   └── dto/
-│   │       ├── create-user.dto.ts
-│   │       ├── update-user.dto.ts
-│   │       ├── update-credentials.dto.ts
-│   │       └── query-users.dto.ts
-│   ├── chat/                        # Модуль чата
-│   │   ├── chat.module.ts
-│   │   ├── chat.controller.ts       # HTTP endpoints (send, list, delete)
-│   │   ├── chat.service.ts          # Бизнес-логика (create, resolveReceiver, status)
-│   │   ├── chat.gateway.ts          # Socket.IO gateway (connection, online status)
-│   │   └── dto/
-│   │       ├── create-message.dto.ts
-│   │       ├── message-response.dto.ts
-│   │       └── chat-history-query.dto.ts
-│   ├── files/                       # Модуль файлов (MinIO/S3)
-│   │   ├── files.module.ts
-│   │   ├── files.controller.ts      # POST upload, GET :key, DELETE :key
-│   │   └── files.service.ts         # S3Client (Put/Get/DeleteObjectCommand)
-│   ├── call/                        # Модуль звонков (WebRTC)
-│   │   ├── call.module.ts
-│   │   ├── call.controller.ts       # GET my, GET history/:userId
-│   │   ├── call.gateway.ts          # Socket.IO: call:start/accept/reject/end/signal
-│   │   └── call.service.ts          # CRUD звонков
-│   ├── notifications/               # Модуль уведомлений
-│   │   ├── notifications.module.ts
-│   │   ├── notifications.controller.ts  # GET my, PATCH read/read-all, GET unread-count
-│   │   ├── notifications.gateway.ts     # Socket.IO: notification:new, unread_count
-│   │   └── notifications.service.ts     # CRUD уведомлений
-│   ├── common/decorators/
-│   │   ├── current-user.decorator.ts # @CurrentUser()
-│   │   └── roles.decorator.ts        # @Roles()
-│   ├── config/
-│   │   ├── config.module.ts         # Пустой модуль (заглушка)
-│   │   └── constants.ts             # JWT secret + expiresIn (7d)
-│   └── prisma/
-│       ├── prisma.module.ts         # Global модуль
-│       └── prisma.service.ts        # PrismaClient lifecycle
-├── .env.production                  # Production переменные окружения
-├── ecosystem.config.js              # PM2 конфигурация
-├── package.json                     # NestJS зависимости и скрипты
-├── tsconfig.json                    # TypeScript конфигурация
-├── nest-cli.json                    # NestJS CLI конфигурация
-├── eslint.config.mjs                # ESLint конфигурация
-├── .prettierrc                      # Prettier конфигурация
-├── README.md                        # Этот файл
-├── ARCHITECTURE.md                  # Архитектурная документация
-└── DEPLOY.md                        # Инструкция по развёртыванию
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+node -v
+npm -v
 ```
 
----
+### 3. Установить PM2
 
-## 🚀 Быстрый старт
+```bash
+sudo npm install -g pm2
+pm2 -v
+```
 
-### Backend
+### 4. Установить PostgreSQL
+
+```bash
+sudo apt install -y postgresql postgresql-contrib
+sudo systemctl enable postgresql
+sudo systemctl start postgresql
+```
+
+### 5. Создать базу и пользователя PostgreSQL
+
+Пример:
+
+```bash
+sudo -u postgres psql
+```
+
+Внутри `psql`:
+
+```sql
+CREATE USER napp_user WITH PASSWORD 'CHANGE_ME_STRONG_PASSWORD';
+CREATE DATABASE n_app OWNER napp_user;
+GRANT ALL PRIVILEGES ON DATABASE n_app TO napp_user;
+\q
+```
+
+### 6. Клонировать проект
+
+```bash
+cd /opt
+sudo git clone https://github.com/den063rus-design/n-app.git n-app
+sudo chown -R $USER:$USER /opt/n-app
+cd /opt/n-app
+```
+
+### 7. Установить зависимости backend
+
 ```bash
 npm install
-npm run build
-npx prisma generate
-npx prisma migrate dev --name init
-npx prisma db seed
-npm run start:dev
 ```
 
-### Frontend
+### 8. Создать `.env`
+
+Создай файл `C:\Users\user\Desktop\N APP\.env` локально по аналогии, а на сервере файл должен лежать в `/opt/n-app/.env`.
+
+Пример содержимого для Debian:
+
+```env
+PORT=3000
+DATABASE_URL="postgresql://napp_user:CHANGE_ME_STRONG_PASSWORD@localhost:5432/n_app?schema=public"
+JWT_SECRET="CHANGE_ME_SUPER_SECRET"
+CORS_ORIGIN="http://YOUR_SERVER_IP:3000"
+FILE_STORAGE_DRIVER=local
+```
+
+Если позже будет использоваться `MinIO`, тогда дополнительно понадобятся:
+
+```env
+MINIO_ENDPOINT=http://YOUR_MINIO_HOST
+MINIO_PORT=9000
+MINIO_BUCKET=n-app-files
+MINIO_ACCESS_KEY=CHANGE_ME
+MINIO_SECRET_KEY=CHANGE_ME
+```
+
+### 9. Применить Prisma и создать администратора
+
+```bash
+npx prisma generate
+npx prisma migrate deploy
+npx prisma db seed
+```
+
+После `seed` по умолчанию создаётся администратор:
+
+- логин: `admin`
+- пароль: `admin123`
+
+### 10. Собрать backend
+
+```bash
+npm run build
+```
+
+### 11. Запустить backend через PM2
+
+```bash
+pm2 start ecosystem.config.js
+pm2 save
+pm2 startup
+```
+
+Если `pm2 startup` выведет отдельную команду, выполни её один раз под `sudo`.
+
+### 12. Проверка
+
+```bash
+pm2 status
+curl http://localhost:3000
+```
+
+Swagger после запуска будет доступен по адресу:
+
+```text
+http://YOUR_SERVER_IP:3000/api
+```
+
+## Обновление backend через Git
+
+Базовая команда обновления, которую ты используешь:
+
+```bash
+cd /opt/n-app
+git pull
+npm run build
+pm2 restart n-app-backend
+```
+
+Если в коммите менялась Prisma schema или миграции, после `git pull` дополнительно выполни:
+
+```bash
+npx prisma migrate deploy
+```
+
+## Если потерян логин или пароль администратора
+
+### Вариант 1. Сбросить пароль существующему админу
+
+Перейди в проект:
+
+```bash
+cd /opt/n-app
+```
+
+Сгенерируй новый bcrypt hash:
+
+```bash
+node -e "const bcrypt=require('bcrypt'); bcrypt.hash('NEW_ADMIN_PASSWORD',10).then(h=>console.log(h))"
+```
+
+Скопируй полученный hash.
+
+Посмотри пользователей:
+
+```bash
+psql "$DATABASE_URL" -c "SELECT id, login, role, status FROM \"User\" ORDER BY id;"
+```
+
+Обнови нужного администратора по `id`:
+
+```bash
+psql "$DATABASE_URL" -c "UPDATE \"User\" SET login='admin', \"passwordHash\"='PASTE_BCRYPT_HASH_HERE', role='ADMIN', status='ACTIVE' WHERE id=ADMIN_ID;"
+```
+
+### Вариант 2. Создать нового администратора вручную
+
+Сначала получи hash так же, как в примере выше.
+
+Потом создай запись:
+
+```bash
+psql "$DATABASE_URL" -c "INSERT INTO \"User\" (fio, age, login, \"passwordHash\", role, status, \"createdAt\", \"updatedAt\") VALUES ('Главный администратор', 30, 'admin', 'PASTE_BCRYPT_HASH_HERE', 'ADMIN', 'ACTIVE', NOW(), NOW());"
+```
+
+## Frontend: что нужно для сборки APK
+
+### Программы и инструменты
+
+Для сборки Android APK на Windows используются:
+
+- `Flutter SDK`
+- `Dart SDK` (идёт вместе с Flutter)
+- `Android Studio`
+- `Android SDK Platform-Tools`
+- `Android SDK Build-Tools`
+- `Java` / `JBR` из Android Studio
+- `adb`
+- `apksigner`
+- `Git`
+- `PowerShell` или `cmd`
+
+### Версии из проекта
+
+Смотри конфиги:
+
+- `C:\Users\user\Desktop\N APP\frontend\pubspec.yaml`
+- `C:\Users\user\Desktop\N APP\frontend\android\settings.gradle`
+- `C:\Users\user\Desktop\N APP\frontend\android\app\build.gradle`
+
+Текущие важные значения:
+
+- `AGP`: `8.9.1`
+- `Kotlin`: `2.0.0`
+- `minSdk`: из Flutter-конфига проекта
+- `compileSdk` / `targetSdk`: из Flutter/Android-конфига проекта
+
+### Сборка APK
+
 ```bash
 cd frontend
 flutter pub get
+flutter doctor
 flutter build apk --release
 ```
 
-### Деплой на сервер
-```bash
-# На сервере:
-cd /opt/n-app && git pull && npm install && npm run build && npx prisma generate && npx prisma migrate deploy && pm2 restart n-app-backend
+Готовый APK:
+
+```text
+frontend/build/app/outputs/flutter-apk/app-release.apk
 ```
 
-### Учётные данные по умолчанию
-- **Администратор:** логин `admin`, пароль `admin123`
+### Установка APK через ADB
+
+```bash
+adb devices
+adb install -r build\app\outputs\flutter-apk\app-release.apk
+```
+
+### Полезные скрипты в репозитории
+
+- `C:\Users\user\Desktop\N APP\deploy\build-apk.sh`
+- `C:\Users\user\Desktop\N APP\deploy\sign-apk.bat`
+- `C:\Users\user\Desktop\N APP\deploy\setup-android-sdk.sh`
+- `C:\Users\user\Desktop\N APP\deploy\setup-vps.sh`
+- `C:\Users\user\Desktop\N APP\deploy\deploy-debian.sh`
+- `C:\Users\user\Desktop\N APP\deploy\deploy-backend.sh`
+
+## Настройка frontend API
+
+Файл:
+
+- `C:\Users\user\Desktop\N APP\frontend\lib\config\api_config.dart`
+
+Если приложение собирается под реальный сервер, проверь:
+
+- `prodBaseUrl`
+- `prodWsUrl`
+- флаг `isProduction`
+
+## Файлы и загрузки
+
+Сейчас локальное файловое хранилище работает через папку:
+
+```text
+/opt/n-app/uploads
+```
+
+Git её не отслеживает.
+
+## Полезные команды
+
+### Prisma
+
+```bash
+npx prisma generate
+npx prisma migrate deploy
+npx prisma studio
+```
+
+### PM2
+
+```bash
+pm2 status
+pm2 logs n-app-backend
+pm2 restart n-app-backend
+pm2 stop n-app-backend
+```
+
+### Git
+
+```bash
+git status
+git pull
+git log --oneline -n 10
+```
+
+## Что ещё важно
+
+- `README.md` — быстрая инструкция
+- `ARCHITECTURE.md` — архитектура и ограничения
+- `DEPLOY.md` — дополнительная инструкция по развёртыванию
+- `plans/push-notifications.md` — план по FCM
+- `plans/turn-server.md` — план по TURN
