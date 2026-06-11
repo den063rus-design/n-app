@@ -4,12 +4,13 @@ import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:record/record.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
 import '../models/message.dart';
 import '../widgets/message_bubble.dart';
 import 'call_screen.dart';
+import 'chat_search_delegate.dart';
 
 class ChatScreen extends StatefulWidget {
   final int userId;
@@ -31,20 +32,23 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _messageController = TextEditingController();
-  final _scrollController = ScrollController();
+  final _itemScrollController = ItemScrollController();
   final _imagePicker = ImagePicker();
   final _audioRecorder = AudioRecorder();
   bool _isRecording = false;
   String? _recordingPath;
   bool _isSending = false;
   bool _isSendingText = false;
+  int _lastMessageCount = 0;
+  int? _highlightedMessageId;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadMessages();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _loadMessages();
+      _scrollToBottom();
     });
     // Слушаем изменения текста для обновления кнопки отправки
     _messageController.addListener(_onTextChanged);
@@ -55,7 +59,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _messageController.removeListener(_onTextChanged);
     _messageController.dispose();
-    _scrollController.dispose();
     _audioRecorder.dispose();
     super.dispose();
   }
@@ -68,27 +71,70 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _loadMessages();
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await _loadMessages();
+        _scrollToBottom();
+      });
     }
   }
 
-  void _loadMessages() {
+  Future<void> _loadMessages() async {
     final chat = context.read<ChatProvider>();
     if (widget.isAdmin) {
-      chat.loadUserMessages(widget.userId);
+      await chat.loadUserMessages(widget.userId);
     } else {
-      chat.loadMessages();
+      await chat.loadMessages();
     }
   }
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
+      final chat = context.read<ChatProvider>();
+      if (chat.messages.isEmpty) return;
+      _itemScrollController.scrollTo(
+        index: chat.messages.length - 1,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  void _openSearch() {
+    final chat = context.read<ChatProvider>();
+    showSearch<int?>(
+      context: context,
+      delegate: ChatSearchDelegate(messages: chat.messages),
+    ).then((messageId) {
+      if (messageId != null) {
+        _scrollToMessage(messageId);
+      }
+    });
+  }
+
+  void _scrollToMessage(int messageId) {
+    final chat = context.read<ChatProvider>();
+    final index = chat.messages.indexWhere((m) => m.id == messageId);
+    if (index == -1) return;
+
+    setState(() {
+      _highlightedMessageId = messageId;
+    });
+
+    // Точный переход по индексу через ItemScrollController
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _itemScrollController.scrollTo(
+        index: index,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut,
+      );
+    });
+
+    // Снимаем подсветку через 2 секунды
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        setState(() {
+          _highlightedMessageId = null;
+        });
       }
     });
   }
@@ -120,45 +166,25 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _pickImageFromSource(ImageSource source) async {
-    // Запрашиваем разрешение в зависимости от источника
-    if (source == ImageSource.camera) {
-      final status = await Permission.camera.request();
-      if (status.isPermanentlyDenied) {
-        _showPermissionDenied('камеру');
-        return;
+  Future<void> _pickImageFromGallery() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+      );
+      if (result != null && result.files.single.path != null) {
+        final path = result.files.single.path!;
+        final fileName = result.files.single.name;
+        await _sendFile(path, 'image', fileName: fileName);
       }
-      if (!status.isGranted) {
-        _showError('Нет разрешения на использование камеры');
-        return;
-      }
-    } else {
-      // Для Android 13+ (API 33+) нужно разрешение READ_MEDIA_IMAGES
-      // Для Android < 13 нужно READ_EXTERNAL_STORAGE
-      Permission photosPermission;
-      try {
-        // Проверяем, доступно ли Permission.photos (Android 13+)
-        final photosStatus = await Permission.photos.status;
-        photosPermission = Permission.photos;
-      } catch (_) {
-        // Permission.photos не доступен (Android < 13)
-        photosPermission = Permission.storage;
-      }
-
-      final status = await photosPermission.request();
-      if (status.isPermanentlyDenied) {
-        _showPermissionDenied('галерею');
-        return;
-      }
-      if (!status.isGranted) {
-        _showError('Нет разрешения на доступ к галерее');
-        return;
-      }
+    } catch (e) {
+      _showError('Ошибка выбора фото: $e');
     }
+  }
 
+  Future<void> _pickImageFromCamera() async {
     try {
       final XFile? image = await _imagePicker.pickImage(
-        source: source,
+        source: ImageSource.camera,
         imageQuality: 80,
       );
       if (image != null) {
@@ -167,84 +193,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _showError('Фото не выбрано');
       }
     } catch (e) {
-      _showError('Ошибка выбора фото: $e');
+      _showError('Ошибка фото с камеры: $e');
     }
   }
 
-  void _showImageSourcePicker() {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Выберите источник',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _attachmentButton(
-                    icon: Icons.photo_library,
-                    label: 'Галерея',
-                    color: Colors.blue,
-                    onTap: () {
-                      Navigator.pop(context);
-                      _pickImageFromSource(ImageSource.gallery);
-                    },
-                  ),
-                  _attachmentButton(
-                    icon: Icons.camera_alt,
-                    label: 'Камера',
-                    color: Colors.teal,
-                    onTap: () {
-                      Navigator.pop(context);
-                      _pickImageFromSource(ImageSource.camera);
-                    },
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _pickVideo() async {
-    // Запрашиваем разрешение на галерею для видео
-    Permission photosPermission;
+  Future<void> _pickVideoFromGallery() async {
     try {
-      await Permission.photos.status;
-      photosPermission = Permission.photos;
-    } catch (_) {
-      photosPermission = Permission.storage;
-    }
-
-    final status = await photosPermission.request();
-    if (status.isPermanentlyDenied) {
-      _showPermissionDenied('галерею');
-      return;
-    }
-    if (!status.isGranted) {
-      _showError('Нет разрешения на доступ к галерее');
-      return;
-    }
-
-    try {
-      final XFile? video = await _imagePicker.pickVideo(
-        source: ImageSource.gallery,
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.video,
       );
-      if (video != null) {
-        await _sendFile(video.path, 'video');
+      if (result != null && result.files.single.path != null) {
+        final path = result.files.single.path!;
+        final fileName = result.files.single.name;
+        await _sendFile(path, 'video', fileName: fileName);
       }
     } catch (e) {
       _showError('Ошибка выбора видео: $e');
@@ -274,13 +235,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<void> _startRecording() async {
     try {
-      // Явно запрашиваем разрешение на микрофон через permission_handler
-      final micStatus = await Permission.microphone.request();
-      if (micStatus.isPermanentlyDenied) {
-        _showPermissionDenied('микрофон');
-        return;
-      }
-      if (!micStatus.isGranted) {
+      final hasPermission = await _audioRecorder.hasPermission();
+      if (!hasPermission) {
         _showError('Нет разрешения на запись аудио');
         return;
       }
@@ -341,7 +297,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (auth.currentUser == null) return;
 
     try {
-      final result = await chat.uploadFile(filePath);
+      // ADMIN передаёт userId получателя, USER — не передаёт (backend сам берёт из JWT)
+      final result = await chat.uploadFile(
+        filePath,
+        userId: widget.isAdmin ? widget.userId : null,
+      );
       if (result != null) {
         final fileKey = result['key'] as String;
         final files = [
@@ -381,31 +341,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  void _showPermissionDenied(String permissionName) {
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Доступ запрещён'),
-        content: Text(
-            'Разрешение на $permissionName было отклонено навсегда. Пожалуйста, включите его в настройках приложения.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              openAppSettings();
-            },
-            child: const Text('Открыть настройки'),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _showAttachmentSheet() {
     showModalBottomSheet(
       context: context,
@@ -432,7 +367,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     color: Colors.blue,
                     onTap: () {
                       Navigator.pop(context);
-                      _showImageSourcePicker();
+                      _pickImageFromGallery();
+                    },
+                  ),
+                  _attachmentButton(
+                    icon: Icons.camera_alt,
+                    label: 'Камера',
+                    color: Colors.teal,
+                    onTap: () {
+                      Navigator.pop(context);
+                      _pickImageFromCamera();
                     },
                   ),
                   _attachmentButton(
@@ -441,7 +385,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     color: Colors.green,
                     onTap: () {
                       Navigator.pop(context);
-                      _pickVideo();
+                      _pickVideoFromGallery();
                     },
                   ),
                   _attachmentButton(
@@ -554,6 +498,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.search),
+            onPressed: _openSearch,
+          ),
+          IconButton(
             icon: const Icon(Icons.videocam),
             onPressed: () {
               Navigator.push(
@@ -580,6 +528,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ),
       body: Consumer2<ChatProvider, AuthProvider>(
         builder: (context, chat, auth, _) {
+          // Автоскролл при изменении списка сообщений
+          if (chat.messages.length != _lastMessageCount) {
+            final prevCount = _lastMessageCount;
+            _lastMessageCount = chat.messages.length;
+            if (chat.messages.length > prevCount) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _scrollToBottom();
+              });
+            }
+          }
+
           return Column(
             children: [
               // Сообщения
@@ -593,8 +552,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               style: TextStyle(color: Colors.grey),
                             ),
                           )
-                        : ListView.builder(
-                            controller: _scrollController,
+                        : ScrollablePositionedList.builder(
+                            itemScrollController: _itemScrollController,
                             padding: const EdgeInsets.all(12),
                             itemCount: chat.messages.length,
                             itemBuilder: (context, index) {
@@ -610,6 +569,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 message: message,
                                 isAdmin: widget.isAdmin,
                                 isMine: isMine,
+                                isHighlighted:
+                                    message.id == _highlightedMessageId,
                                 onDelete: widget.isAdmin
                                     ? () => _confirmDeleteMessage(message)
                                     : null,
@@ -740,24 +701,28 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   filled: true,
                   fillColor: Colors.grey[100],
                 ),
-                onSubmitted: (_) => _sendTextMessage(),
-                textInputAction: TextInputAction.send,
+                textInputAction: TextInputAction.newline,
+                keyboardType: TextInputType.multiline,
+                minLines: 1,
+                maxLines: 5,
               ),
             ),
             const SizedBox(width: 4),
-            // Кнопка микрофона (когда нет текста) или отправки (когда есть текст)
-            if (hasText)
-              IconButton(
-                icon: const Icon(Icons.send),
-                color: Theme.of(context).colorScheme.primary,
-                onPressed: _sendTextMessage,
-              )
-            else
-              IconButton(
-                icon: const Icon(Icons.mic),
-                color: Colors.grey,
-                onPressed: _toggleRecording,
-              ),
+            // Кнопка отправки (всегда видна)
+            IconButton(
+              icon: const Icon(Icons.send),
+              color: hasText
+                  ? Theme.of(context).colorScheme.primary
+                  : Colors.grey.shade300,
+              onPressed: hasText ? _sendTextMessage : null,
+            ),
+            const SizedBox(width: 2),
+            // Кнопка микрофона (всегда видна)
+            IconButton(
+              icon: const Icon(Icons.mic),
+              color: Colors.grey,
+              onPressed: _toggleRecording,
+            ),
           ],
         ),
       ),

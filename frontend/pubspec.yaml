@@ -21,8 +21,8 @@ dependencies:
   video_player: ^2.8.2
   intl: ^0.19.0
   flutter_webrtc: ^1.0.0
-  permission_handler: ^11.0.0
   connectivity_plus: ^6.0.3
+  scrollable_positioned_list: ^0.3.8
 
 dev_dependencies:
   flutter_test:

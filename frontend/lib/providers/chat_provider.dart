@@ -327,10 +327,11 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  /// Загружает файл на сервер и возвращает Map с key, mimeType, originalName, fileSize
-  Future<Map<String, dynamic>?> uploadFile(String filePath) async {
+  /// Загружает файл на сервер и возвращает Map с key, mimeType, originalName, fileSize.
+  /// [userId] — обязателен для ADMIN (ID получателя), для USER не нужен.
+  Future<Map<String, dynamic>?> uploadFile(String filePath, {int? userId}) async {
     try {
-      final result = await _apiService.uploadFile(filePath);
+      final result = await _apiService.uploadFile(filePath, userId: userId);
       return result;
     } catch (e) {
       _error = 'Ошибка загрузки файла: $e';

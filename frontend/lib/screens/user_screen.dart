@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
 import '../providers/notification_provider.dart';
@@ -11,6 +12,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:record/record.dart';
 import 'call_screen.dart';
 import 'notifications_screen.dart';
+import 'chat_search_delegate.dart';
 
 class UserScreen extends StatefulWidget {
   const UserScreen({super.key});
@@ -21,46 +23,101 @@ class UserScreen extends StatefulWidget {
 
 class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
   final _messageController = TextEditingController();
-  final _scrollController = ScrollController();
+  final _itemScrollController = ItemScrollController();
   final _imagePicker = ImagePicker();
   final _audioRecorder = AudioRecorder();
   bool _isRecording = false;
   String? _recordingPath;
   bool _isSendingText = false;
+  int _lastMessageCount = 0;
+  int? _highlightedMessageId;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<ChatProvider>().loadMessages();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _loadMessages();
+      _scrollToBottom();
     });
+    // Слушаем изменения текста для обновления кнопки отправки
+    _messageController.addListener(_onTextChanged);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _messageController.removeListener(_onTextChanged);
     _messageController.dispose();
-    _scrollController.dispose();
     _audioRecorder.dispose();
     super.dispose();
+  }
+
+  void _onTextChanged() {
+    // Перестраиваем UI при изменении текста (для кнопки отправки)
+    setState(() {});
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      context.read<ChatProvider>().loadMessages();
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await _loadMessages();
+        _scrollToBottom();
+      });
     }
+  }
+
+  Future<void> _loadMessages() async {
+    await context.read<ChatProvider>().loadMessages();
   }
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
+      final chat = context.read<ChatProvider>();
+      if (chat.messages.isEmpty) return;
+      _itemScrollController.scrollTo(
+        index: chat.messages.length - 1,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  void _openSearch() {
+    final chat = context.read<ChatProvider>();
+    showSearch<int?>(
+      context: context,
+      delegate: ChatSearchDelegate(messages: chat.messages),
+    ).then((messageId) {
+      if (messageId != null) {
+        _scrollToMessage(messageId);
+      }
+    });
+  }
+
+  void _scrollToMessage(int messageId) {
+    final chat = context.read<ChatProvider>();
+    final index = chat.messages.indexWhere((m) => m.id == messageId);
+    if (index == -1) return;
+
+    setState(() {
+      _highlightedMessageId = messageId;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _itemScrollController.scrollTo(
+        index: index,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut,
+      );
+    });
+
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        setState(() {
+          _highlightedMessageId = null;
+        });
       }
     });
   }
@@ -87,27 +144,44 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _pickImage() async {
+  Future<void> _pickImageFromGallery() async {
     try {
-      final XFile? image = await _imagePicker.pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 80,
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
       );
-      if (image != null) {
-        await _sendFile(image.path, 'image');
+      if (result != null && result.files.single.path != null) {
+        final path = result.files.single.path!;
+        final fileName = result.files.single.name;
+        await _sendFile(path, 'image', fileName: fileName);
       }
     } catch (e) {
       _showError('Ошибка выбора фото');
     }
   }
 
-  Future<void> _pickVideo() async {
+  Future<void> _pickImageFromCamera() async {
     try {
-      final XFile? video = await _imagePicker.pickVideo(
-        source: ImageSource.gallery,
+      final XFile? image = await _imagePicker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 80,
       );
-      if (video != null) {
-        await _sendFile(video.path, 'video');
+      if (image != null) {
+        await _sendFile(image.path, 'image');
+      }
+    } catch (e) {
+      _showError('Ошибка фото с камеры');
+    }
+  }
+
+  Future<void> _pickVideoFromGallery() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.video,
+      );
+      if (result != null && result.files.single.path != null) {
+        final path = result.files.single.path!;
+        final fileName = result.files.single.name;
+        await _sendFile(path, 'video', fileName: fileName);
       }
     } catch (e) {
       _showError('Ошибка выбора видео');
@@ -177,7 +251,7 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _sendFile(String filePath, String fileType) async {
+  Future<void> _sendFile(String filePath, String fileType, {String? fileName}) async {
     final chat = context.read<ChatProvider>();
     final auth = context.read<AuthProvider>();
     if (auth.currentUser == null) return;
@@ -189,7 +263,7 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
         final files = [
           {
             'key': fileKey,
-            'originalName': result['originalName'] as String? ?? fileKey,
+            'originalName': result['originalName'] as String? ?? fileName ?? fileKey,
             'fileSize': result['fileSize'] as int? ?? 0,
             'mimeType':
                 result['mimeType'] as String? ?? 'application/octet-stream',
@@ -236,7 +310,16 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
                     color: Colors.blue,
                     onTap: () {
                       Navigator.pop(context);
-                      _pickImage();
+                      _pickImageFromGallery();
+                    },
+                  ),
+                  _attachmentButton(
+                    icon: Icons.camera_alt,
+                    label: 'Камера',
+                    color: Colors.teal,
+                    onTap: () {
+                      Navigator.pop(context);
+                      _pickImageFromCamera();
                     },
                   ),
                   _attachmentButton(
@@ -245,7 +328,7 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
                     color: Colors.green,
                     onTap: () {
                       Navigator.pop(context);
-                      _pickVideo();
+                      _pickVideoFromGallery();
                     },
                   ),
                   _attachmentButton(
@@ -302,12 +385,158 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _cancelRecording() async {
+    try {
+      await _audioRecorder.stop();
+    } catch (_) {}
+    setState(() {
+      _isRecording = false;
+      _recordingPath = null;
+    });
+  }
+
+  Widget _buildInputBar() {
+    // Режим записи голосового — показываем шкалу как в Telegram
+    if (_isRecording) {
+      return SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.grey.withValues(alpha: 0.3),
+                blurRadius: 4,
+                offset: const Offset(0, -2),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              // Кнопка отмены записи
+              IconButton(
+                icon: const Icon(Icons.close),
+                color: Colors.red,
+                onPressed: _cancelRecording,
+              ),
+              const SizedBox(width: 8),
+              // Анимированная шкала записи
+              Expanded(
+                child: Container(
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: Colors.red[50],
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: const Row(
+                    children: [
+                      SizedBox(width: 16),
+                      Icon(Icons.mic, color: Colors.red, size: 20),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Запись голосового сообщения...',
+                          style: TextStyle(color: Colors.red),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Кнопка отправки записи
+              IconButton(
+                icon: const Icon(Icons.send),
+                color: Colors.red,
+                onPressed: _stopRecording,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Обычный режим ввода
+    final hasText = _messageController.text.isNotEmpty;
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.withValues(alpha: 0.3),
+              blurRadius: 4,
+              offset: const Offset(0, -2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            // Кнопка прикрепления
+            IconButton(
+              icon: const Icon(Icons.add_circle_outline),
+              color: Theme.of(context).colorScheme.primary,
+              onPressed: _showAttachmentSheet,
+            ),
+            const SizedBox(width: 4),
+            // Текстовое поле
+            Expanded(
+              child: TextField(
+                controller: _messageController,
+                decoration: InputDecoration(
+                  hintText: 'Введите сообщение...',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  filled: true,
+                  fillColor: Colors.grey[100],
+                ),
+                textInputAction: TextInputAction.newline,
+                keyboardType: TextInputType.multiline,
+                minLines: 1,
+                maxLines: 5,
+              ),
+            ),
+            const SizedBox(width: 4),
+            // Кнопка отправки (всегда видна)
+            IconButton(
+              icon: const Icon(Icons.send),
+              color: hasText
+                  ? Theme.of(context).colorScheme.primary
+                  : Colors.grey.shade300,
+              onPressed: hasText ? _sendTextMessage : null,
+            ),
+            const SizedBox(width: 2),
+            // Кнопка микрофона (всегда видна)
+            IconButton(
+              icon: const Icon(Icons.mic),
+              color: Colors.grey,
+              onPressed: _toggleRecording,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Чат с преподавателем'),
+        title: const Text('Чат'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.search),
+            onPressed: _openSearch,
+          ),
           Consumer<NotificationProvider>(
             builder: (context, provider, _) {
               return Stack(
@@ -342,7 +571,7 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
                 MaterialPageRoute(
                   builder: (context) => const CallScreen(
                     userId: 1, // ID администратора
-                    userName: 'Поддержка',
+                    userName: 'Преподаватель',
                     isIncoming: false,
                   ),
                 ),
@@ -360,6 +589,17 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
       ),
       body: Consumer2<ChatProvider, AuthProvider>(
         builder: (context, chat, auth, _) {
+          // Автоскролл при изменении списка сообщений
+          if (chat.messages.length != _lastMessageCount) {
+            final prevCount = _lastMessageCount;
+            _lastMessageCount = chat.messages.length;
+            if (chat.messages.length > prevCount) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _scrollToBottom();
+              });
+            }
+          }
+
           return Column(
             children: [
               // Сообщения
@@ -373,8 +613,8 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
                               style: TextStyle(color: Colors.grey),
                             ),
                           )
-                        : ListView.builder(
-                            controller: _scrollController,
+                        : ScrollablePositionedList.builder(
+                            itemScrollController: _itemScrollController,
                             padding: const EdgeInsets.all(12),
                             itemCount: chat.messages.length,
                             itemBuilder: (context, index) {
@@ -391,6 +631,7 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
                                 message: message,
                                 isAdmin: false,
                                 isMine: isMine,
+                                isHighlighted: message.id == _highlightedMessageId,
                                 onEdit: isMine
                                     ? (newText) async {
                                         await context
@@ -405,116 +646,8 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
                             },
                           ),
               ),
-              // Индикатор записи
-              if (_isRecording)
-                SafeArea(
-                  top: false,
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                    color: Colors.red[50],
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 12,
-                          height: 12,
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.red,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'Запись голосового сообщения...',
-                          style: TextStyle(color: Colors.red),
-                        ),
-                        const Spacer(),
-                        GestureDetector(
-                          onTap: _stopRecording,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.red,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Text(
-                              'Стоп',
-                              style:
-                                  TextStyle(color: Colors.white, fontSize: 12),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
               // Поле ввода
-              SafeArea(
-                top: false,
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.grey.withValues(alpha: 0.3),
-                        blurRadius: 4,
-                        offset: const Offset(0, -2),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    children: [
-                      // Кнопка прикрепления
-                      IconButton(
-                        icon: const Icon(Icons.add_circle_outline),
-                        color: Theme.of(context).colorScheme.primary,
-                        onPressed: _showAttachmentSheet,
-                      ),
-                      const SizedBox(width: 4),
-                      // Текстовое поле
-                      Expanded(
-                        child: TextField(
-                          controller: _messageController,
-                          decoration: InputDecoration(
-                            hintText: _isRecording
-                                ? 'Идёт запись...'
-                                : 'Введите сообщение...',
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(24),
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                            filled: true,
-                            fillColor: Colors.grey[100],
-                          ),
-                          onSubmitted: (_) => _sendTextMessage(),
-                          textInputAction: TextInputAction.send,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      // Кнопка голосового сообщения / отправки
-                      if (_messageController.text.isEmpty)
-                        IconButton(
-                          icon: Icon(
-                            _isRecording ? Icons.stop_circle : Icons.mic,
-                            color: _isRecording ? Colors.red : Colors.grey,
-                          ),
-                          onPressed: _toggleRecording,
-                        )
-                      else
-                        IconButton(
-                          icon: const Icon(Icons.send),
-                          color: Theme.of(context).colorScheme.primary,
-                          onPressed: _sendTextMessage,
-                        ),
-                    ],
-                  ),
-                ),
-              ),
+              _buildInputBar(),
             ],
           );
         },

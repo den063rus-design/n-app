@@ -8,6 +8,7 @@ class MessageBubble extends StatelessWidget {
   final Message message;
   final bool isAdmin;
   final bool isMine;
+  final bool isHighlighted;
   final VoidCallback? onDelete;
   final Future<void> Function(String newText)? onEdit;
 
@@ -16,6 +17,7 @@ class MessageBubble extends StatelessWidget {
     required this.message,
     required this.isAdmin,
     required this.isMine,
+    this.isHighlighted = false,
     this.onDelete,
     this.onEdit,
   });
@@ -48,10 +50,16 @@ class MessageBubble extends StatelessWidget {
   Widget _buildBubble(BuildContext context, String time) {
     final hasAttachments = message.attachments != null && message.attachments!.isNotEmpty;
 
-    return Container(
+    final bgColor = isHighlighted
+        ? (isMine ? Colors.amber.shade300 : Colors.amber.shade100)
+        : (isMine ? Theme.of(context).colorScheme.primary : Colors.grey[200]);
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeInOut,
       constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.7),
       decoration: BoxDecoration(
-        color: isMine ? Theme.of(context).colorScheme.primary : Colors.grey[200],
+        color: bgColor,
         borderRadius: BorderRadius.only(
           topLeft: const Radius.circular(16),
           topRight: const Radius.circular(16),

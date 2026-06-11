@@ -167,14 +167,19 @@ class ApiService {
   // Files
   // =================================================================
 
-  Future<Map<String, dynamic>> uploadFile(String filePath) async {
+  /// Загружает файл на сервер.
+  /// [userId] — обязателен для ADMIN (ID получателя), для USER не нужен (backend сам берёт из JWT).
+  Future<Map<String, dynamic>> uploadFile(String filePath, {int? userId}) async {
     final fileName = File(filePath).uri.pathSegments.last;
-    debugPrint('[ApiService.uploadFile] filePath=$filePath fileName=$fileName');
+    debugPrint('[ApiService.uploadFile] filePath=$filePath fileName=$fileName userId=$userId');
 
     try {
       final formData = FormData.fromMap({
         'file': await MultipartFile.fromFile(filePath, filename: fileName),
       });
+      if (userId != null) {
+        formData.fields.add(MapEntry('userId', userId.toString()));
+      }
 
       final response = await _dio.post(
         '/files/upload',

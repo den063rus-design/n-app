@@ -1,404 +1,141 @@
-# Инструкция по развёртыванию N App
+# Деплой N App
 
-## Требования
+Актуальная краткая инструкция по запуску backend и сборке frontend.
 
-- **Сервер:** Linux VPS (Ubuntu 20.04+)
-- **База данных:** PostgreSQL 14+
-- **Файловое хранилище:** MinIO (S3-совместимое)
-- **Среда выполнения:** Node.js 20+
-- **Сборка APK:** Flutter SDK (на машине разработчика)
+## Что используется сейчас
 
----
+- Backend: `NestJS` + `Prisma` + `PostgreSQL`
+- Frontend: `Flutter`
+- Хранение файлов по умолчанию: локальная папка `uploads/`
+- `MinIO` поддерживается как опциональный режим, но не требуется для базового запуска
 
-## 1. Настройка сервера
+## Backend на Debian
 
-Скопируйте скрипт на сервер и выполните:
+### Требования
 
-```bash
-chmod +x deploy/setup-vps.sh
-sudo ./deploy/setup-vps.sh
-```
+- Debian 12
+- Node.js 20+
+- PostgreSQL 14+
+- PM2
 
-Скрипт автоматически:
-- Установит PostgreSQL и создаст базу данных `n_app`
-- Установит MinIO (S3-хранилище для файлов)
-- Установит Node.js 20.x
-- Установит PM2 для управления процессами
-- Настроит firewall (SSH, порты 3000, 9000, 9001)
-
----
-
-## 2. Связь GitHub с Debian сервером
-
-Этот раздел описывает, как связать GitHub-репозиторий с вашим Debian-сервером для автоматического деплоя через `git pull`.
-
-### 2.1. Установка Git на Debian
+### Базовый запуск
 
 ```bash
-sudo apt update
-sudo apt install git -y
-git --version
-```
-
-### 2.2. Клонирование репозитория на сервер
-
-**Важно:** Директория `/opt/n-app` не должна существовать или должна быть пуста, иначе `git clone` не сработает.
-
-```bash
-# Удалить старую директорию, если она есть (но не содержит нужных данных!)
-sudo rm -rf /opt/n-app
-
-# Клонировать репозиторий
-sudo git clone https://github.com/den063rus-design/n-app.git /opt/n-app
-sudo chown -R $USER:$USER /opt/n-app
+cd /opt
+git clone https://github.com/den063rus-design/n-app.git n-app
 cd /opt/n-app
+npm install
+npx prisma generate
+npx prisma migrate deploy
+npx prisma db seed
+npm run build
+pm2 start ecosystem.config.js
 ```
 
-### 2.3. Настройка SSH deploy key (рекомендуется)
+### `.env`
 
-SSH-ключ позволяет пулить без ввода пароля.
+Пример минимальной конфигурации:
 
-**На сервере Debian** сгенерируйте ключ:
+```env
+PORT=3000
+DATABASE_URL="postgresql://napp_user:CHANGE_ME@localhost:5432/n_app?schema=public"
+JWT_SECRET="CHANGE_ME_SUPER_SECRET"
+CORS_ORIGIN="http://YOUR_SERVER_IP:3000"
+FILE_STORAGE_DRIVER=local
+```
+
+### Проверка backend
 
 ```bash
-ssh-keygen -t ed25519 -C "deploy-key" -f ~/.ssh/deploy_key
-cat ~/.ssh/deploy_key.pub
-```
-
-**В GitHub:**
-1. Перейдите: `Settings → SSH and GPG keys → New SSH key`
-2. Title: `N App Debian Server`
-3. Key: вставьте содержимое `~/.ssh/deploy_key.pub`
-4. Нажмите **Add SSH key**
-
-**На сервере** смените remote на SSH (выполнять ТОЛЬКО после `git clone`):
-
-```bash
-cd /opt/n-app
-git remote set-url origin git@github.com:den063rus-design/n-app.git
-```
-
-Проверьте подключение:
-
-```bash
-ssh -T git@github.com
-# Ожидаемый ответ: Hi den063rus-design/n-app! You've successfully authenticated...
-```
-
-### 2.4. Быстрый деплой одной командой
-
-После настройки SSH ключа деплой делается одной командой:
-
-```bash
-cd /opt/n-app && git pull && npm install && npm run build && npx prisma generate && npx prisma migrate deploy && pm2 restart n-app-backend
-```
-
-Или через готовый скрипт:
-
-```bash
-chmod +x deploy/deploy-debian.sh
-./deploy/deploy-debian.sh
-```
-
-### 2.5. Что делает скрипт deploy-debian.sh
-
-Скрипт [`deploy/deploy-debian.sh`](deploy/deploy-debian.sh) автоматически:
-
-1. Переходит в `/opt/n-app`
-2. Сохраняет текущий `.env` (чтобы не потерять настройки)
-3. Выполняет `git fetch origin && git reset --hard origin/main` — стягивает последнюю версию
-4. Восстанавливает `.env` из бэкапа (или создаёт из `.env.production`)
-5. Устанавливает npm-зависимости (`npm install --production`)
-6. Собирает проект (`npm run build`)
-7. Генерирует Prisma Client (`npx prisma generate`)
-8. Применяет миграции БД (`npx prisma migrate deploy`)
-9. Запускает seed (если нужно)
-10. Перезапускает PM2 процесс
-11. Проверяет, что сервер запустился
-
-### 2.6. Рабочий процесс
-
-```
-[Локальный ПК]           [GitHub]              [Debian Server]
-     │                      │                       │
-     ├── git add . ────────►│                       │
-     ├── git commit ───────►│                       │
-     ├── git push ─────────►│                       │
-     │                      │                       │
-     │                      │                       │◄── ssh
-     │                      ├── git pull ───────────┤
-     │                      │                       ├── npm install
-     │                      │                       ├── npm run build
-     │                      │                       ├── prisma migrate
-     │                      │                       └── pm2 restart
-```
-
-**Процесс обновления:**
-1. Вносите изменения локально
-2. Коммитите и пушите в GitHub
-3. Заходите на сервер по SSH
-4. Запускаете `./deploy/deploy-debian.sh`
-5. Готово! 🚀
-
----
-
-## 3. Деплой бэкенда
-
-### 3.1. Копирование файлов на сервер (без Git)
-
-Если вы не используете Git-связку, можно скопировать файлы вручную:
-
-```bash
-# Замените user и server на ваши данные
-scp -r . user@your-server:/opt/n-app
-```
-
-### 3.2. Настройка окружения
-
-```bash
-ssh user@your-server
-cd /opt/n-app
-cp .env.production .env
-```
-
-**Важно:** Отредактируйте `.env`:
-- Замените `JWT_SECRET` на сгенерированную случайную строку (можно использовать `openssl rand -hex 32`)
-- Укажите реальный `MINIO_ENDPOINT`, если MinIO на другом сервере
-
-### 3.3. Запуск деплоя
-
-```bash
-chmod +x deploy/deploy-backend.sh
-./deploy/deploy-backend.sh
-```
-
-Скрипт выполнит:
-1. Установку npm-зависимостей
-2. Сборку NestJS (`npm run build`)
-3. Генерацию Prisma Client и миграции БД
-4. Заполнение БД начальными данными (seed)
-5. Запуск через PM2 с авторестартом
-
-### 3.4. Управление бэкендом
-
-```bash
-# Статус
 pm2 status
-
-# Логи
-pm2 logs n-app-backend
-
-# Перезапуск
-pm2 restart n-app-backend
-
-# Остановка
-pm2 stop n-app-backend
+curl http://localhost:3000
 ```
 
----
+Swagger:
 
-## 4. Сборка APK
-
-Сборка может выполняться как на локальной машине, так и на сервере Debian с установленным Flutter SDK.
-
-### 4.1. Настройка production-конфигурации
-
-Перед сборкой отредактируйте [`frontend/lib/config/api_config.dart`](frontend/lib/config/api_config.dart):
-
-```dart
-static const bool isProduction = true; // Меняем на true
+```text
+http://YOUR_SERVER_IP:3000/api
 ```
 
-И укажите URL вашего сервера:
+## Хранение файлов
 
-```dart
-static const String prodBaseUrl = 'http://YOUR_SERVER_IP:3000';
-static const String prodWsUrl = 'ws://YOUR_SERVER_IP:3000';
+### Текущий режим
+
+По умолчанию проект хранит файлы локально:
+
+```text
+/opt/n-app/uploads
 ```
 
-> **Важно:** Если приложение и сервер на одной машине (тестирование), можно использовать `localhost:3000`. Для продакшена — укажите реальный IP или домен сервера.
+Новые файлы раскладываются по папкам пользователей:
 
-### 4.2. Установка Flutter SDK на Debian сервер
-
-Если вы собираете APK прямо на сервере, установите Flutter SDK:
-
-```bash
-# 1. Перейдите в /opt
-cd /opt
-
-# 2. Скачайте стабильную версию Flutter
-wget https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.27.1-stable.tar.xz
-
-# 3. Распакуйте
-tar -xf flutter_linux_3.27.1-stable.tar.xz
-
-# 4. Добавьте Flutter в PATH (временно)
-export PATH="/opt/flutter/bin:$PATH"
-
-# 5. Добавьте в ~/.bashrc (постоянно)
-echo 'export PATH="/opt/flutter/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
-
-# 6. Проверьте версию
-flutter --version
-# Ожидаемый вывод: Flutter 3.27.1 • channel stable • ...
+```text
+uploads/{userId}_{slug}/uuid.ext
 ```
 
-#### Решение проблем с Flutter на Debian
+Пример:
 
-**Проблема: `fatal: detected dubious ownership in repository at '/opt/flutter'`**
-
-```bash
-git config --global --add safe.directory /opt/flutter
+```text
+uploads/12_ivanov_ivan_ivanovich/3f2c8d9a.jpg
 ```
 
-**Проблема: `The current Flutter SDK version is 0.0.0-unknown`**
+### Удаление файлов
 
-Это означает, что Flutter SDK повреждён или установлен некорректно. Решение — переустановить:
+Если администратор удаляет сообщение, backend удаляет и связанные физические файлы.
 
-```bash
-cd /opt
-rm -rf flutter
-wget https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.27.1-stable.tar.xz
-tar -xf flutter_linux_3.27.1-stable.tar.xz
-export PATH="/opt/flutter/bin:$PATH"
-flutter --version
+### MinIO
+
+`MinIO` не обязателен. Он включается только если явно задано:
+
+```env
+FILE_STORAGE_DRIVER=minio
 ```
 
-**Проблема: `[!] No Android SDK found`**
+Тогда дополнительно нужны:
 
-Используйте готовый скрипт [`deploy/setup-android-sdk.sh`](deploy/setup-android-sdk.sh):
-
-```bash
-chmod +x deploy/setup-android-sdk.sh
-sudo ./deploy/setup-android-sdk.sh
+```env
+MINIO_ENDPOINT=http://YOUR_MINIO_HOST
+MINIO_PORT=9000
+MINIO_BUCKET=n-app-files
+MINIO_ACCESS_KEY=CHANGE_ME
+MINIO_SECRET_KEY=CHANGE_ME
 ```
 
-Скрипт автоматически:
-1. Установит Java 17
-2. Скачает и настроит Android SDK Command Line Tools
-3. Пропишет переменные `ANDROID_HOME` и `PATH` в `~/.bashrc`
-4. Примет лицензии Android SDK
-5. Установит `platforms;android-34`, `build-tools;34.0.0` и `platform-tools`
+## Обновление проекта на сервере
 
-После установки **перезайдите** на сервер (logout/login) или выполните:
-```bash
-source ~/.bashrc
-```
-
-### 4.3. Запуск сборки
-
-Используйте готовый скрипт:
-
-```bash
-chmod +x deploy/build-apk.sh
-./deploy/build-apk.sh
-```
-
-Скрипт автоматически проверит наличие Flutter SDK и его версию.
-
-APK будет создан по пути:
-```
-frontend/build/app/outputs/flutter-apk/app-release.apk
-```
-
-### 4.4. Установка на устройство
-
-**Через ADB (подключённое устройство):**
-```bash
-adb install frontend/build/app/outputs/flutter-apk/app-release.apk
-```
-
-**Вручную:**
-1. Скопируйте `app-release.apk` на Android-устройство
-2. Откройте файл через файловый менеджер
-3. Разрешите установку из неизвестных источников
-4. Установите
-
-**С сервера на локальный ПК (через SCP):**
-```bash
-# На локальном ПК выполните:
-scp your-user@YOUR_SERVER_IP:your-project-path/frontend/build/app/outputs/flutter-apk/app-release.apk ./
-```
-
-**Через Telegram:** можно отправить APK самому себе в Telegram (работает как файл).
-
-**Через облако:** загрузите на Dropbox, Google Drive или Яндекс.Диск и скачайте на телефон.
-
----
-
-## 5. Проверка работоспособности
-
-После деплоя проверьте:
-
-### 5.1. API сервер
-
-```bash
-curl http://localhost:3000/api/health
-# Ожидаемый ответ: { "status": "ok" }
-```
-
-### 5.2. База данных
-
-```bash
-sudo -u postgres psql -c "\l" | grep n_app
-# Должна быть база n_app
-```
-
-### 5.3. MinIO
-
-Откройте в браузере: `http://your-server:9001`
-- Логин: `minioadmin`
-- Пароль: `minioadmin`
-
-### 5.4. Приложение
-
-1. Откройте приложение на устройстве
-2. Войдите как администратор: `admin` / `admin123`
-3. Создайте тестового пользователя
-4. Проверьте отправку сообщений в чате
-5. Проверьте видеозвонки
-
----
-
-## 6. Дополнительная информация
-
-### 6.1. Обновление бэкенда
+Используй только эту команду:
 
 ```bash
 cd /opt/n-app
 git pull
-npm install
 npm run build
-npx prisma generate
-npx prisma migrate deploy
 pm2 restart n-app-backend
 ```
 
-### 6.2. Бэкап базы данных
+Если были изменения Prisma schema или новые миграции, дополнительно выполни:
 
 ```bash
-pg_dump -U postgres n_app > backup_$(date +%Y%m%d).sql
+npx prisma migrate deploy
 ```
 
-### 6.3. Восстановление базы данных
+## Сборка APK
+
+Сборка выполняется на машине разработчика:
 
 ```bash
-psql -U postgres n_app < backup.sql
+cd frontend
+flutter pub get
+flutter build apk --release
 ```
 
-### 6.4. Структура проекта
+APK:
 
+```text
+frontend/build/app/outputs/flutter-apk/app-release.apk
 ```
-n-app/
-├── deploy/                  # Скрипты деплоя
-│   ├── setup-vps.sh        # Настройка сервера
-│   ├── deploy-backend.sh   # Деплой бэкенда
-│   ├── deploy-debian.sh    # Деплой на Debian через Git
-│   └── build-apk.sh        # Сборка APK
-├── frontend/               # Flutter приложение
-├── prisma/                 # Prisma схема и миграции
-├── src/                    # NestJS бэкенд
-├── .env.production         # Production переменные
-├── ecosystem.config.js     # PM2 конфигурация
-└── DEPLOY.md               # Эта инструкция
+
+Установка через `adb`:
+
+```bash
+adb install -r frontend/build/app/outputs/flutter-apk/app-release.apk
+```

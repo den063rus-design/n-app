@@ -10,16 +10,24 @@ import {
   Res,
   MaxFileSizeValidator,
   ParseFilePipe,
+  Body,
+  NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { FilesService } from './files.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { PrismaService } from '../prisma/prisma.service';
 import 'multer';
 
 @Controller('files')
 export class FilesController {
-  constructor(private readonly filesService: FilesService) {}
+  constructor(
+    private readonly filesService: FilesService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   @Post('upload')
   @UseGuards(JwtAuthGuard)
@@ -34,11 +42,43 @@ export class FilesController {
       }),
     )
     file: Express.Multer.File,
+    @CurrentUser() currentUser: { id: number; role: string },
+    @Body('userId') bodyUserId?: number,
   ) {
-    return this.filesService.uploadFile(file);
+    // Определяем, для какого пользователя загружается файл
+    let targetUserId: number;
+
+    if (currentUser.role === 'ADMIN') {
+      // ADMIN обязан указать userId получателя
+      if (!bodyUserId) {
+        throw new BadRequestException(
+          'Для администратора необходимо указать userId получателя',
+        );
+      }
+      targetUserId = Number(bodyUserId);
+    } else {
+      // USER — файл для себя
+      targetUserId = currentUser.id;
+    }
+
+    // Получаем ФИО пользователя для построения папки
+    const user = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Пользователь не найден');
+    }
+
+    return this.filesService.uploadFile(file, targetUserId, user.fio);
   }
 
-  @Get(':key')
+  /**
+   * Wildcard-маршрут для поддержки ключей с вложенными путями.
+   * Пример: /files/12_ivanov_ivan_ivanovich/uuid.jpg
+   * Старые плоские ключи тоже работают: /files/uuid.jpg
+   */
+  @Get(':key(*)')
   async getFile(@Param('key') key: string, @Res() res: Response) {
     const buffer = await this.filesService.getFile(key);
     const ext = key.includes('.') ? key.split('.').pop()?.toLowerCase() : '';
@@ -74,7 +114,7 @@ export class FilesController {
     res.send(buffer);
   }
 
-  @Delete(':key')
+  @Delete(':key(*)')
   @UseGuards(JwtAuthGuard)
   async deleteFile(@Param('key') key: string) {
     await this.filesService.deleteFile(key);

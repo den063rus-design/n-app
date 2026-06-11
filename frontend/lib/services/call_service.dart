@@ -71,7 +71,7 @@ class CallService {
   bool get isCallScreenOpen => _isCallScreenOpen;
 
   Future<void> _requestPermissions() async {
-    // Разрешения запрашиваются через permission_handler на уровне платформы
+    // Разрешения запрашиваются нативными плагинами на уровне платформы
     // и через getUserMedia в flutter_webrtc
   }
 
