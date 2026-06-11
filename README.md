@@ -13,6 +13,7 @@
 - создание пользователей только администратором
 - чат `user <-> admin`
 - текст, фото, видео, голосовые и документы
+- поиск по чату
 - статусы сообщений `SENT / DELIVERED / READ`
 - блокировка, разблокировка, архивирование, восстановление пользователей
 - in-app уведомления через `Socket.IO`
@@ -30,6 +31,7 @@
 prisma/
 src/
   auth/
+  call/
   chat/
   common/
   config/
@@ -38,6 +40,19 @@ src/
   prisma/
   users/
 frontend/
+  lib/
+    screens/
+      admin_screen.dart
+      archive_screen.dart
+      call_screen.dart
+      chat_screen.dart
+      chat_search_delegate.dart
+      create_user_screen.dart
+      edit_user_screen.dart
+      login_screen.dart
+      notifications_screen.dart
+      user_card_screen.dart
+      user_screen.dart
 deploy/
 plans/
 README.md
@@ -247,6 +262,7 @@ psql "$DATABASE_URL" -c "INSERT INTO \"User\" (fio, age, login, \"passwordHash\"
 - `Android Studio`
 - `Android SDK Platform-Tools`
 - `Android SDK Build-Tools`
+- `Gradle`
 - `Java` / `JBR` из Android Studio
 - `adb`
 - `apksigner`
@@ -265,8 +281,10 @@ psql "$DATABASE_URL" -c "INSERT INTO \"User\" (fio, age, login, \"passwordHash\"
 
 - `AGP`: `8.9.1`
 - `Kotlin`: `2.0.0`
-- `minSdk`: из Flutter-конфига проекта
-- `compileSdk` / `targetSdk`: из Flutter/Android-конфига проекта
+- `applicationId`: `com.napp.app`
+- `minSdk`: берётся из Flutter Android-конфига
+- `compileSdk`: берётся из Flutter Android-конфига
+- `targetSdk`: берётся из Flutter Android-конфига
 
 ### Сборка APK
 
@@ -310,6 +328,26 @@ adb install -r build\app\outputs\flutter-apk\app-release.apk
 - `prodBaseUrl`
 - `prodWsUrl`
 - флаг `isProduction`
+
+## Основные backend-модули
+
+- `auth` — вход и JWT
+- `users` — создание, изменение, блокировка, архив
+- `chat` — сообщения, история, статусы
+- `files` — upload / download / delete файлов
+- `call` — signaling и логика звонков
+- `notifications` — in-app уведомления
+
+## Основные экраны frontend
+
+- `login_screen.dart` — вход
+- `admin_screen.dart` — список пользователей
+- `chat_screen.dart` — чат администратора с пользователем
+- `user_screen.dart` — чат пользователя
+- `call_screen.dart` — видеозвонок
+- `notifications_screen.dart` — уведомления
+- `archive_screen.dart` — архив пользователей
+- `chat_search_delegate.dart` — поиск по сообщениям и вложениям
 
 ## Файлы и загрузки
 
