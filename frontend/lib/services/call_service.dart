@@ -108,12 +108,20 @@ class CallService {
 
     _socketService.onCallEvent('call:incoming', (data) {
       _log('📞📞📞📞📞 call:incoming RECEIVED — data: $data');
-      _log('📞 call:incoming — current state=$_state, _currentCallId=$_currentCallId');
+      _log('📞 call:incoming — current state=$_state, _currentCallId=$_currentCallId, _isCallScreenOpen=$_isCallScreenOpen');
       // Игнорируем входящий звонок, если уже на звонке
       if (_state == CallState.CALLING ||
           _state == CallState.RINGING ||
           _state == CallState.IN_CALL) {
         _log('⚠️ call:incoming ignored — already in call, state=$_state');
+        return;
+      }
+      // Игнорируем входящий звонок, если экран звонка уже открыт
+      // (защита от дублей — экран мог быть открыт через push-уведомление)
+      if (_isCallScreenOpen) {
+        _log('⚠️⚠️⚠️ call:incoming ignored — call screen is already open!');
+        _log('⚠️⚠️⚠️ This means the call screen was opened via push notification or other path');
+        _log('⚠️⚠️⚠️ NOT resetting state — keeping current state=$_state');
         return;
       }
       // Сбрасываем всё перед новым входящим звонком (защита от "грязного" состояния)

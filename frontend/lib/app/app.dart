@@ -127,15 +127,25 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       final callerId = data['callerId'] as int;
       final callerName = data['callerName'] as String;
 
+      debugPrint('[APP] 📞 _listenIncomingCalls — data=$data');
+      debugPrint('[APP] 📞 _listenIncomingCalls — state=${callService.state}, isCallScreenOpen=${callService.isCallScreenOpen}');
+
       // Проверяем, что звонок действительно в статусе RINGING
       // (защита от дублей: если уже IN_CALL или IDLE — не открываем)
-      if (callService.state != CallState.RINGING) return;
+      if (callService.state != CallState.RINGING) {
+        debugPrint('[APP] ⚠️ _listenIncomingCalls — state is ${callService.state}, not RINGING — ignoring');
+        return;
+      }
 
       // Проверяем, не открыт ли уже экран звонка (через флаг)
-      if (callService.isCallScreenOpen) return;
+      if (callService.isCallScreenOpen) {
+        debugPrint('[APP] ⚠️ _listenIncomingCalls — call screen already open — ignoring');
+        return;
+      }
 
       // Отмечаем, что экран будет открыт
       callService.markCallScreenOpen();
+      debugPrint('[APP] ✅ _listenIncomingCalls — opening CallScreen with isIncoming=true, callerId=$callerId');
 
       Navigator.push(
         navigatorKey.currentContext!,

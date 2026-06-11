@@ -37,8 +37,17 @@ class _CallScreenState extends State<CallScreen> {
     // init() вызывается глобально в app.dart, здесь не нужен
 
     if (!widget.isIncoming) {
-      _log('🟢 initState() — Starting outgoing call to userId=${widget.userId}');
-      _callService.startCall(widget.userId);
+      // ===== ЗАЩИТА: если state уже RINGING — это входящий звонок,
+      // даже если isIncoming=false (например, пришло через push-уведомление).
+      // Не вызываем startCall(), а ждём acceptCall()/rejectCall().
+      if (_callService.state == CallState.RINGING) {
+        _log('🟢🟢🟢 initState() — ⚠️ isIncoming=false but state=RINGING! Treating as incoming call.');
+        _log('🟢 initState() — remoteUserId=${_callService.remoteUserId}, remoteUserName=${_callService.remoteUserName}');
+        _log('🟢 initState() — NOT calling startCall() — waiting for user to accept/reject');
+      } else {
+        _log('🟢 initState() — Starting outgoing call to userId=${widget.userId}');
+        _callService.startCall(widget.userId);
+      }
     } else {
       _log('🟢 initState() — Incoming call screen — waiting for user to accept');
       _log('🟢 initState() — remoteUserId=${_callService.remoteUserId}, remoteUserName=${_callService.remoteUserName}');
