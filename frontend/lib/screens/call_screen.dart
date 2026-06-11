@@ -29,80 +29,115 @@ class _CallScreenState extends State<CallScreen> {
   @override
   void initState() {
     super.initState();
-    _log('initState() — userId=${widget.userId}, userName=${widget.userName}, isIncoming=${widget.isIncoming}');
+    _log('🟢🟢🟢 initState() — userId=${widget.userId}, userName=${widget.userName}, isIncoming=${widget.isIncoming}');
+    _log('🟢 initState() — CallService state=${_callService.state}, callId=${_callService.currentCallId}');
+    _log('🟢 initState() — marking call screen as open');
+    _callService.markCallScreenOpen();
     _initRenderers();
     // init() вызывается глобально в app.dart, здесь не нужен
 
     if (!widget.isIncoming) {
-      _log('Starting outgoing call to userId=${widget.userId}');
+      _log('🟢 initState() — Starting outgoing call to userId=${widget.userId}');
       _callService.startCall(widget.userId);
     } else {
-      _log('Incoming call screen — waiting for user to accept');
+      _log('🟢 initState() — Incoming call screen — waiting for user to accept');
+      _log('🟢 initState() — remoteUserId=${_callService.remoteUserId}, remoteUserName=${_callService.remoteUserName}');
     }
   }
 
   Future<void> _initRenderers() async {
-    _log('_initRenderers() — initializing local and remote renderers');
+    _log('🎬 _initRenderers() — initializing local and remote renderers');
+    _log('🎬 _initRenderers() — _localRenderer.initialize()...');
     try {
       await _localRenderer.initialize();
-      _log('✅ Local renderer initialized');
+      _log('✅ _initRenderers() — Local renderer initialized');
     } catch (e) {
-      _log('❌ Local renderer init FAILED: $e');
+      _log('❌ _initRenderers() — Local renderer init FAILED: $e');
     }
+    _log('🎬 _initRenderers() — _remoteRenderer.initialize()...');
     try {
       await _remoteRenderer.initialize();
-      _log('✅ Remote renderer initialized');
+      _log('✅ _initRenderers() — Remote renderer initialized');
     } catch (e) {
-      _log('❌ Remote renderer init FAILED: $e');
+      _log('❌ _initRenderers() — Remote renderer init FAILED: $e');
     }
+    _log('🎬 _initRenderers() — Both renderers initialized, subscribing to streams');
 
     _callService.localStream.listen((stream) {
+      _log('📥📥📥 Local stream event from CallService — stream=$stream');
       if (stream != null) {
         _log('📥 Local stream received — assigning to _localRenderer.srcObject');
         _log('    - Stream id: ${stream.id}');
         _log('    - Video tracks: ${stream.getVideoTracks().length}');
         _log('    - Audio tracks: ${stream.getAudioTracks().length}');
+        for (var t in stream.getVideoTracks()) {
+          _log('      video track: ${t.id}, enabled: ${t.enabled}, kind: ${t.kind}');
+        }
+        for (var t in stream.getAudioTracks()) {
+          _log('      audio track: ${t.id}, enabled: ${t.enabled}, kind: ${t.kind}');
+        }
         _localRenderer.srcObject = stream;
-        _log('✅ _localRenderer.srcObject set');
+        _log('✅ _localRenderer.srcObject set — renderer now has video');
+        setState(() {});
       } else {
-        _log('⚠️ Local stream is NULL — nothing to assign to renderer');
+        _log('⚠️⚠️⚠️ Local stream is NULL — nothing to assign to renderer');
+        _log('⚠️ This is expected if _startPeerConnection was never called');
       }
     });
 
     _callService.remoteStream.listen((stream) {
+      _log('📥📥📥 Remote stream event from CallService — stream=$stream');
       if (stream != null) {
         _log('📥 Remote stream received — assigning to _remoteRenderer.srcObject');
         _log('    - Stream id: ${stream.id}');
         _log('    - Video tracks: ${stream.getVideoTracks().length}');
         _log('    - Audio tracks: ${stream.getAudioTracks().length}');
+        for (var t in stream.getVideoTracks()) {
+          _log('      video track: ${t.id}, enabled: ${t.enabled}, kind: ${t.kind}');
+        }
+        for (var t in stream.getAudioTracks()) {
+          _log('      audio track: ${t.id}, enabled: ${t.enabled}, kind: ${t.kind}');
+        }
         _remoteRenderer.srcObject = stream;
-        _log('✅ _remoteRenderer.srcObject set');
+        _log('✅ _remoteRenderer.srcObject set — renderer now has video');
+        setState(() {});
       } else {
-        _log('⚠️ Remote stream is NULL — nothing to assign to renderer');
+        _log('⚠️⚠️⚠️ Remote stream is NULL — nothing to assign to renderer');
+        _log('⚠️ This is expected if remote peer never connected');
       }
     });
+    _log('🎬 _initRenderers() — stream subscriptions set up');
   }
 
   @override
   void dispose() {
+    _log('🔴🔴🔴 dispose() — cleaning up CallScreen');
+    _log('🔴 dispose() — CallService state=${_callService.state}, callId=${_callService.currentCallId}');
+    _log('🔴 dispose() — _localRenderer.srcObject=${_localRenderer.srcObject?.id}');
+    _log('🔴 dispose() — _remoteRenderer.srcObject=${_remoteRenderer.srcObject?.id}');
     _callService.markCallScreenClosed();
+    _log('🔴 dispose() — disposing local renderer');
     _localRenderer.dispose();
+    _log('🔴 dispose() — disposing remote renderer');
     _remoteRenderer.dispose();
+    _log('🔴 dispose() — super.dispose()');
     super.dispose();
+    _log('🔴 dispose() — done');
   }
 
   @override
   Widget build(BuildContext context) {
-    _log('build() called');
+    _log('🖼️ build() called');
     return Scaffold(
       backgroundColor: Colors.black,
       body: StreamBuilder<CallState>(
         stream: _callService.stateStream,
         builder: (context, snapshot) {
           final state = snapshot.data ?? CallState.IDLE;
-          _log('build() — state=$state');
-          _log('    - _localRenderer.srcObject=${_localRenderer.srcObject?.id}');
-          _log('    - _remoteRenderer.srcObject=${_remoteRenderer.srcObject?.id}');
+          _log('🖼️ build() — state=$state');
+          _log('🖼️ build() — _localRenderer.srcObject=${_localRenderer.srcObject?.id ?? 'null'}');
+          _log('🖼️ build() — _remoteRenderer.srcObject=${_remoteRenderer.srcObject?.id ?? 'null'}');
+          _log('🖼️ build() — _localRenderer.initialize()=${_localRenderer.initialize() != null ? 'called' : '?'}');
           return Stack(
             children: [
               // Remote video (full screen)

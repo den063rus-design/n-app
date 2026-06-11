@@ -57,6 +57,7 @@ class CallService {
   bool get isMicOn => _isMicOn;
   int? get remoteUserId => _remoteUserId;
   String? get remoteUserName => _remoteUserName;
+  int? get currentCallId => _currentCallId;
 
   Future<void> init() async {
     _log('🔧 init() called');
