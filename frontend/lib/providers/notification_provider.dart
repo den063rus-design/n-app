@@ -26,16 +26,32 @@ class NotificationProvider extends ChangeNotifier {
 
   void _setupSocketListeners() {
     _socketService.onNotification((notification) {
-      final appNotification = models.AppNotification.fromJson(notification);
-      _notifications.insert(0, appNotification);
-      _unreadCount++;
-      _notificationStream.add(appNotification);
-      notifyListeners();
+      try {
+        final appNotification = models.AppNotification.fromJson(notification);
+        _notifications.insert(0, appNotification);
+        _unreadCount++;
+        _notificationStream.add(appNotification);
+        notifyListeners();
+      } catch (e) {
+        print('[NOTIFICATION_PROVIDER] ❌ Error processing notification:new — $e');
+      }
     });
 
-    _socketService.onUnreadCount((count) {
-      _unreadCount = count;
-      notifyListeners();
+    _socketService.onUnreadCount((data) {
+      try {
+        print('[NOTIFICATION_PROVIDER] 📊 onUnreadCount received — data type: ${data.runtimeType}, value: $data');
+        // Backend может прислать как int, так и { count: number }
+        if (data is int) {
+          _unreadCount = data;
+        } else if (data is Map) {
+          _unreadCount = (data['count'] as num?)?.toInt() ?? 0;
+        } else {
+          print('[NOTIFICATION_PROVIDER] ⚠️ onUnreadCount — unexpected type: ${data.runtimeType}');
+        }
+        notifyListeners();
+      } catch (e) {
+        print('[NOTIFICATION_PROVIDER] ❌ Error processing notification:unread_count — $e');
+      }
     });
   }
 

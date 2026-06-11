@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../services/call_service.dart';
+import '../services/call_logger.dart';
 
 class CallScreen extends StatefulWidget {
   final int userId;
@@ -20,6 +21,7 @@ class CallScreen extends StatefulWidget {
 
 class _CallScreenState extends State<CallScreen> {
   final CallService _callService = CallService();
+  final CallLogger _callLogger = CallLogger();
   final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
   final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
   Offset _pipOffset = const Offset(20, 80);
@@ -27,27 +29,56 @@ class _CallScreenState extends State<CallScreen> {
   @override
   void initState() {
     super.initState();
+    _log('initState() — userId=${widget.userId}, userName=${widget.userName}, isIncoming=${widget.isIncoming}');
     _initRenderers();
     // init() вызывается глобально в app.dart, здесь не нужен
 
     if (!widget.isIncoming) {
+      _log('Starting outgoing call to userId=${widget.userId}');
       _callService.startCall(widget.userId);
+    } else {
+      _log('Incoming call screen — waiting for user to accept');
     }
   }
 
   Future<void> _initRenderers() async {
-    await _localRenderer.initialize();
-    await _remoteRenderer.initialize();
+    _log('_initRenderers() — initializing local and remote renderers');
+    try {
+      await _localRenderer.initialize();
+      _log('✅ Local renderer initialized');
+    } catch (e) {
+      _log('❌ Local renderer init FAILED: $e');
+    }
+    try {
+      await _remoteRenderer.initialize();
+      _log('✅ Remote renderer initialized');
+    } catch (e) {
+      _log('❌ Remote renderer init FAILED: $e');
+    }
 
     _callService.localStream.listen((stream) {
       if (stream != null) {
+        _log('📥 Local stream received — assigning to _localRenderer.srcObject');
+        _log('    - Stream id: ${stream.id}');
+        _log('    - Video tracks: ${stream.getVideoTracks().length}');
+        _log('    - Audio tracks: ${stream.getAudioTracks().length}');
         _localRenderer.srcObject = stream;
+        _log('✅ _localRenderer.srcObject set');
+      } else {
+        _log('⚠️ Local stream is NULL — nothing to assign to renderer');
       }
     });
 
     _callService.remoteStream.listen((stream) {
       if (stream != null) {
+        _log('📥 Remote stream received — assigning to _remoteRenderer.srcObject');
+        _log('    - Stream id: ${stream.id}');
+        _log('    - Video tracks: ${stream.getVideoTracks().length}');
+        _log('    - Audio tracks: ${stream.getAudioTracks().length}');
         _remoteRenderer.srcObject = stream;
+        _log('✅ _remoteRenderer.srcObject set');
+      } else {
+        _log('⚠️ Remote stream is NULL — nothing to assign to renderer');
       }
     });
   }
@@ -62,12 +93,16 @@ class _CallScreenState extends State<CallScreen> {
 
   @override
   Widget build(BuildContext context) {
+    _log('build() called');
     return Scaffold(
       backgroundColor: Colors.black,
       body: StreamBuilder<CallState>(
         stream: _callService.stateStream,
         builder: (context, snapshot) {
           final state = snapshot.data ?? CallState.IDLE;
+          _log('build() — state=$state');
+          _log('    - _localRenderer.srcObject=${_localRenderer.srcObject?.id}');
+          _log('    - _remoteRenderer.srcObject=${_remoteRenderer.srcObject?.id}');
           return Stack(
             children: [
               // Remote video (full screen)
@@ -285,5 +320,11 @@ class _CallScreenState extends State<CallScreen> {
         ),
       ),
     );
+  }
+
+  /// Пишет лог одновременно в print (adb) и в файл (CallLogger)
+  void _log(String message) {
+    print('[CALL_SCREEN] $message');
+    _callLogger.log('CallScreen', message);
   }
 }

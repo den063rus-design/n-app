@@ -34,6 +34,17 @@ export class UsersController {
     return this.usersService.findOne(user.id);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Patch('me/fcm-token')
+  @ApiOperation({ summary: 'Сохранить/обновить FCM token текущего пользователя' })
+  async updateFcmToken(
+    @CurrentUser() user: { id: number },
+    @Body('fcmToken') fcmToken: string,
+  ) {
+    await this.usersService.updateFcmToken(user.id, fcmToken);
+    return { success: true };
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
   @Post()

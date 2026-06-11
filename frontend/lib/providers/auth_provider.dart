@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
 import '../services/api_service.dart';
 import '../services/socket_service.dart';
+import '../services/push_service.dart';
 
 class AuthProvider extends ChangeNotifier {
   final AuthService _authService = AuthService();
@@ -67,6 +69,9 @@ class AuthProvider extends ChangeNotifier {
       }
       _socketService.connect(token);
       // Heartbeat запускается автоматически в onConnect внутри SocketService
+
+      // Отправляем FCM token на backend после успешного входа
+      unawaited(PushService().sendTokenToBackend());
 
       _isLoading = false;
       notifyListeners();

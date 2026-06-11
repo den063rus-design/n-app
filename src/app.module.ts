@@ -6,6 +6,7 @@ import { ChatModule } from './chat/chat.module';
 import { FilesModule } from './files/files.module';
 import { CallModule } from './call/call.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { PushModule } from './push/push.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     FilesModule,
     CallModule,
     NotificationsModule,
+    PushModule,
   ],
   controllers: [],
   providers: [],

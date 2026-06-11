@@ -26,6 +26,7 @@ export class UsersService {
     notes: true,
     isOnline: true,
     lastSeenAt: true,
+    fcmToken: true,
     createdAt: true,
     updatedAt: true,
   } as const;
@@ -186,6 +187,13 @@ export class UsersService {
       where: { id },
       data,
       select: this.userSelect,
+    });
+  }
+
+  async updateFcmToken(userId: number, fcmToken: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { fcmToken },
     });
   }
 

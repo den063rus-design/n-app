@@ -12,11 +12,13 @@ import '../providers/notification_provider.dart';
 import '../services/api_service.dart';
 import '../services/socket_service.dart';
 import '../services/call_service.dart';
+import '../services/push_service.dart';
 import '../screens/call_screen.dart';
 import '../screens/login_screen.dart';
 import '../screens/admin_screen.dart';
 import '../screens/user_screen.dart';
 import '../screens/notifications_screen.dart';
+import '../screens/chat_screen.dart';
 
 /// Глобальный ключ навигатора для доступа из CallService
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -52,7 +54,7 @@ class NApp extends StatelessWidget {
   }
 }
 
-/// Корневая обёртка: immersive mode + мониторинг сети
+/// Корневая обёртка: immersive mode + мониторинг сети + push-навигация
 class _AppShell extends StatefulWidget {
   const _AppShell();
 
@@ -72,13 +74,10 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     _checkAuth();
     _monitorConnectivity();
     // Осознанный unawaited: инициализация CallService не должна блокировать
-    // отрисовку первого экрана. Это безопасно, потому что:
-    // 1. _setupSocketListeners() защищён флагом _listenersAttached
-    // 2. _listenIncomingCalls() подписывается на пустой стрим —
-    //    данные появятся только после реального call:incoming от сервера
-    // 3. _requestPermissions() не влияет на логику звонков
+    // отрисовку первого экрана.
     unawaited(_initServices());
     _listenIncomingCalls();
+    _listenPushNotificationTaps();
   }
 
   /// Инициализирует глобальные сервисы (CallService).
@@ -90,6 +89,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _incomingCallSubscription?.cancel();
+    _pushTapSubscription?.cancel();
     super.dispose();
   }
 
@@ -151,6 +151,58 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     });
   }
 
+  StreamSubscription<Map<String, String?>>? _pushTapSubscription;
+
+  /// Слушает нажатия на push-уведомления и выполняет навигацию.
+  void _listenPushNotificationTaps() {
+    _pushTapSubscription = PushService().onNotificationTap.listen((data) {
+      if (!mounted) return;
+
+      final type = data['type'];
+
+      if (type == 'message') {
+        // Открываем чат с отправителем
+        final senderId = data['senderId'];
+        if (senderId != null) {
+          final userId = int.tryParse(senderId);
+          if (userId != null) {
+            // Пытаемся получить имя пользователя из кэша или используем заглушку
+            final userName = data['senderName'] ?? 'Пользователь';
+            Navigator.push(
+              navigatorKey.currentContext!,
+              MaterialPageRoute(
+                builder: (context) => ChatScreen(
+                  userId: userId,
+                  userName: userName,
+                ),
+              ),
+            );
+          }
+        }
+      } else if (type == 'call') {
+        // Открываем экран звонка
+        final callerId = data['callerId'];
+        final callerName = data['callerName'] ?? 'Входящий звонок';
+        if (callerId != null) {
+          final userId = int.tryParse(callerId);
+          if (userId != null) {
+            Navigator.push(
+              navigatorKey.currentContext!,
+              MaterialPageRoute(
+                settings: const RouteSettings(name: 'call_screen'),
+                builder: (context) => CallScreen(
+                  userId: userId,
+                  userName: callerName,
+                  isIncoming: true,
+                ),
+              ),
+            );
+          }
+        }
+      }
+    });
+  }
+
   /// Мониторинг подключения к интернету
   void _monitorConnectivity() {
     Connectivity().onConnectivityChanged.listen((results) {
@@ -177,6 +229,9 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       if (auth.currentUser == null) {
         Navigator.pushReplacementNamed(context, '/login');
       } else {
+        // После успешной аутентификации отправляем FCM token на backend
+        unawaited(PushService().sendTokenToBackend());
+
         Navigator.pushReplacementNamed(
           context,
           auth.isAdmin ? '/admin' : '/user',

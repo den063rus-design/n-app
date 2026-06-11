@@ -52,6 +52,7 @@ model User {
   notes          String?
   isOnline       Boolean       @default(false)
   lastSeenAt     DateTime?
+  fcmToken       String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 

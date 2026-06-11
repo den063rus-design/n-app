@@ -1,47 +1,53 @@
-﻿# ‡ ўЁбЁ¬®бвЁ 
-node_modules/ 
-dist/ 
-build/ 
- 
-# ЋЄаг¦Ґ­ЁҐ 
-.env 
-.env.local 
-.env.production 
- 
-# ‹®ЈЁ 
-*.log 
- 
-# Ћ‘ 
-.DS_Store 
-Thumbs.db 
- 
-# IDE 
-.vscode/ 
-.idea/ 
-*.swp 
-*.swo 
- 
-# TypeScript 
-*.tsbuildinfo 
-tmp/ 
- 
-# Prisma 
-.prisma/ 
-prisma/migrations/ 
- 
-# ’Ґбвл 
-coverage/ 
- 
-# Flutter 
-frontend/build/ 
-frontend/.dart_tool/ 
-frontend/.packages 
-frontend/pubspec.lock 
-frontend/.flutter-plugins 
-frontend/.flutter-plugins-dependencies 
-frontend/ios/Pods/ 
-frontend/ios/.symlinks/ 
-frontend/android/.gradle/ 
-frontend/android/local.properties 
+# Зависимости
+node_modules/
+dist/
+build/
+
+# Окружение
+.env
+.env.local
+.env.production
+
+# Логи
+*.log
+
+# ОС
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# TypeScript
+*.tsbuildinfo
+tmp/
+
+# Prisma
+.prisma/
+prisma/migrations/
+
+# Тесты
+coverage/
+
+# Flutter
+frontend/build/
+frontend/.dart_tool/
+frontend/.packages
+frontend/pubspec.lock
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/ios/Pods/
+frontend/ios/.symlinks/
+frontend/android/.gradle/
+frontend/android/local.properties
 frontend/android/app/build/
+
+# Firebase
+frontend/android/app/google-services.json
+
+# Загрузки
 uploads/
+*-firebase-adminsdk-*.json
