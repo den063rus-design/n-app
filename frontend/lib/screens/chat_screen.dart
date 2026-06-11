@@ -41,6 +41,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _isSendingText = false;
   int _lastMessageCount = 0;
   int? _highlightedMessageId;
+  bool _autoScrollScheduled = false;
 
   @override
   void initState() {
@@ -48,7 +49,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _loadMessages();
-      _scrollToBottom();
+      _scheduleScrollToBottom();
     });
     // Слушаем изменения текста для обновления кнопки отправки
     _messageController.addListener(_onTextChanged);
@@ -73,7 +74,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         await _loadMessages();
-        _scrollToBottom();
+        _scheduleScrollToBottom();
       });
     }
   }
@@ -87,15 +88,35 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  void _scrollToBottom() {
+  void _scheduleScrollToBottom({bool animated = false}) {
+    if (!mounted || _autoScrollScheduled) return;
+
+    _autoScrollScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _autoScrollScheduled = false;
+      if (!mounted) return;
+
       final chat = context.read<ChatProvider>();
       if (chat.messages.isEmpty) return;
-      _itemScrollController.scrollTo(
-        index: chat.messages.length - 1,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-      );
+
+      if (!_itemScrollController.isAttached) {
+        Future.delayed(const Duration(milliseconds: 50), () {
+          _scheduleScrollToBottom(animated: animated);
+        });
+        return;
+      }
+
+      try {
+        if (animated) {
+          _itemScrollController.scrollTo(
+            index: chat.messages.length - 1,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+          );
+        } else {
+          _itemScrollController.jumpTo(index: chat.messages.length - 1);
+        }
+      } catch (_) {}
     });
   }
 
@@ -160,7 +181,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         await chat.sendMessage(text, null);
       }
       _messageController.clear();
-      _scrollToBottom();
+      _scheduleScrollToBottom();
     } finally {
       _isSendingText = false;
     }
@@ -319,7 +340,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         } else {
           await chat.sendMessage('', null, files: files);
         }
-        _scrollToBottom();
+        _scheduleScrollToBottom();
       } else {
         _showError('Не удалось загрузить файл на сервер');
       }
@@ -533,9 +554,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             final prevCount = _lastMessageCount;
             _lastMessageCount = chat.messages.length;
             if (chat.messages.length > prevCount) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                _scrollToBottom();
-              });
+              _scheduleScrollToBottom();
             }
           }
 
