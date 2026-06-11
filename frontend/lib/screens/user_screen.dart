@@ -32,6 +32,7 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
   int _lastMessageCount = 0;
   int? _highlightedMessageId;
   bool _autoScrollScheduled = false;
+  bool _scrollAfterNextMessage = false;
 
   @override
   void initState() {
@@ -158,8 +159,8 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
 
     try {
       await chat.sendMessage(text, null);
+      _scrollAfterNextMessage = true;
       _messageController.clear();
-      _scheduleScrollToBottom();
     } finally {
       _isSendingText = false;
     }
@@ -291,7 +292,7 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
           },
         ];
         await chat.sendMessage('', null, files: files);
-        _scheduleScrollToBottom();
+        _scrollAfterNextMessage = true;
       }
     } catch (e) {
       _showError('Ошибка отправки файла: $e');
@@ -615,7 +616,10 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
             final prevCount = _lastMessageCount;
             _lastMessageCount = chat.messages.length;
             if (chat.messages.length > prevCount) {
-              _scheduleScrollToBottom();
+              _scheduleScrollToBottom(
+                animated: _scrollAfterNextMessage,
+              );
+              _scrollAfterNextMessage = false;
             }
           }
 
