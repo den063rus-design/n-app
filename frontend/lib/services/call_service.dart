@@ -39,6 +39,9 @@ class CallService {
   // Флаг: открыт ли экран звонка (для предотвращения дублей)
   bool _isCallScreenOpen = false;
 
+  // Таймер отложенного сброса после завершения звонка
+  Timer? _resetTimer;
+
   // StreamController для UI
   final _stateController = StreamController<CallState>.broadcast();
   final _localStreamController = StreamController<MediaStream?>.broadcast();
@@ -124,8 +127,24 @@ class CallService {
         _log('⚠️⚠️⚠️ NOT resetting state — keeping current state=$_state');
         return;
       }
-      // Сбрасываем всё перед новым входящим звонком (защита от "грязного" состояния)
-      _hardReset();
+      // Отменяем отложенный сброс (если был завершён предыдущий звонок)
+      _resetTimer?.cancel();
+      // Мягкий сброс: очищаем поля, НО НЕ отправляем IDLE в stream
+      _log('🔄 call:incoming — soft reset (clearing fields without emitting IDLE)');
+      _currentCallId = null;
+      _remoteUserId = null;
+      _remoteUserName = null;
+      _isCameraOn = true;
+      _isMicOn = true;
+      _isFrontCamera = true;
+      _peerConnection?.close();
+      _peerConnection = null;
+      _localStream?.getTracks().forEach((track) => track.stop());
+      _localStream = null;
+      _remoteStream = null;
+      _localStreamController.add(null);
+      _remoteStreamController.add(null);
+      // Устанавливаем RINGING без предварительного IDLE
       _state = CallState.RINGING;
       _currentCallId = data['callId'];
       _remoteUserId = data['callerId'];
@@ -252,6 +271,9 @@ class CallService {
     _log('📞📞📞 startCall() called — userId=$userId');
     _log('📞 startCall() — current state=$_state, _currentCallId=$_currentCallId');
 
+    // Отменяем отложенный сброс (если был завершён предыдущий звонок)
+    _resetTimer?.cancel();
+
     // ===== ВАЖНО: разрешаем startCall только из IDLE =====
     if (_state != CallState.IDLE) {
       _log('⚠️⚠️⚠️ startCall() — REFUSED: state=$_state, must be IDLE. Call _hardReset() first.');
@@ -282,6 +304,10 @@ class CallService {
   Future<void> acceptCall() async {
     _log('✅✅✅ acceptCall() called — callId=$_currentCallId');
     _log('✅ acceptCall() — current state=$_state, _remoteUserId=$_remoteUserId');
+
+    // Отменяем отложенный сброс (если был завершён предыдущий звонок)
+    _resetTimer?.cancel();
+
     if (_currentCallId == null) {
       _log('⚠️⚠️⚠️ acceptCall() — _currentCallId is NULL! Cannot accept call without callId');
       return;
@@ -489,8 +515,12 @@ class CallService {
     _log('✅ Cleanup done, state=ENDED');
     // Закрываем лог-файл
     _callLogger.close();
-    // Полный сброс состояния через 1 секунду
-    Future.delayed(const Duration(seconds: 1), () => _hardReset());
+    // Полный сброс состояния через 1 секунду (с возможностью отмены)
+    _resetTimer?.cancel();
+    _resetTimer = Timer(const Duration(seconds: 1), () {
+      _log('🔴 _resetTimer fired — calling _hardReset()');
+      _hardReset();
+    });
   }
 
   /// Полный сброс ВСЕГО состояния звонка.

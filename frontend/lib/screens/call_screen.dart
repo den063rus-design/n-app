@@ -141,12 +141,15 @@ class _CallScreenState extends State<CallScreen> {
       backgroundColor: Colors.black,
       body: StreamBuilder<CallState>(
         stream: _callService.stateStream,
+        initialData: _callService.state,
         builder: (context, snapshot) {
-          final state = snapshot.data ?? CallState.IDLE;
-          _log('🖼️ build() — state=$state');
+          final state = snapshot.data ?? _callService.state;
+          final effectiveIncoming =
+              widget.isIncoming || _callService.state == CallState.RINGING;
+          _log('🖼️ build() — state=$state, effectiveIncoming=$effectiveIncoming');
           _log('🖼️ build() — _localRenderer.srcObject=${_localRenderer.srcObject?.id ?? 'null'}');
           _log('🖼️ build() — _remoteRenderer.srcObject=${_remoteRenderer.srcObject?.id ?? 'null'}');
-          _log('🖼️ build() — _localRenderer.initialize()=${_localRenderer.initialize() != null ? 'called' : '?'}');
+          _log('🖼️ build() — _localRenderer initialized=${_localRenderer.srcObject != null}');
           return Stack(
             children: [
               // Remote video (full screen)
@@ -222,8 +225,11 @@ class _CallScreenState extends State<CallScreen> {
                 right: 0,
                 child: _buildControls(state),
               ),
-              // Incoming call UI
+              // Incoming call UI — только если state реально RINGING
               if (state == CallState.RINGING) _buildIncomingCallUI(),
+              // Fallback UI — только если state=IDLE, но экран открыт как входящий
+              if (state == CallState.IDLE && effectiveIncoming)
+                _buildIdleFallback(),
             ],
           );
         },
@@ -334,9 +340,9 @@ class _CallScreenState extends State<CallScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text(
-              'Входящий звонок...',
-              style: TextStyle(color: Colors.white, fontSize: 24),
+            Text(
+              'Входящий звонок от ${_callService.remoteUserName ?? widget.userName}',
+              style: const TextStyle(color: Colors.white, fontSize: 24),
             ),
             const SizedBox(height: 40),
             Row(
@@ -359,6 +365,48 @@ class _CallScreenState extends State<CallScreen> {
                   child: const Icon(Icons.call),
                 ),
               ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Fallback UI для случая, когда state=IDLE, но экран открыт как входящий/исходящий.
+  /// Показывает имя собеседника, статус "Подготовка..." и кнопку закрыть.
+  Widget _buildIdleFallback() {
+    return Container(
+      color: Colors.black87,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              _callService.remoteUserName ?? widget.userName,
+              style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Подготовка звонка...',
+              style: TextStyle(color: Colors.white70, fontSize: 18),
+            ),
+            const SizedBox(height: 16),
+            const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                color: Colors.white,
+                strokeWidth: 2,
+              ),
+            ),
+            const SizedBox(height: 48),
+            FloatingActionButton(
+              onPressed: () {
+                _callService.endCall();
+                Navigator.pop(context);
+              },
+              backgroundColor: Colors.red,
+              child: const Icon(Icons.call_end),
             ),
           ],
         ),
