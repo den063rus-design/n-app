@@ -28,7 +28,7 @@ class _CallScreenState extends State<CallScreen> {
   void initState() {
     super.initState();
     _initRenderers();
-    _callService.init();
+    // init() вызывается глобально в app.dart, здесь не нужен
 
     if (!widget.isIncoming) {
       _callService.startCall(widget.userId);
@@ -54,6 +54,7 @@ class _CallScreenState extends State<CallScreen> {
 
   @override
   void dispose() {
+    _callService.markCallScreenClosed();
     _localRenderer.dispose();
     _remoteRenderer.dispose();
     super.dispose();

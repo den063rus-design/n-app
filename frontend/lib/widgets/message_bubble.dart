@@ -33,8 +33,6 @@ class MessageBubble extends StatelessWidget {
             mainAxisAlignment: isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              if (!isMine && isAdmin) _buildDeleteButton(context),
-              if (!isMine && !isAdmin) const SizedBox(width: 4),
               GestureDetector(
                 onLongPress: () => _showActions(context),
                 onSecondaryTapDown: (_) => _showActions(context),
@@ -139,27 +137,6 @@ class MessageBubble extends StatelessWidget {
     }
 
     return Icon(icon, size: 14, color: color);
-  }
-
-  Widget _buildDeleteButton(BuildContext context) {
-    if (!isAdmin) return const SizedBox.shrink();
-
-    return GestureDetector(
-      onTap: onDelete,
-      child: Container(
-        margin: const EdgeInsets.only(right: 4, bottom: 6),
-        padding: const EdgeInsets.all(4),
-        decoration: BoxDecoration(
-          color: Colors.red[50],
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Icon(
-          Icons.delete_outline,
-          size: 18,
-          color: Colors.red[400],
-        ),
-      ),
-    );
   }
 
   Future<void> _showActions(BuildContext context) async {

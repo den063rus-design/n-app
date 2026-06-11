@@ -34,7 +34,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Ошибка восстановления')),
+          SnackBar(content: Text('Ошибка восстановления: $e')),
         );
       }
     }
@@ -74,7 +74,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Ошибка удаления')),
+            SnackBar(content: Text('Ошибка удаления: $e')),
           );
         }
       }
@@ -169,8 +169,8 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
 
 class _ArchivedUserCardScreen extends StatelessWidget {
   final User user;
-  final VoidCallback onRestore;
-  final VoidCallback onDelete;
+  final Future<void> Function() onRestore;
+  final Future<void> Function() onDelete;
 
   const _ArchivedUserCardScreen({
     required this.user,
@@ -258,9 +258,9 @@ class _ArchivedUserCardScreen extends StatelessWidget {
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.restore),
                 label: const Text('Восстановить пользователя'),
-                onPressed: () {
-                  onRestore();
-                  Navigator.pop(context);
+                onPressed: () async {
+                  await onRestore();
+                  if (context.mounted) Navigator.pop(context);
                 },
               ),
             ),
@@ -274,9 +274,9 @@ class _ArchivedUserCardScreen extends StatelessWidget {
                   backgroundColor: Colors.red,
                   foregroundColor: Colors.white,
                 ),
-                onPressed: () {
-                  onDelete();
-                  Navigator.pop(context);
+                onPressed: () async {
+                  await onDelete();
+                  if (context.mounted) Navigator.pop(context);
                 },
               ),
             ),

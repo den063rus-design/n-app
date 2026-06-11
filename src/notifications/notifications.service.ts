@@ -1,10 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationType } from '@prisma/client';
+import { NotificationsGateway } from './notifications.gateway';
 
 @Injectable()
 export class NotificationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsGateway: NotificationsGateway,
+  ) {}
 
   async createNotification(data: {
     userId: number;
@@ -13,7 +17,7 @@ export class NotificationsService {
     body?: string;
     data?: any;
   }) {
-    return this.prisma.notification.create({
+    const notification = await this.prisma.notification.create({
       data: {
         userId: data.userId,
         type: data.type as NotificationType,
@@ -22,6 +26,17 @@ export class NotificationsService {
         data: data.data ?? {},
       },
     });
+
+    // Realtime-уведомление через WebSocket
+    this.notificationsGateway.sendNotification(data.userId, notification);
+
+    // Обновляем unread count для получателя
+    const unreadCount = await this.prisma.notification.count({
+      where: { userId: data.userId, isRead: false },
+    });
+    this.notificationsGateway.sendUnreadCount(data.userId, unreadCount);
+
+    return notification;
   }
 
   async getUserNotifications(userId: number, page = 1, limit = 20) {
@@ -51,10 +66,28 @@ export class NotificationsService {
   }
 
   async markAsRead(notificationId: number) {
-    return this.prisma.notification.update({
+    // Сначала получаем уведомление, чтобы узнать userId
+    const notification = await this.prisma.notification.findUnique({
+      where: { id: notificationId },
+      select: { userId: true },
+    });
+
+    if (!notification) {
+      return null;
+    }
+
+    const updated = await this.prisma.notification.update({
       where: { id: notificationId },
       data: { isRead: true },
     });
+
+    // Realtime-обновление unread count после прочтения
+    const unreadCount = await this.prisma.notification.count({
+      where: { userId: notification.userId, isRead: false },
+    });
+    this.notificationsGateway.sendUnreadCount(notification.userId, unreadCount);
+
+    return updated;
   }
 
   async markAllAsRead(userId: number) {

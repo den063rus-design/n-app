@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -9,10 +11,15 @@ import '../providers/user_provider.dart';
 import '../providers/notification_provider.dart';
 import '../services/api_service.dart';
 import '../services/socket_service.dart';
+import '../services/call_service.dart';
+import '../screens/call_screen.dart';
 import '../screens/login_screen.dart';
 import '../screens/admin_screen.dart';
 import '../screens/user_screen.dart';
 import '../screens/notifications_screen.dart';
+
+/// Глобальный ключ навигатора для доступа из CallService
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 class NApp extends StatelessWidget {
   const NApp({super.key});
@@ -29,6 +36,7 @@ class NApp extends StatelessWidget {
         ),
       ],
       child: MaterialApp(
+        navigatorKey: navigatorKey,
         title: 'Natalie-Eng',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.lightTheme,
@@ -60,32 +68,87 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _enableImmersiveMode();
+    _enableStandardSystemUi();
     _checkAuth();
     _monitorConnectivity();
+    // Осознанный unawaited: инициализация CallService не должна блокировать
+    // отрисовку первого экрана. Это безопасно, потому что:
+    // 1. _setupSocketListeners() защищён флагом _listenersAttached
+    // 2. _listenIncomingCalls() подписывается на пустой стрим —
+    //    данные появятся только после реального call:incoming от сервера
+    // 3. _requestPermissions() не влияет на логику звонков
+    unawaited(_initServices());
+    _listenIncomingCalls();
+  }
+
+  /// Инициализирует глобальные сервисы (CallService).
+  Future<void> _initServices() async {
+    await CallService().init();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _incomingCallSubscription?.cancel();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _enableImmersiveMode();
+      _enableStandardSystemUi();
     }
   }
 
   /// Скрывает системные кнопки навигации (Immersive Mode)
-  void _enableImmersiveMode() {
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  void _enableStandardSystemUi() {
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.manual,
+      overlays: SystemUiOverlay.values,
+    );
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-      systemNavigationBarColor: Colors.transparent,
-      systemNavigationBarDividerColor: Colors.transparent,
+      systemNavigationBarColor: Colors.white,
+      systemNavigationBarDividerColor: Colors.black12,
       statusBarColor: Colors.transparent,
+      systemNavigationBarIconBrightness: Brightness.dark,
+      statusBarIconBrightness: Brightness.dark,
+      statusBarBrightness: Brightness.light,
     ));
+  }
+
+  StreamSubscription<Map<String, dynamic>>? _incomingCallSubscription;
+
+  /// Слушает входящие звонки и автоматически открывает CallScreen
+  void _listenIncomingCalls() {
+    final callService = CallService();
+    _incomingCallSubscription = callService.incomingCallStream.listen((data) {
+      if (!mounted) return;
+
+      final callerId = data['callerId'] as int;
+      final callerName = data['callerName'] as String;
+
+      // Проверяем, что звонок действительно в статусе RINGING
+      // (защита от дублей: если уже IN_CALL или IDLE — не открываем)
+      if (callService.state != CallState.RINGING) return;
+
+      // Проверяем, не открыт ли уже экран звонка (через флаг)
+      if (callService.isCallScreenOpen) return;
+
+      // Отмечаем, что экран будет открыт
+      callService.markCallScreenOpen();
+
+      Navigator.push(
+        navigatorKey.currentContext!,
+        MaterialPageRoute(
+          settings: const RouteSettings(name: 'call_screen'),
+          builder: (context) => CallScreen(
+            userId: callerId,
+            userName: callerName,
+            isIncoming: true,
+          ),
+        ),
+      );
+    });
   }
 
   /// Мониторинг подключения к интернету

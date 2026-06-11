@@ -1,4 +1,10 @@
-# N App — Система коммуникации администратора и пользователей
+# N App — Полный контекст проекта
+
+> **Дата создания:** Июнь 2026  
+> **Репозиторий:** `github.com/den063rus-design/n-app`  
+> **Назначение:** Полная документация для быстрого погружения нового разработчика или ИИ-ассистента в проект
+
+---
 
 ## 📋 Описание проекта
 
@@ -34,12 +40,13 @@
 - **Минимальный SDK:** 21 (Android 5.0+)
 - **Target SDK:** 34 (Android 14)
 - **Compile SDK:** 34
-- **Gradle:** 8.14 (через Tencent mirror)
+- **Gradle:** 8.14 (через Tencent mirror: `https://mirrors.cloud.tencent.com/gradle/gradle-8.14-all.zip`)
 - **AGP:** 8.9.1
 - **Kotlin:** 2.0.0
 - **NDK:** 27.0.12077973
-- **Keystore:** upload-keystore.jks (PKCS12, пароль: `napp123`, alias: `upload`)
+- **Keystore:** [`frontend/android/upload-keystore.jks`](frontend/android/upload-keystore.jks) (PKCS12, пароль: `napp123`, alias: `upload`)
 - **Подпись:** apksigner.jar из build-tools 34.0.0
+- **Application ID:** `com.napp.app`
 
 ### Backend (NestJS)
 
@@ -72,42 +79,48 @@
 - `isOnline` (Boolean) — онлайн-статус
 - `lastSeenAt` (DateTime?) — время последней активности
 - `createdAt` / `updatedAt` (DateTime)
+- Индексы: `[role]`, `[status]`, `[createdAt]`
 
 **Message:**
 - `id` (Int, PK)
-- `senderId` / `receiverId` (Int, FK → User)
+- `senderId` / `receiverId` (Int, FK → User, onDelete: Cascade)
 - `text` (String) — текст сообщения
 - `status` (MessageStatus: SENT | DELIVERED | READ)
 - `createdAt` / `updatedAt` (DateTime)
 - `attachments` (Attachment[])
+- Индексы: `[senderId, createdAt]`, `[receiverId, createdAt]`, `[status]`
 
 **Attachment:**
 - `id` (Int, PK)
 - `messageId` (Int, FK → Message, onDelete: Cascade)
 - `fileName`, `fileType`, `fileSize`, `key` (@unique), `url`
 - `createdAt` (DateTime)
+- Индексы: `[messageId]`
 
 **Call:**
 - `id` (Int, PK)
-- `callerId` / `calleeId` (Int, FK → User)
+- `callerId` / `calleeId` (Int, FK → User, onDelete: Cascade)
 - `status` (CallStatus: PENDING | ACCEPTED | REJECTED | ENDED | MISSED)
 - `startedAt` / `endedAt` (DateTime?)
 - `createdAt` (DateTime)
+- Индексы: `[callerId]`, `[calleeId]`, `[callerId, calleeId]`, `[status]`, `[createdAt]`
 
 **Notification:**
 - `id` (Int, PK)
-- `userId` (Int, FK → User)
+- `userId` (Int, FK → User, onDelete: Cascade)
 - `type` (NotificationType: MESSAGE | CALL)
 - `title`, `body?`, `data?` (Json)
 - `isRead` (Boolean, default: false)
 - `createdAt` (DateTime)
+- Индексы: `[userId, isRead]`, `[userId, createdAt]`
 
 **UserSession:**
 - `id` (String, PK, cuid)
-- `userId` (Int, FK → User)
+- `userId` (Int, FK → User, onDelete: Cascade)
 - `socketId` (String?)
-- `isActive` (Boolean)
+- `isActive` (Boolean, default: true)
 - `createdAt` / `updatedAt`
+- Индексы: `[userId, isActive]`, `[socketId]`
 
 ---
 
@@ -156,7 +169,7 @@
 ### Notifications
 | Метод | Путь | Доступ | Описание |
 |-------|------|--------|----------|
-| GET | `/notifications/my` | JWT | Мои уведомления |
+| GET | `/notifications/my` | JWT | Мои уведомления (с пагинацией) |
 | PATCH | `/notifications/:id/read` | JWT | Отметить прочитанным |
 | PATCH | `/notifications/read-all` | JWT | Всё прочитано |
 | GET | `/notifications/unread-count` | JWT | Количество непрочитанных |
@@ -169,34 +182,47 @@
 
 ### WebSocket (Socket.IO) — порт 3000
 - **Аутентификация:** JWT токен через `handshake.auth.token`
-- **События:**
-  - `message:send` — отправка сообщения
-  - `message:read` — отметка о прочтении
-  - `message:new` — новое сообщение (для получателя)
-  - `message:delivered` — сообщение доставлено
-  - `message:deleted` — сообщение удалено
-  - `user:online` / `user:offline` — статус пользователя
-  - `heartbeat` — обновление lastSeenAt (каждые 30 сек)
-  - `call:start`, `call:accept`, `call:reject`, `call:end`, `call:signal`, `call:missed` — звонки
-  - `notification:new` — новое уведомление
-  - `notification:unread_count` — количество непрочитанных
+- **Gateway'ы:** ChatGateway, CallGateway, NotificationsGateway (все на одном namespace `/`)
+
+**События чата:**
+- `message:send` — отправка сообщения (клиент → сервер)
+- `message:read` — отметка о прочтении (клиент → сервер)
+- `message:new` — новое сообщение (сервер → клиент)
+- `message:delivered` — сообщение доставлено (сервер → клиент)
+- `message:deleted` — сообщение удалено (сервер → клиент)
+- `user:online` / `user:offline` — статус пользователя (сервер → клиент)
+- `heartbeat` — обновление lastSeenAt (клиент → сервер, каждые 30 сек)
+
+**События звонков:**
+- `call:start` — инициировать звонок
+- `call:accept` — принять звонок
+- `call:reject` — отклонить звонок
+- `call:end` — завершить звонок
+- `call:signal` — WebRTC сигнал (offer/answer/ICE candidate)
+- `call:missed` — пропущенный звонок
+- `call:incoming` — входящий звонок (сервер → клиент)
+- `call:accepted` — звонок принят (сервер → клиент)
+
+**События уведомлений:**
+- `notification:new` — новое уведомление (сервер → клиент)
+- `notification:unread_count` — количество непрочитанных (сервер → клиент)
 
 ---
 
 ## 📱 Frontend Screens
 
-| Экран | Описание |
-|-------|----------|
-| **LoginScreen** | Вход по логину/паролю |
-| **AdminScreen** | Панель администратора: список пользователей, поиск, сортировка, фильтрация |
-| **UserScreen** | Чат пользователя с администратором |
-| **ChatScreen** | Полноценный чат: текст, фото, видео, голосовые, документы |
-| **ArchiveScreen** | Архивные пользователи (admin) |
-| **CreateUserScreen** | Создание нового пользователя (admin) |
-| **EditUserScreen** | Редактирование пользователя (admin) |
-| **UserCardScreen** | Карточка пользователя с полной информацией |
-| **CallScreen** | WebRTC видеозвонки |
-| **NotificationsScreen** | Уведомления |
+| Экран | Файл | Описание |
+|-------|------|----------|
+| **LoginScreen** | [`frontend/lib/screens/login_screen.dart`](frontend/lib/screens/login_screen.dart) | Вход по логину/паролю |
+| **AdminScreen** | [`frontend/lib/screens/admin_screen.dart`](frontend/lib/screens/admin_screen.dart) | Панель администратора: список пользователей, поиск, сортировка, фильтрация |
+| **UserScreen** | [`frontend/lib/screens/user_screen.dart`](frontend/lib/screens/user_screen.dart) | Чат пользователя с администратором |
+| **ChatScreen** | [`frontend/lib/screens/chat_screen.dart`](frontend/lib/screens/chat_screen.dart) | Полноценный чат: текст, фото, видео, голосовые, документы |
+| **ArchiveScreen** | [`frontend/lib/screens/archive_screen.dart`](frontend/lib/screens/archive_screen.dart) | Архивные пользователи (admin) |
+| **CreateUserScreen** | [`frontend/lib/screens/create_user_screen.dart`](frontend/lib/screens/create_user_screen.dart) | Создание нового пользователя (admin) |
+| **EditUserScreen** | [`frontend/lib/screens/edit_user_screen.dart`](frontend/lib/screens/edit_user_screen.dart) | Редактирование пользователя (admin) |
+| **UserCardScreen** | [`frontend/lib/screens/user_card_screen.dart`](frontend/lib/screens/user_card_screen.dart) | Карточка пользователя с полной информацией |
+| **CallScreen** | [`frontend/lib/screens/call_screen.dart`](frontend/lib/screens/call_screen.dart) | WebRTC видеозвонки |
+| **NotificationsScreen** | [`frontend/lib/screens/notifications_screen.dart`](frontend/lib/screens/notifications_screen.dart) | Уведомления |
 
 ---
 
@@ -263,20 +289,37 @@ static const bool isProduction = true; // Переключатель dev/prod
 - **CORS:** `origin: '*'` (в production рекомендуется ограничить)
 - **WebSocket CORS:** `origin: process.env.CORS_ORIGIN ?? 'http://localhost:3000'`
 
+### Переменные окружения (.env)
+```
+DATABASE_URL=postgresql://...
+JWT_SECRET=my-super-secret-key-n-app-2026
+PORT=3000
+MINIO_ENDPOINT=http://localhost
+MINIO_PORT=9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET=n-app-files
+CORS_ORIGIN=http://localhost:3000
+```
+
+### Seed данные
+- **Администратор:** логин `admin`, пароль `admin123`
+- Seed файл: [`prisma/seed.ts`](prisma/seed.ts)
+
 ---
 
 ## 🐛 Известные проблемы и решения
 
 ### Исправленные баги
 
-| # | Проблема | Файл | Решение |
-|---|----------|------|---------|
+| # | Проблема | Файл(ы) | Решение |
+|---|----------|---------|---------|
 | 1 | **JWT_SECRET fallback в коде** — был указан `'super-secret-key-change-in-production'` | [`src/config/constants.ts`](src/config/constants.ts:2) | Убран fallback, теперь выбрасывается ошибка, если JWT_SECRET не задан в .env |
 | 2 | **Несоответствие полей Message** — frontend использовал `content` вместо `text`, `isRead` (bool) вместо `status` (enum) | [`frontend/lib/models/message.dart`](frontend/lib/models/message.dart:33-34) | Добавлена поддержка обоих полей через fallback в `fromJson`, статус теперь enum |
 | 3 | **Event names Socket.IO** — frontend эмитил `sendMessage`, а gateway слушал `message:send` | [`frontend/lib/services/socket_service.dart`](frontend/lib/services/socket_service.dart:85) | Исправлены все event names на соответствующие backend |
 | 4 | **Отправка сообщений от пользователя** — receiverId был ID текущего пользователя вместо ID админа | [`frontend/lib/providers/chat_provider.dart`](frontend/lib/providers/chat_provider.dart:233-253) | Backend сам находит администратора, если receiverId не указан |
 | 5 | **Нет try/catch в ChatGateway** — ошибки падали в сокет | [`src/chat/chat.gateway.ts`](src/chat/chat.gateway.ts:28-83) | Добавлены try/catch во все обработчики |
-| 6 | **CORS origin: '*'** —不安全ная конфигурация | [`src/main.ts`](src/main.ts:10-15) | Оставлено для разработки, в production через CORS_ORIGIN |
+| 6 | **CORS origin: '*'** — небезопасная конфигурация | [`src/main.ts`](src/main.ts:10-15) | Оставлено для разработки, в production через CORS_ORIGIN |
 | 7 | **Пустой ConfigModule** — не использовался | [`src/config/config.module.ts`](src/config/config.module.ts) | Оставлен как заглушка |
 | 8 | **Отсутствие валидации DTO в gateway** | [`src/chat/chat.gateway.ts`](src/chat/chat.gateway.ts) | Валидация пока только в HTTP контроллере |
 | 9 | **Нет rate limiting на WebSocket** | — | Рекомендуется добавить throttle |
@@ -287,7 +330,7 @@ static const bool isProduction = true; // Переключатель dev/prod
 
 ---
 
-## 📁 Структура проекта
+## 📁 Структура проекта (полное дерево)
 
 ```
 n-app/
@@ -415,7 +458,7 @@ n-app/
 ├── nest-cli.json                    # NestJS CLI конфигурация
 ├── eslint.config.mjs                # ESLint конфигурация
 ├── .prettierrc                      # Prettier конфигурация
-├── README.md                        # Этот файл
+├── README.md                        # Основной README
 ├── ARCHITECTURE.md                  # Архитектурная документация
 └── DEPLOY.md                        # Инструкция по развёртыванию
 ```
@@ -424,28 +467,58 @@ n-app/
 
 ## 🚀 Быстрый старт
 
-### Backend
+### Backend (локальная разработка)
 ```bash
+# Установка зависимостей
 npm install
+
+# Сборка
 npm run build
+
+# Prisma
 npx prisma generate
 npx prisma migrate dev --name init
 npx prisma db seed
+
+# Запуск в режиме разработки
 npm run start:dev
 ```
 
-### Frontend
+### Frontend (локальная сборка)
 ```bash
 cd frontend
+
+# Установка зависимостей
 flutter pub get
+
+# Сборка APK
 flutter build apk --release
+
+# Установка на устройство через ADB
+adb install build/app/outputs/flutter-apk/app-release.apk
 ```
 
 ### Деплой на сервер
 ```bash
-# На сервере:
+# SSH на сервер
+ssh root@95.170.111.146
+
+# Быстрый деплой
 cd /opt/n-app && git pull && npm install && npm run build && npx prisma generate && npx prisma migrate deploy && pm2 restart n-app-backend
+
+# Или через скрипт
+./deploy/deploy-debian.sh
 ```
 
 ### Учётные данные по умолчанию
 - **Администратор:** логин `admin`, пароль `admin123`
+
+---
+
+## 📚 Полезные ссылки
+
+- **Swagger документация API:** `http://95.170.111.146:3000/api`
+- **MinIO Console:** `http://95.170.111.146:9001` (логин: `minioadmin`, пароль: `minioadmin`)
+- **PM2 статус:** `pm2 status` (на сервере)
+- **PM2 логи:** `pm2 logs n-app-backend` (на сервере)
+- **GitHub репозиторий:** `github.com/den063rus-design/n-app`

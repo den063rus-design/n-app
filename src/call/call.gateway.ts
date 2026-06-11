@@ -91,8 +91,8 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         callerName: call.caller.fio,
       });
 
-      // Создаём уведомление о входящем звонке
-      this.notificationsService.createNotification({
+      // Создаём уведомление о входящем звонке (realtime-событие отправляется внутри createNotification)
+      await this.notificationsService.createNotification({
         userId: payload.calleeId,
         type: 'CALL',
         title: 'Входящий звонок',
@@ -174,13 +174,27 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('call:signal')
   async handleCallSignal(
     client: Socket,
-    payload: { callId: number; signal: unknown; toUserId: number },
+    payload: { callId: number; type: string; sdp?: string; candidate?: string; sdpMid?: string; sdpMLineIndex?: number },
   ) {
     try {
-      this.sendToUser(payload.toUserId, 'call:signal', {
+      const fromUserId = this.getUserIdFromToken(client);
+      if (!fromUserId) {
+        return { success: false, error: 'Не удалось определить отправителя' };
+      }
+
+      // Получаем информацию о звонке, чтобы определить получателя
+      const call = await this.callService.getCallById(payload.callId);
+      const toUserId = call.callerId === fromUserId ? call.calleeId : call.callerId;
+
+      // Пересылаем сигнал получателю (поля на верхнем уровне, без обёртки signal)
+      this.sendToUser(toUserId, 'call:signal', {
         callId: payload.callId,
-        signal: payload.signal,
-        fromUserId: this.getUserIdFromToken(client),
+        type: payload.type,
+        sdp: payload.sdp,
+        candidate: payload.candidate,
+        sdpMid: payload.sdpMid,
+        sdpMLineIndex: payload.sdpMLineIndex,
+        fromUserId,
       });
 
       return { success: true };

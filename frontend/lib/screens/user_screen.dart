@@ -305,7 +305,7 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Чат с поддержкой'),
+        title: const Text('Чат с преподавателем'),
         actions: [
           Consumer<NotificationProvider>(
             builder: (context, provider, _) {

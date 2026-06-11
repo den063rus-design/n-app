@@ -115,8 +115,8 @@ export class ChatService {
       message,
     );
 
-    // Создаём уведомление для получателя
-    this.notificationsService.createNotification({
+    // Создаём уведомление для получателя (realtime-событие отправляется внутри createNotification)
+    await this.notificationsService.createNotification({
       userId: message.receiverId,
       type: 'MESSAGE',
       title: 'Новое сообщение',
