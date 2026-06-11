@@ -194,6 +194,103 @@ Swagger после запуска будет доступен по адресу:
 http://YOUR_SERVER_IP:3000/api
 ```
 
+___________________________________________________________________
+
+## Как заливать на сервер только backend
+
+Если тебе нужен сервер, где крутится только backend, тут есть 2 рабочих варианта.
+
+### Лучший и самый простой вариант
+
+Просто клонируешь весь репозиторий на сервер и запускаешь только backend.
+
+Что будет:
+
+- `frontend/`, `plans/`, `docs/` просто лежат как файлы
+- они никак не крутятся и не мешают backend
+- на сервере реально работает только `pm2 -> dist/main.js`
+
+Если тебе важно именно чтобы на сервере работал только backend — ничего удалять не обязательно.
+
+### Если хочешь оставить только нужные backend-файлы
+
+Тогда лучше использовать `sparse checkout`.
+Это режим Git, когда на сервер сразу подтягиваются только нужные файлы и папки.
+
+#### Что нужно для backend
+
+- `src/`
+- `prisma/`
+- `package.json`
+- `package-lock.json`
+- `tsconfig.json`
+- `tsconfig.build.json`
+- `nest-cli.json`
+- `ecosystem.config.js`
+- `.env` — создаётся на сервере вручную
+- `uploads/` — создастся и будет использоваться backend
+
+#### Что не нужно для backend-only сервера
+
+- `frontend/`
+- `plans/`
+- `docs/`
+- `README.md`
+- `ARCHITECTURE.md`
+- `DEPLOY.md`
+- Android / Flutter файлы целиком
+
+### Как сразу забрать только backend
+
+```bash
+mkdir -p /opt/n-app
+cd /opt/n-app
+git init
+git remote add origin https://github.com/den063rus-design/n-app.git
+git config core.sparseCheckout true
+printf "src/\nprisma/\npackage.json\npackage-lock.json\ntsconfig.json\ntsconfig.build.json\nnest-cli.json\necosystem.config.js\n" > .git/info/sparse-checkout
+git pull origin main
+```
+
+Потом:
+
+```bash
+npm install
+npx prisma generate
+npx prisma migrate deploy
+npm run build
+pm2 start ecosystem.config.js
+```
+
+### Если уже склонировал весь проект
+
+Лишнее можно удалить вручную:
+
+```bash
+rm -rf frontend docs plans
+rm -f README.md ARCHITECTURE.md DEPLOY.md
+```
+
+Но такой вариант не рекомендуется, потому что:
+
+- потом могут быть неудобства при `git pull`
+- можно случайно удалить полезные файлы
+- обычно проще хранить полный репозиторий и просто запускать только backend
+
+### Моя рекомендация
+
+- если хочешь без лишнего геморроя — клонируй весь репозиторий
+- если хочешь максимально чистый backend-only сервер — делай `sparse checkout`
+
+### Итог
+
+Самый практичный путь:
+
+- либо не удалять ничего после `git clone`
+- либо сразу использовать `sparse checkout`
+
+Сам backend от наличия `frontend/` на сервере не страдает.
+
 ## Обновление backend через Git
 
 Базовая команда обновления, которую ты используешь:
