@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:ui' show VoidCallback;
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import '../config/api_config.dart';
+import 'call_logger.dart';
 
 class SocketService {
   static final SocketService _instance = SocketService._internal();
@@ -9,14 +11,32 @@ class SocketService {
   IO.Socket? _socket;
   Timer? _heartbeatTimer;
 
+  // CallLogger для записи call-логов в файл на телефоне
+  final CallLogger _callLogger = CallLogger();
+
+  // Callback, который вызывается при подключении socket
+  // Используется CallService для донавешивания listeners после connect
+  VoidCallback? _onConnectCallback;
+
   SocketService._internal();
 
   IO.Socket? get socket => _socket;
 
+  /// Устанавливает callback, который будет вызван при подключении socket
+  void setOnConnectCallback(VoidCallback callback) {
+    _log('[SOCKET_SERVICE] setOnConnectCallback — callback set');
+    _onConnectCallback = callback;
+    // Если socket уже подключён — вызываем сразу
+    if (_socket != null && _socket!.connected) {
+      _log('[SOCKET_SERVICE] setOnConnectCallback — socket already connected, invoking callback immediately');
+      callback();
+    }
+  }
+
   /// Подключается к Socket.IO серверу с JWT токеном
   void connect(String token) {
-    print('[SOCKET_SERVICE] 🔌 connect() called — token length: ${token.length}');
-    print('[SOCKET_SERVICE] 🔌 connect() — socketUrl: ${ApiConfig.socketUrl}');
+    _log('[SOCKET_SERVICE] 🔌 connect() called — token length: ${token.length}');
+    _log('[SOCKET_SERVICE] 🔌 connect() — socketUrl: ${ApiConfig.socketUrl}');
     try {
       _socket = IO.io(
         ApiConfig.socketUrl,
@@ -28,28 +48,36 @@ class SocketService {
       );
 
       _socket!.onConnect((_) {
-        print('[SOCKET_SERVICE] ✅ Socket CONNECTED: ${_socket!.id}');
-        print('[SOCKET_SERVICE] ✅ Socket connected — transport: websocket');
+        _log('[SOCKET_SERVICE] ✅✅✅ Socket CONNECTED: ${_socket!.id}');
+        _log('[SOCKET_SERVICE] ✅ Socket connected — transport: websocket');
         startHeartbeat();
+
+        // Вызываем callback для донавешивания call-листенеров
+        if (_onConnectCallback != null) {
+          _log('[SOCKET_SERVICE] 🔔 Invoking onConnectCallback after connect');
+          _onConnectCallback!();
+        } else {
+          _log('[SOCKET_SERVICE] ⚠️ onConnectCallback is NOT set — call listeners may not be registered');
+        }
       });
 
       _socket!.onDisconnect((_) {
-        print('[SOCKET_SERVICE] 🔌 Socket DISCONNECTED');
+        _log('[SOCKET_SERVICE] 🔌 Socket DISCONNECTED');
         stopHeartbeat();
       });
 
       _socket!.onError((error) {
-        print('[SOCKET_SERVICE] ❌ Socket error: $error');
+        _log('[SOCKET_SERVICE] ❌ Socket error: $error');
       });
 
       _socket!.onConnectError((error) {
-        print('[SOCKET_SERVICE] ❌ Socket connection error: $error');
+        _log('[SOCKET_SERVICE] ❌ Socket connection error: $error');
       });
 
       _socket!.connect();
-      print('[SOCKET_SERVICE] 🔌 connect() — socket.connect() called, socket.id before connect: ${_socket?.id}');
+      _log('[SOCKET_SERVICE] 🔌 connect() — socket.connect() called');
     } catch (e) {
-      print('[SOCKET_SERVICE] ❌ Socket connection failed: $e');
+      _log('[SOCKET_SERVICE] ❌ Socket connection failed: $e');
     }
   }
 
@@ -57,17 +85,17 @@ class SocketService {
 
   /// Запускает heartbeat — отправляет 'heartbeat' каждые 30 секунд
   void startHeartbeat() {
-    print('[SOCKET_SERVICE] 💓 startHeartbeat() — starting heartbeat every 30s');
+    _log('[SOCKET_SERVICE] 💓 startHeartbeat() — starting heartbeat every 30s');
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       _socket?.emit('heartbeat');
-      print('[SOCKET_SERVICE] 💓 Heartbeat sent');
+      _log('[SOCKET_SERVICE] 💓 Heartbeat sent');
     });
   }
 
   /// Останавливает heartbeat
   void stopHeartbeat() {
-    print('[SOCKET_SERVICE] 💓 stopHeartbeat() — stopping heartbeat');
+    _log('[SOCKET_SERVICE] 💓 stopHeartbeat() — stopping heartbeat');
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
   }
@@ -143,45 +171,47 @@ class SocketService {
   /// Отправляет событие звонка (call:start, call:accept, call:reject, call:end)
   void sendCallEvent(String event, Map<String, dynamic> data) {
     final socketStatus = _socket != null ? 'connected (id: ${_socket!.id})' : 'NULL ⚠️';
-    print('[SOCKET_SERVICE] 📤 sendCallEvent — event="$event", data=$data');
-    print('[SOCKET_SERVICE] 📤 sendCallEvent — socket status: $socketStatus');
+    _log('[SOCKET_SERVICE] 📤 sendCallEvent — event="$event", data=$data');
+    _log('[SOCKET_SERVICE] 📤 sendCallEvent — socket status: $socketStatus');
     if (_socket == null) {
-      print('[SOCKET_SERVICE] ⚠️⚠️⚠️ sendCallEvent: _socket is NULL — event "$event" will NOT be sent!');
+      _log('[SOCKET_SERVICE] ⚠️⚠️⚠️ sendCallEvent: _socket is NULL — event "$event" will NOT be sent!');
       return;
     }
     _socket!.emit(event, data);
-    print('[SOCKET_SERVICE] ✅ sendCallEvent — "$event" emitted');
+    _log('[SOCKET_SERVICE] ✅ sendCallEvent — "$event" emitted');
   }
 
   /// Отправляет сигнал WebRTC (offer, answer, ICE candidate)
   void sendCallSignal(int callId, Map<String, dynamic> data) {
     final socketStatus = _socket != null ? 'connected (id: ${_socket!.id})' : 'NULL ⚠️';
-    print('[SOCKET_SERVICE] 📤 sendCallSignal — callId=$callId, type=${data['type']}');
-    print('[SOCKET_SERVICE] 📤 sendCallSignal — full data: $data');
-    print('[SOCKET_SERVICE] 📤 sendCallSignal — socket status: $socketStatus');
+    _log('[SOCKET_SERVICE] 📤 sendCallSignal — callId=$callId, type=${data['type']}');
+    _log('[SOCKET_SERVICE] 📤 sendCallSignal — full data: $data');
+    _log('[SOCKET_SERVICE] 📤 sendCallSignal — socket status: $socketStatus');
     if (_socket == null) {
-      print('[SOCKET_SERVICE] ⚠️⚠️⚠️ sendCallSignal: _socket is NULL — signal will NOT be sent!');
+      _log('[SOCKET_SERVICE] ⚠️⚠️⚠️ sendCallSignal: _socket is NULL — signal will NOT be sent!');
       return;
     }
     _socket!.emit('call:signal', {'callId': callId, ...data});
-    print('[SOCKET_SERVICE] ✅ sendCallSignal — call:signal emitted');
+    _log('[SOCKET_SERVICE] ✅ sendCallSignal — call:signal emitted');
   }
 
   /// Слушает события звонков (call:incoming, call:accepted, call:signal, call:ended)
   void onCallEvent(String event, Function(dynamic) handler) {
     final socketStatus = _socket != null ? 'connected (id: ${_socket!.id})' : 'NULL ⚠️';
-    print('[SOCKET_SERVICE] 👂 onCallEvent — registering listener for: "$event"');
-    print('[SOCKET_SERVICE] 👂 onCallEvent — socket status: $socketStatus');
+    _log('[SOCKET_SERVICE] 👂👂👂 onCallEvent — registering listener for: "$event"');
+    _log('[SOCKET_SERVICE] 👂 onCallEvent — socket status: $socketStatus');
     if (_socket == null) {
-      print('[SOCKET_SERVICE] ⚠️⚠️⚠️ onCallEvent: _socket is NULL — listener for "$event" will NOT be registered!');
+      _log('[SOCKET_SERVICE] ⚠️⚠️⚠️ onCallEvent: _socket is NULL — listener for "$event" will NOT be registered!');
+      _log('[SOCKET_SERVICE] ⚠️⚠️⚠️ onCallEvent: This means _setupSocketListeners was called before socket connect');
       return;
     }
     _socket!.on(event, (data) {
-      print('[SOCKET_SERVICE] 📥📥📥 EVENT RECEIVED: "$event" — data: $data');
-      print('[SOCKET_SERVICE] 📥 event received — socket.id: ${_socket?.id}');
+      _log('[SOCKET_SERVICE] 📥📥📥📥📥 EVENT RECEIVED: "$event" — data: $data');
+      _log('[SOCKET_SERVICE] 📥 event received — socket.id: ${_socket?.id}');
       handler(data);
+      _log('[SOCKET_SERVICE] ✅ handler for "$event" completed');
     });
-    print('[SOCKET_SERVICE] ✅ onCallEvent — listener for "$event" registered successfully');
+    _log('[SOCKET_SERVICE] ✅✅✅ onCallEvent — listener for "$event" registered successfully');
   }
 
   // ========== Notification events ==========
@@ -199,11 +229,19 @@ class SocketService {
   /// Отключается от сервера
   void disconnect() {
     try {
+      _log('[SOCKET_SERVICE] 🔌 disconnect() called');
       stopHeartbeat();
       _socket?.disconnect();
       _socket = null;
+      _log('[SOCKET_SERVICE] 🔌 disconnect() — done');
     } catch (e) {
-      print('Socket disconnect error: $e');
+      _log('[SOCKET_SERVICE] ❌ Socket disconnect error: $e');
     }
+  }
+
+  /// Пишет лог одновременно в print (adb) и в файл (CallLogger)
+  void _log(String message) {
+    print(message);
+    _callLogger.log('SocketService', message);
   }
 }

@@ -33,7 +33,7 @@ class CallService {
   bool _isMicOn = true;
   bool _isFrontCamera = true;
 
-  // Защита от повторной регистрации listeners
+  // Флаг: были ли уже навешены listeners (чтобы не дублировать)
   bool _listenersAttached = false;
 
   // Флаг: открыт ли экран звонка (для предотвращения дублей)
@@ -62,24 +62,14 @@ class CallService {
   Future<void> init() async {
     _log('🔧 init() called');
     await _requestPermissions();
-    _setupSocketListeners();
 
-    // Если socket ещё не подключён — listeners не зарегистрируются.
-    // Подписываемся на событие подключения socket, чтобы донавесить listeners.
-    _log('🔧 init() — checking if socket is already connected...');
-    final socket = _socketService.socket;
-    if (socket != null && socket.connected) {
-      _log('🔧 init() — socket is already connected (id: ${socket.id}), listeners should be registered');
-    } else {
-      _log('🔧 init() — ⚠️ socket is NOT connected yet (socket=${socket?.id}, connected=${socket?.connected})');
-      _log('🔧 init() — ⚠️ listeners may NOT be registered! Will retry on socket connect...');
-      // Подписываемся на connect через socket.io on(), чтобы донавесить listeners
-      socket?.on('connect', (_) {
-        _log('🔧 init() — socket connected AFTER init, retrying _setupSocketListeners()');
-        _listenersAttached = false; // Сбрасываем флаг для повторной регистрации
-        _setupSocketListeners();
-      });
-    }
+    // Регистрируем callback, который будет вызван при подключении socket
+    // Это гарантирует, что listeners навешиваются ТОЛЬКО после socket connect
+    _log('🔧 init() — setting onConnectCallback on SocketService');
+    _socketService.setOnConnectCallback(_setupSocketListeners);
+
+    // Если socket уже подключён — callback вызовется сразу внутри setOnConnectCallback
+    // Если нет — callback вызовется, когда socket подключится
   }
 
   /// Отмечает, что экран звонка открыт (предотвращает дубли)
@@ -96,24 +86,19 @@ class CallService {
   }
 
   void _setupSocketListeners() {
-    // Защита от повторной регистрации: listeners навешиваются только один раз
-    if (_listenersAttached) {
-      _log('🔌 _setupSocketListeners() — already attached, skipping');
-      return;
-    }
-    _log('🔌 _setupSocketListeners() — registering listeners...');
+    // При каждом вызове (в т.ч. после reconnect) сбрасываем старые listeners
+    // и навешиваем заново. Защита от дублей — socket.io сама заменяет обработчики.
+    _log('🔌🔌🔌 _setupSocketListeners() — CALLED (socket should be connected now)');
 
     // Проверяем, что socket не null
     final socket = _socketService.socket;
     if (socket == null) {
-      _log('🔌 _setupSocketListeners() — ⚠️⚠️⚠️ _socketService.socket is NULL! Listeners will NOT be registered!');
-      _log('🔌 _setupSocketListeners() — 💡 This means CallService.init() was called before SocketService.connect()');
-      _log('🔌 _setupSocketListeners() — 💡 Setting _listenersAttached=false so retry can happen');
-      _listenersAttached = false;
+      _log('🔌 _setupSocketListeners() — ⚠️⚠️⚠️ _socketService.socket is NULL!');
+      _log('🔌 _setupSocketListeners() — 💡 This should not happen if setOnConnectCallback works correctly');
       return;
     }
     if (!socket.connected) {
-      _log('🔌 _setupSocketListeners() — ⚠️ socket exists but NOT CONNECTED yet (id: ${socket.id})');
+      _log('🔌 _setupSocketListeners() — ⚠️ socket exists but NOT CONNECTED (id: ${socket.id})');
       _log('🔌 _setupSocketListeners() — 💡 Listeners will be registered anyway (socket.io queues them)');
     }
 
@@ -122,7 +107,7 @@ class CallService {
     _log('🔌 _setupSocketListeners() — socket.id=${socket.id}, socket.connected=${socket.connected}');
 
     _socketService.onCallEvent('call:incoming', (data) {
-      _log('📞📞📞 call:incoming RECEIVED — data: $data');
+      _log('📞📞📞📞📞 call:incoming RECEIVED — data: $data');
       _log('📞 call:incoming — current state=$_state, _currentCallId=$_currentCallId');
       // Игнорируем входящий звонок, если уже на звонке
       if (_state == CallState.CALLING ||
@@ -131,6 +116,8 @@ class CallService {
         _log('⚠️ call:incoming ignored — already in call, state=$_state');
         return;
       }
+      // Сбрасываем всё перед новым входящим звонком (защита от "грязного" состояния)
+      _hardReset();
       _state = CallState.RINGING;
       _currentCallId = data['callId'];
       _remoteUserId = data['callerId'];
@@ -148,7 +135,7 @@ class CallService {
     });
 
     _socketService.onCallEvent('call:accepted', (data) async {
-      _log('📞📞📞 call:accepted RECEIVED — data: $data');
+      _log('📞📞📞📞📞 call:accepted RECEIVED — data: $data');
       _log('📞 call:accepted — current state=$_state, _currentCallId=$_currentCallId');
       // Сохраняем callId из ответа, если ещё не установлен
       if (_currentCallId == null && data['callId'] != null) {
@@ -168,7 +155,7 @@ class CallService {
     });
 
     _socketService.onCallEvent('call:signal', (data) async {
-      _log('📡📡📡 call:signal RECEIVED — type=${data['type']}, full data: $data');
+      _log('📡📡📡📡📡 call:signal RECEIVED — type=${data['type']}, full data: $data');
       _log('📡 call:signal — current state=$_state, _currentCallId=$_currentCallId, _peerConnection=${_peerConnection != null ? 'exists' : 'NULL'}');
       if (data['type'] == 'candidate') {
         if (_peerConnection != null) {
@@ -245,17 +232,25 @@ class CallService {
     });
 
     _socketService.onCallEvent('call:ended', (data) {
-      _log('📞📞📞 call:ended RECEIVED — data: $data');
+      _log('📞📞📞📞📞 call:ended RECEIVED — data: $data');
       _log('📞 call:ended — current state=$_state, _currentCallId=$_currentCallId');
       _endCall();
     });
 
-    _log('🔌 _setupSocketListeners() — ✅ ALL listeners registered');
+    _log('🔌 _setupSocketListeners() — ✅✅✅ ALL listeners registered');
   }
 
   Future<void> startCall(int userId) async {
     _log('📞📞📞 startCall() called — userId=$userId');
     _log('📞 startCall() — current state=$_state, _currentCallId=$_currentCallId');
+
+    // ===== ВАЖНО: разрешаем startCall только из IDLE =====
+    if (_state != CallState.IDLE) {
+      _log('⚠️⚠️⚠️ startCall() — REFUSED: state=$_state, must be IDLE. Call _hardReset() first.');
+      _log('⚠️ startCall() — forcing hard reset before starting new call');
+      _hardReset();
+    }
+
     // Инициализируем логгер для нового звонка
     await _callLogger.init();
     _log('📝 Call log file initialized');
@@ -268,6 +263,7 @@ class CallService {
     _log('📞 startCall() — checking socket before emit...');
     final socket = _socketService.socket;
     _log('📞 startCall() — socket=${socket?.id}, connected=${socket?.connected}');
+    _log('📞 startCall() — _listenersAttached=$_listenersAttached');
     _socketService.sendCallEvent('call:start', {
       'calleeId': userId,
     });
@@ -301,7 +297,7 @@ class CallService {
       'callId': _currentCallId,
     });
     _log('❌ rejectCall() — call:reject sent, resetting state');
-    _reset();
+    _hardReset();
   }
 
   Future<void> endCall() async {
@@ -485,11 +481,14 @@ class CallService {
     _log('✅ Cleanup done, state=ENDED');
     // Закрываем лог-файл
     _callLogger.close();
-    Future.delayed(const Duration(seconds: 1), () => _reset());
+    // Полный сброс состояния через 1 секунду
+    Future.delayed(const Duration(seconds: 1), () => _hardReset());
   }
 
-  void _reset() {
-    _log('🔄 _reset() — resetting all state');
+  /// Полный сброс ВСЕГО состояния звонка.
+  /// Вызывается после завершения звонка, при reject, при старте нового звонка из не-IDLE.
+  void _hardReset() {
+    _log('🔄🔄🔄 _hardReset() — resetting ALL call state');
     _state = CallState.IDLE;
     _currentCallId = null;
     _remoteUserId = null;
@@ -497,12 +496,17 @@ class CallService {
     _isCameraOn = true;
     _isMicOn = true;
     _isFrontCamera = true;
+    _peerConnection?.close();
+    _peerConnection = null;
+    _localStream?.getTracks().forEach((track) => track.stop());
+    _localStream = null;
+    _remoteStream = null;
     // _isCallScreenOpen НЕ сбрасывается здесь —
     // флагом управляет только CallScreen через markCallScreenClosed()
     _stateController.add(_state);
     _localStreamController.add(null);
     _remoteStreamController.add(null);
-    _log('🔄 _reset() — state reset to IDLE');
+    _log('🔄 _hardReset() — state reset to IDLE, all fields cleared');
   }
 
   void dispose() {
