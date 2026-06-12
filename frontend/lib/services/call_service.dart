@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import '../app/app.dart';
 import 'socket_service.dart';
 import 'call_logger.dart';
+import 'call_ringtone_service.dart';
 
 enum CallState {
   IDLE,
@@ -39,6 +42,12 @@ class CallService {
   // Флаг: открыт ли экран звонка (для предотвращения дублей)
   bool _isCallScreenOpen = false;
 
+  // Флаг: открыт ли диалог входящего звонка (для предотвращения дублей)
+  bool _isIncomingDialogOpen = false;
+
+  // Флаг: свёрнут ли звонок в mini-call overlay
+  bool _isMinimized = false;
+
   // Таймер отложенного сброса после завершения звонка
   Timer? _resetTimer;
 
@@ -51,9 +60,21 @@ class CallService {
   final _incomingCallController = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get incomingCallStream => _incomingCallController.stream;
 
+  // Стрим для оповещения о сворачивании/разворачивании звонка
+  final _minimizedController = StreamController<bool>.broadcast();
+  Stream<bool> get minimizedStream => _minimizedController.stream;
+
   Stream<CallState> get stateStream => _stateController.stream;
   Stream<MediaStream?> get localStream => _localStreamController.stream;
   Stream<MediaStream?> get remoteStream => _remoteStreamController.stream;
+
+  /// Текущий локальный MediaStream (может быть null, если звонок не начат).
+  /// Нужен для немедленного назначения в renderer без ожидания stream-события.
+  MediaStream? get currentLocalStream => _localStream;
+
+  /// Текущий удалённый MediaStream (может быть null, если remote peer не подключился).
+  /// Нужен для немедленного назначения в renderer без ожидания stream-события.
+  MediaStream? get currentRemoteStream => _remoteStream;
 
   CallState get state => _state;
   bool get isCameraOn => _isCameraOn;
@@ -61,18 +82,21 @@ class CallService {
   int? get remoteUserId => _remoteUserId;
   String? get remoteUserName => _remoteUserName;
   int? get currentCallId => _currentCallId;
+  bool get isMinimized => _isMinimized;
+  bool get isIncomingDialogOpen => _isIncomingDialogOpen;
+
+  String? _lastEndReason;
+  String? get lastEndReason => _lastEndReason;
+
+  /// Время завершения последнего звонка (millisecondsSinceEpoch).
+  /// Используется в PushService для stale push guard.
+  int? _lastCallEndTimestamp;
+  int? get lastCallEndTimestamp => _lastCallEndTimestamp;
 
   Future<void> init() async {
-    _log('🔧 init() called');
+    _log('🔧 init()');
     await _requestPermissions();
-
-    // Регистрируем callback, который будет вызван при подключении socket
-    // Это гарантирует, что listeners навешиваются ТОЛЬКО после socket connect
-    _log('🔧 init() — setting onConnectCallback on SocketService');
     _socketService.setOnConnectCallback(_setupSocketListeners);
-
-    // Если socket уже подключён — callback вызовется сразу внутри setOnConnectCallback
-    // Если нет — callback вызовется, когда socket подключится
   }
 
   /// Отмечает, что экран звонка открыт (предотвращает дубли)
@@ -84,34 +108,97 @@ class CallService {
   /// Проверяет, открыт ли уже экран звонка
   bool get isCallScreenOpen => _isCallScreenOpen;
 
+  /// Отмечает, что диалог входящего звонка открыт
+  void markIncomingDialogOpen() => _isIncomingDialogOpen = true;
+
+  /// Отмечает, что диалог входящего звонка закрыт
+  void markIncomingDialogClosed() => _isIncomingDialogOpen = false;
+
+  /// Сворачивает звонок в mini-call overlay
+  void minimizeCall() {
+    if (_state == CallState.CALLING ||
+        _state == CallState.RINGING ||
+        _state == CallState.IN_CALL) {
+      _isMinimized = true;
+      _minimizedController.add(_isMinimized);
+      _log('📱 minimizeCall() — call minimized, isMinimized=true');
+    } else {
+      _log('⚠️ minimizeCall() — cannot minimize in state=$_state');
+    }
+  }
+
+  /// Разворачивает звонок из mini-call overlay в fullscreen
+  void expandCall() {
+    _isMinimized = false;
+    _minimizedController.add(_isMinimized);
+    _log('📱 expandCall() — call expanded, isMinimized=false');
+  }
+
+  /// Восстанавливает состояние входящего звонка из push-уведомления.
+  /// Вызывается, когда пользователь тапнул по call push, но CallService
+  /// ещё не в состоянии RINGING (например, приложение было убито).
+  ///
+  /// Параметры принимаются как String (так как из FCM data все значения —
+  /// строки) и парсятся в int внутри метода.
+  void hydrateIncomingCallFromPush({
+    required String callId,
+    required String callerId,
+    required String callerName,
+  }) {
+    _log('📞 hydrateIncomingCallFromPush() — callId=$callId, callerId=$callerId, callerName=$callerName');
+
+    // Парсим String в int
+    final parsedCallId = int.tryParse(callId);
+    final parsedCallerId = int.tryParse(callerId);
+
+    if (parsedCallId == null || parsedCallerId == null) {
+      _log('⚠️ hydrateIncomingCallFromPush — failed to parse callId or callerId, ignoring');
+      return;
+    }
+
+    // Если уже на звонке — игнорируем (включая CALLING)
+    if (_state == CallState.CALLING ||
+        _state == CallState.RINGING ||
+        _state == CallState.IN_CALL) {
+      _log('⚠️ hydrateIncomingCallFromPush — already in call, state=$_state, ignoring');
+      return;
+    }
+
+    // Отменяем отложенный сброс
+    _resetTimer?.cancel();
+
+    // Полный сброс состояния перед установкой нового звонка
+    _hardReset();
+
+    // Устанавливаем RINGING
+    _state = CallState.RINGING;
+    _currentCallId = parsedCallId;
+    _remoteUserId = parsedCallerId;
+    _remoteUserName = callerName;
+    _stateController.add(_state);
+    _log('✅ hydrateIncomingCallFromPush — state set to RINGING');
+  }
+
   Future<void> _requestPermissions() async {
-    _log('_requestPermissions() called — permissions are requested via getUserMedia natively');
+    // Разрешения запрашиваются централизованно в AppPermissionsService при старте.
+    // getUserMedia запросит их нативно, если потребуется.
   }
 
   void _setupSocketListeners() {
-    // При каждом вызове (в т.ч. после reconnect) сбрасываем старые listeners
-    // и навешиваем заново. Защита от дублей — socket.io сама заменяет обработчики.
-    _log('🔌🔌🔌 _setupSocketListeners() — CALLED (socket should be connected now)');
+    _log('🔌 _setupSocketListeners()');
 
     // Проверяем, что socket не null
     final socket = _socketService.socket;
     if (socket == null) {
-      _log('🔌 _setupSocketListeners() — ⚠️⚠️⚠️ _socketService.socket is NULL!');
-      _log('🔌 _setupSocketListeners() — 💡 This should not happen if setOnConnectCallback works correctly');
+      _log('🔌 _setupSocketListeners() — socket is NULL');
       return;
-    }
-    if (!socket.connected) {
-      _log('🔌 _setupSocketListeners() — ⚠️ socket exists but NOT CONNECTED (id: ${socket.id})');
-      _log('🔌 _setupSocketListeners() — 💡 Listeners will be registered anyway (socket.io queues them)');
     }
 
     _listenersAttached = true;
-    _log('🔌 _setupSocketListeners() — ✅ registering: call:incoming, call:accepted, call:signal, call:ended');
-    _log('🔌 _setupSocketListeners() — socket.id=${socket.id}, socket.connected=${socket.connected}');
+    _log('🔌 registering: call:incoming, call:accepted, call:signal, call:ended, call:rejected');
 
     _socketService.onCallEvent('call:incoming', (data) {
-      _log('📞📞📞📞📞 call:incoming RECEIVED — data: $data');
-      _log('📞 call:incoming — current state=$_state, _currentCallId=$_currentCallId, _isCallScreenOpen=$_isCallScreenOpen');
+      _log('📞 call:incoming — data: $data, state=$_state');
       // Игнорируем входящий звонок, если уже на звонке
       if (_state == CallState.CALLING ||
           _state == CallState.RINGING ||
@@ -122,72 +209,62 @@ class CallService {
       // Игнорируем входящий звонок, если экран звонка уже открыт
       // (защита от дублей — экран мог быть открыт через push-уведомление)
       if (_isCallScreenOpen) {
-        _log('⚠️⚠️⚠️ call:incoming ignored — call screen is already open!');
-        _log('⚠️⚠️⚠️ This means the call screen was opened via push notification or other path');
-        _log('⚠️⚠️⚠️ NOT resetting state — keeping current state=$_state');
+        _log('⚠️ call:incoming ignored — call screen already open, state=$_state');
+        return;
+      }
+      // Игнорируем входящий звонок, если диалог входящего звонка уже открыт
+      // (защита от дублей — предотвращает создание второго диалога)
+      if (_isIncomingDialogOpen) {
+        _log('⚠️ call:incoming ignored — incoming dialog already open, state=$_state');
         return;
       }
       // Отменяем отложенный сброс (если был завершён предыдущий звонок)
       _resetTimer?.cancel();
-      // Мягкий сброс: очищаем поля, НО НЕ отправляем IDLE в stream
-      _log('🔄 call:incoming — soft reset (clearing fields without emitting IDLE)');
-      _currentCallId = null;
-      _remoteUserId = null;
-      _remoteUserName = null;
-      _isCameraOn = true;
-      _isMicOn = true;
-      _isFrontCamera = true;
-      _peerConnection?.close();
-      _peerConnection = null;
-      _localStream?.getTracks().forEach((track) => track.stop());
-      _localStream = null;
-      _remoteStream = null;
-      _localStreamController.add(null);
-      _remoteStreamController.add(null);
-      // Устанавливаем RINGING без предварительного IDLE
+      // Полный сброс состояния перед установкой нового звонка
+      _hardReset();
+      // Устанавливаем RINGING
       _state = CallState.RINGING;
       _currentCallId = data['callId'];
       _remoteUserId = data['callerId'];
       _remoteUserName = data['callerName'] ?? 'Пользователь';
       _stateController.add(_state);
-      _log('✅ call:incoming processed — callId=$_currentCallId, callerId=$_remoteUserId, callerName=$_remoteUserName');
+      _log('✅ call:incoming processed — callId=$_currentCallId, callerId=$_remoteUserId');
       // Оповещаем UI о входящем звонке для открытия экрана
-      _log('📞 call:incoming — emitting to _incomingCallController');
       _incomingCallController.add({
         'callId': data['callId'],
         'callerId': data['callerId'],
         'callerName': data['callerName'] ?? 'Пользователь',
       });
-      _log('📞 call:incoming — emitted to _incomingCallController');
     });
 
     _socketService.onCallEvent('call:accepted', (data) async {
-      _log('📞📞📞📞📞 call:accepted RECEIVED — data: $data');
-      _log('📞 call:accepted — current state=$_state, _currentCallId=$_currentCallId');
+      _log('📞 call:accepted — data: $data, state=$_state');
+
+      // Останавливаем все звуки звонка (исходящий гудок у звонящего)
+      await CallRingtoneService().stopAllCallSounds();
+
       // Сохраняем callId из ответа, если ещё не установлен
       if (_currentCallId == null && data['callId'] != null) {
         _currentCallId = data['callId'];
-        _log('📝 callId set from call:accepted: $_currentCallId');
-      } else {
-        _log('📝 callId already set: $_currentCallId (from data: ${data['callId']})');
       }
       // Только caller получает call:accepted и создаёт offer
-      _log('📞 call:accepted — transitioning state: $_state -> IN_CALL');
       _state = CallState.IN_CALL;
       _stateController.add(_state);
-      _log('🚀🚀🚀 Starting peer connection as CALLER (isCaller: true)');
-      _log('🚀 _currentCallId=$_currentCallId, _remoteUserId=$_remoteUserId');
+      _log('🚀 Starting peer connection as CALLER');
       await _startPeerConnection(isCaller: true);
-      _log('📞 call:accepted — _startPeerConnection completed');
     });
 
     _socketService.onCallEvent('call:signal', (data) async {
-      _log('📡📡📡📡📡 call:signal RECEIVED — type=${data['type']}, full data: $data');
-      _log('📡 call:signal — current state=$_state, _currentCallId=$_currentCallId, _peerConnection=${_peerConnection != null ? 'exists' : 'NULL'}');
+      _log('📡 call:signal — type=${data['type']}, state=$_state');
+
+      // Игнорируем сигналы от старых/чужих звонков
+      if (data['callId'] != null && data['callId'] != _currentCallId) {
+        _log('📡 call:signal — ignoring signal for different call: ${data['callId']}');
+        return;
+      }
+
       if (data['type'] == 'candidate') {
         if (_peerConnection != null) {
-          _log('🧊 Adding ICE candidate: ${data['candidate']}');
-          _log('🧊 sdpMid=${data['sdpMid']}, sdpMLineIndex=${data['sdpMLineIndex']}');
           try {
             await _peerConnection!.addCandidate(
               RTCIceCandidate(
@@ -196,62 +273,48 @@ class CallService {
                 data['sdpMLineIndex'],
               ),
             );
-            _log('✅ ICE candidate added successfully');
           } catch (e) {
-            _log('❌❌❌ ICE candidate add FAILED: $e');
+            _log('❌ ICE candidate add FAILED: $e');
           }
         } else {
-          _log('⚠️⚠️⚠️ ICE candidate received but _peerConnection is NULL');
+          _log('⚠️ ICE candidate received but _peerConnection is NULL');
         }
       } else if (data['type'] == 'offer') {
-        _log('📄📄📄 Offer received — starting peer connection as CALLEE (isCaller: false)');
-        _log('📄 Offer sdp length: ${data['sdp']?.length}');
-        // Callee получает offer — создаёт peer connection и answer
-        _log('📄 call:signal(offer) — transitioning state: $_state -> IN_CALL');
+        _log('📄 Offer received — starting peer connection as CALLEE');
         _state = CallState.IN_CALL;
         _stateController.add(_state);
         await _startPeerConnection(isCaller: false);
-        _log('📄 Setting remote description (offer)');
         try {
           await _peerConnection!.setRemoteDescription(
             RTCSessionDescription(data['sdp'], data['type']),
           );
-          _log('✅ Remote description set from offer');
         } catch (e) {
-          _log('❌❌❌ setRemoteDescription(offer) FAILED: $e');
+          _log('❌ setRemoteDescription(offer) FAILED: $e');
           return;
         }
-        _log('📄 Creating answer...');
         try {
           final answer = await _peerConnection!.createAnswer();
-          _log('✅ Answer created — type: ${answer.type}, sdp length: ${answer.sdp?.length}');
-          _log('📄 Setting local description (answer)');
           await _peerConnection!.setLocalDescription(answer);
-          _log('✅ Local description set');
-          _log('📤 Sending answer via signalling');
           _socketService.sendCallSignal(_currentCallId!, {
             'type': 'answer',
             'sdp': answer.sdp,
           });
           _log('✅ Answer sent');
         } catch (e) {
-          _log('❌❌❌ Answer creation/sending FAILED: $e');
+          _log('❌ Answer creation/sending FAILED: $e');
         }
       } else if (data['type'] == 'answer') {
-        _log('📄📄📄 Answer received — setting remote description');
-        _log('📄 Answer sdp length: ${data['sdp']?.length}');
-        // Caller получает answer — устанавливает remote description
+        _log('📄 Answer received — setting remote description');
         if (_peerConnection != null) {
           try {
             await _peerConnection!.setRemoteDescription(
               RTCSessionDescription(data['sdp'], data['type']),
             );
-            _log('✅ Remote description set from answer');
           } catch (e) {
-            _log('❌❌❌ setRemoteDescription(answer) FAILED: $e');
+            _log('❌ setRemoteDescription(answer) FAILED: $e');
           }
         } else {
-          _log('⚠️⚠️⚠️ Answer received but _peerConnection is NULL');
+          _log('⚠️ Answer received but _peerConnection is NULL');
         }
       } else {
         _log('⚠️ call:signal — unknown type: ${data['type']}');
@@ -259,96 +322,145 @@ class CallService {
     });
 
     _socketService.onCallEvent('call:ended', (data) {
-      _log('📞📞📞📞📞 call:ended RECEIVED — data: $data');
-      _log('📞 call:ended — current state=$_state, _currentCallId=$_currentCallId');
-      _endCall();
+      _log('📞 call:ended — data: $data, state=$_state');
+
+      // Идемпотентность: игнорируем, если уже завершён или в IDLE
+      if (_state == CallState.IDLE || _state == CallState.ENDED) {
+        _log('📞 call:ended — already in state=$_state, skipping');
+        return;
+      }
+
+      // Останавливаем все звуки звонка
+      CallRingtoneService().stopAllCallSounds();
+
+      final reason = data['reason'] as String?;
+      _endCall(reason: reason);
+      if (reason == 'rejected') {
+        _showSnackbar('Звонок отклонён');
+      } else if (reason == 'expired') {
+        _showSnackbar('Звонок уже завершён');
+      }
+      // no_answer — не показываем снэкбар
     });
 
-    _log('🔌 _setupSocketListeners() — ✅✅✅ ALL listeners registered');
+    _socketService.onCallEvent('call:rejected', (data) {
+      _log('📞 call:rejected — data: $data, state=$_state');
+      if (_state == CallState.CALLING || _state == CallState.RINGING) {
+        CallRingtoneService().stopAllCallSounds();
+        _endCall(reason: 'rejected');
+      } else {
+        _log('📞 call:rejected — ignored, state=$_state');
+      }
+    });
+
+    _log('🔌 _setupSocketListeners() — ✅ listeners registered');
   }
 
   Future<void> startCall(int userId) async {
-    _log('📞📞📞 startCall() called — userId=$userId');
-    _log('📞 startCall() — current state=$_state, _currentCallId=$_currentCallId');
+    _log('📞 startCall() — userId=$userId, state=$_state');
 
     // Отменяем отложенный сброс (если был завершён предыдущий звонок)
     _resetTimer?.cancel();
 
+    // Сбрасываем причину завершения предыдущего звонка
+    _lastEndReason = null;
+    // Сбрасываем stale guard timestamp — начинается новый звонок
+    _lastCallEndTimestamp = null;
+
     // ===== ВАЖНО: разрешаем startCall только из IDLE =====
     if (_state != CallState.IDLE) {
-      _log('⚠️⚠️⚠️ startCall() — REFUSED: state=$_state, must be IDLE. Call _hardReset() first.');
-      _log('⚠️ startCall() — forcing hard reset before starting new call');
+      _log('⚠️ startCall() — state=$_state, forcing hard reset');
       _hardReset();
     }
 
+    // Сбрасываем minimized-статус при старте нового звонка
+    _isMinimized = false;
+    _minimizedController.add(false);
+
     // Инициализируем логгер для нового звонка
     await _callLogger.init();
-    _log('📝 Call log file initialized');
-    _log('📞 startCall() — transitioning state: $_state -> CALLING');
+
     _state = CallState.CALLING;
     _remoteUserId = userId;
     _stateController.add(_state);
 
-    _log('📤 Sending call:start — calleeId=$userId');
-    _log('📞 startCall() — checking socket before emit...');
-    final socket = _socketService.socket;
-    _log('📞 startCall() — socket=${socket?.id}, connected=${socket?.connected}');
-    _log('📞 startCall() — _listenersAttached=$_listenersAttached');
     _socketService.sendCallEvent('call:start', {
       'calleeId': userId,
     });
-    _log('📞 startCall() — call:start sent, waiting for call:accepted...');
-    // callId будет получен в call:accepted от backend
+    _log('📞 call:start sent, waiting for call:accepted...');
+
+    // Запускаем исходящий гудок у звонящего
+    await CallRingtoneService().playOutgoingRingbackTone();
   }
 
   Future<void> acceptCall() async {
-    _log('✅✅✅ acceptCall() called — callId=$_currentCallId');
-    _log('✅ acceptCall() — current state=$_state, _remoteUserId=$_remoteUserId');
+    _log('✅ acceptCall() — callId=$_currentCallId, state=$_state');
+
+    // Останавливаем все звуки звонка (входящий рингтон + исходящий гудок)
+    await CallRingtoneService().stopAllCallSounds();
 
     // Отменяем отложенный сброс (если был завершён предыдущий звонок)
     _resetTimer?.cancel();
 
     if (_currentCallId == null) {
-      _log('⚠️⚠️⚠️ acceptCall() — _currentCallId is NULL! Cannot accept call without callId');
+      _log('⚠️ acceptCall() — _currentCallId is NULL');
       return;
     }
-    // Callee только принимает звонок, НЕ создаёт peer connection
-    // Peer connection будет создан после получения offer через call:signal
-    _log('✅ acceptCall() — sending call:accept with callId=$_currentCallId');
+
+    // Сохраняем callId для проверки в таймауте
+    final callId = _currentCallId;
+
     _socketService.sendCallEvent('call:accept', {
-      'callId': _currentCallId,
+      'callId': callId,
     });
-    _log('✅ acceptCall() — call:accept sent');
+    _log('✅ call:accept sent');
+
+    // Ожидаем подтверждения: если через 5 секунд звонок всё ещё в состоянии RINGING
+    // (не перешёл в IN_CALL через call:signal), значит звонок протух
+    await Future.delayed(const Duration(seconds: 5));
+
+    // Проверяем, не перешёл ли уже звонок в активное состояние
+    if (_state == CallState.RINGING && _currentCallId == callId) {
+      _log('⚠️ acceptCall() — timeout: call not accepted, callId=$callId');
+      _endCall(reason: 'expired');
+      _showSnackbar('Звонок уже завершён');
+    }
   }
 
   Future<void> rejectCall() async {
-    _log('❌❌❌ rejectCall() called — callId=$_currentCallId');
-    _log('❌ rejectCall() — current state=$_state');
+    _log('❌ rejectCall() — callId=$_currentCallId, state=$_state');
+
+    // Останавливаем все звуки звонка
+    await CallRingtoneService().stopAllCallSounds();
+
     if (_currentCallId == null) {
-      _log('⚠️ rejectCall() — _currentCallId is NULL, sending null anyway');
+      _log('⚠️ rejectCall() — _currentCallId is NULL');
     }
     _socketService.sendCallEvent('call:reject', {
       'callId': _currentCallId,
     });
-    _log('❌ rejectCall() — call:reject sent, resetting state');
-    _hardReset();
+    _log('❌ call:reject sent');
+    // Используем _endCall с reason='rejected', чтобы UI получил ENDED
+    // и показал сообщение "Звонок отклонён" перед закрытием
+    _endCall(reason: 'rejected');
   }
 
   Future<void> endCall() async {
-    _log('🔴🔴🔴 endCall() called — callId=$_currentCallId');
-    _log('🔴 endCall() — current state=$_state, _remoteUserId=$_remoteUserId');
-    _log('🔴 endCall() — sending call:end with callId=$_currentCallId');
-    _socketService.sendCallEvent('call:end', {
-      'callId': _currentCallId,
-    });
-    _log('🔴 endCall() — call:end sent, cleaning up');
+    _log('🔴 endCall() — callId=$_currentCallId, state=$_state');
+
+    if (_currentCallId != null) {
+      _socketService.sendCallEvent('call:end', {
+        'callId': _currentCallId,
+      });
+    } else {
+      _log('🔴 endCall() — no active call, skipping socket event');
+    }
+
     _endCall();
   }
 
   Future<void> _startPeerConnection({required bool isCaller}) async {
-    _log('🔧🔧🔧 _startPeerConnection() — isCaller=$isCaller');
-    _log('🔧 _startPeerConnection() — _currentCallId=$_currentCallId, _remoteUserId=$_remoteUserId');
-    _log('🔧 _startPeerConnection() — _state=$_state, _peerConnection=${_peerConnection != null ? 'exists' : 'null'}');
+    _log('🔧 _startPeerConnection() — isCaller=$isCaller');
 
     // ===== 1. Получаем локальный stream =====
     final mediaConstraints = {
@@ -357,31 +469,11 @@ class CallService {
         'facingMode': _isFrontCamera ? 'user' : 'environment',
       },
     };
-    _log('🎥 Requesting getUserMedia with constraints: $mediaConstraints');
     try {
       _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
-      _log('✅ getUserMedia SUCCESS');
     } catch (e) {
-      _log('❌❌❌ getUserMedia FAILED: $e');
+      _log('❌ getUserMedia FAILED: $e');
       return;
-    }
-
-    // Диагностика локального stream
-    if (_localStream != null) {
-      final videoTracks = _localStream!.getVideoTracks();
-      final audioTracks = _localStream!.getAudioTracks();
-      _log('📊 Local stream tracks:');
-      _log('    - Video tracks: ${videoTracks.length}');
-      for (var t in videoTracks) {
-        _log('      track: ${t.id}, enabled: ${t.enabled}, kind: ${t.kind}, label: ${t.label}');
-      }
-      _log('    - Audio tracks: ${audioTracks.length}');
-      for (var t in audioTracks) {
-        _log('      track: ${t.id}, enabled: ${t.enabled}, kind: ${t.kind}');
-      }
-      _log('    - Stream id: ${_localStream!.id}');
-    } else {
-      _log('❌❌❌ _localStream is NULL after getUserMedia');
     }
     _localStreamController.add(_localStream);
 
@@ -391,84 +483,51 @@ class CallService {
         {'urls': 'stun:stun.l.google.com:19302'},
       ],
     };
-    _log('🔗 Creating RTCPeerConnection with config: $config');
     try {
       _peerConnection = await createPeerConnection(config);
-      _log('✅ RTCPeerConnection created');
     } catch (e) {
-      _log('❌❌❌ createPeerConnection FAILED: $e');
+      _log('❌ createPeerConnection FAILED: $e');
       return;
     }
 
-    // ===== 3. Добавляем локальные track'и в peer connection через addTrack (v1.x API) =====
+    // ===== 3. Добавляем локальные track'и =====
     if (_localStream != null) {
-      _log('📤 Adding local tracks to peer connection via addTrack()');
       for (var track in _localStream!.getTracks()) {
-        try {
-          await _peerConnection!.addTrack(track, _localStream!);
-          _log('✅ addTrack() — track: ${track.kind}, id: ${track.id}');
-        } catch (e) {
-          _log('❌❌❌ addTrack() FAILED for track ${track.kind}: $e');
-        }
+        await _peerConnection!.addTrack(track, _localStream!);
       }
     }
 
     // ===== 4. Обработка ICE candidates =====
     _peerConnection!.onIceCandidate = (candidate) {
-      _log('🧊 onIceCandidate fired — candidate: ${candidate.candidate}');
-      _log('    - sdpMid: ${candidate.sdpMid}, sdpMLineIndex: ${candidate.sdpMLineIndex}');
       _socketService.sendCallSignal(_currentCallId!, {
         'type': 'candidate',
         'candidate': candidate.candidate,
         'sdpMid': candidate.sdpMid,
         'sdpMLineIndex': candidate.sdpMLineIndex,
       });
-      _log('📤 ICE candidate sent via signalling');
     };
 
-    // ===== 5. Обработка remote track через onTrack (v1.x API) =====
+    // ===== 5. Обработка remote track =====
     _peerConnection!.onTrack = (event) {
-      _log('📥 onTrack FIRED — event.streams.length=${event.streams.length}');
-      for (var s in event.streams) {
-        _log('    - stream id: ${s.id}, videoTracks: ${s.getVideoTracks().length}, audioTracks: ${s.getAudioTracks().length}');
-      }
       if (event.streams.isNotEmpty) {
         _remoteStream = event.streams[0];
         _remoteStreamController.add(_remoteStream);
-        _log('✅ Remote stream from onTrack assigned and emitted');
-      } else {
-        _log('⚠️ onTrack fired but event.streams is EMPTY');
+        _log('✅ Remote stream received');
       }
     };
 
-    // ===== 6. Мониторинг состояния peer connection =====
-    _peerConnection!.onIceConnectionState = (state) {
-      _log('🔵 iceConnectionState changed: $state');
-    };
-    _peerConnection!.onConnectionState = (state) {
-      _log('🔵 connectionState changed: $state');
-    };
-    _peerConnection!.onSignalingState = (state) {
-      _log('🔵 signalingState changed: $state');
-    };
-
-    // ===== 7. Если caller — создаём offer =====
+    // ===== 6. Если caller — создаём offer =====
     if (isCaller) {
-      _log('📄 Creating offer...');
       try {
         final offer = await _peerConnection!.createOffer();
-        _log('✅ Offer created — type: ${offer.type}, sdp length: ${offer.sdp?.length}');
-        _log('📄 Setting local description (offer)...');
         await _peerConnection!.setLocalDescription(offer);
-        _log('✅ Local description set');
-        _log('📤 Sending offer via signalling');
         _socketService.sendCallSignal(_currentCallId!, {
           'type': 'offer',
           'sdp': offer.sdp,
         });
         _log('✅ Offer sent');
       } catch (e) {
-        _log('❌❌❌ Offer creation/sending FAILED: $e');
+        _log('❌ Offer creation/sending FAILED: $e');
       }
     }
   }
@@ -500,25 +559,46 @@ class CallService {
     }
   }
 
-  void _endCall() {
-    _log('🔴🔴🔴 _endCall() — cleaning up');
-    _log('🔴 _endCall() — state=$_state, _currentCallId=$_currentCallId, _remoteUserId=$_remoteUserId');
-    _log('🔴 _endCall() — _peerConnection=${_peerConnection != null ? 'closing' : 'already null'}');
-    _log('🔴 _endCall() — _localStream=${_localStream != null ? 'exists' : 'null'}, _remoteStream=${_remoteStream != null ? 'exists' : 'null'}');
-    _peerConnection?.close();
-    _peerConnection = null;
-    _localStream?.getTracks().forEach((track) => track.stop());
-    _localStream = null;
-    _remoteStream = null;
+  void _showSnackbar(String message) {
+    final context = navigatorKey.currentContext;
+    if (context != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    }
+  }
+
+  Future<void> _endCall({String? reason}) async {
+    // Идемпотентность: если уже завершён или в IDLE — выходим
+    if (_state == CallState.ENDED || _state == CallState.IDLE) {
+      _log('🔴 _endCall() — already in state=$_state, skipping');
+      return;
+    }
+
+    _log('🔴 _endCall() — reason=$reason, state=$_state');
+
+    // Сохраняем причину завершения
+    _lastEndReason = reason;
+    // Сохраняем timestamp завершения для stale push guard
+    _lastCallEndTimestamp = DateTime.now().millisecondsSinceEpoch;
+
+    // Останавливаем все звуки звонка (await — чтобы звуки гарантированно остановились)
+    await CallRingtoneService().stopAllCallSounds();
+
+    // Немедленно уведомляем UI, что стримов больше нет
+    _localStreamController.add(null);
+    _remoteStreamController.add(null);
     _state = CallState.ENDED;
     _stateController.add(_state);
-    _log('✅ Cleanup done, state=ENDED');
+    // Сбрасываем флаг минимизации
+    _isMinimized = false;
+    _log('✅ _endCall() — state=ENDED');
     // Закрываем лог-файл
     _callLogger.close();
-    // Полный сброс состояния через 1 секунду (с возможностью отмены)
+    // Полный сброс состояния через 2 секунды (с возможностью отмены)
+    // Увеличен с 300ms до 2000ms, чтобы новый входящий звонок успел отменить таймер
     _resetTimer?.cancel();
-    _resetTimer = Timer(const Duration(seconds: 1), () {
-      _log('🔴 _resetTimer fired — calling _hardReset()');
+    _resetTimer = Timer(const Duration(milliseconds: 2000), () {
       _hardReset();
     });
   }
@@ -526,7 +606,14 @@ class CallService {
   /// Полный сброс ВСЕГО состояния звонка.
   /// Вызывается после завершения звонка, при reject, при старте нового звонка из не-IDLE.
   void _hardReset() {
-    _log('🔄🔄🔄 _hardReset() — resetting ALL call state');
+    _log('🔄 _hardReset()');
+
+    // Останавливаем все звуки звонка
+    CallRingtoneService().stopAllCallSounds();
+
+    // Сохраняем timestamp сброса для stale push guard в PushService
+    _lastCallEndTimestamp = DateTime.now().millisecondsSinceEpoch;
+
     _state = CallState.IDLE;
     _currentCallId = null;
     _remoteUserId = null;
@@ -539,12 +626,23 @@ class CallService {
     _localStream?.getTracks().forEach((track) => track.stop());
     _localStream = null;
     _remoteStream = null;
-    // _isCallScreenOpen НЕ сбрасывается здесь —
-    // флагом управляет только CallScreen через markCallScreenClosed()
-    _stateController.add(_state);
-    _localStreamController.add(null);
-    _remoteStreamController.add(null);
-    _log('🔄 _hardReset() — state reset to IDLE, all fields cleared');
+    _isIncomingDialogOpen = false;
+    _isCallScreenOpen = false;
+    _isMinimized = false;
+    _lastEndReason = null;
+    // Явно уведомляем подписчиков stateStream о возврате в IDLE.
+    // _endCall() отправляет ENDED, но через 2 секунды _hardReset() переводит состояние в IDLE.
+    // Без этого эмита StreamBuilder в call_screen.dart останется на ENDED, что может вызвать
+    // лишний rebuild с ENDED-UI или конфуз при проверке snapshot.data == CallState.ENDED.
+    _stateController.add(CallState.IDLE);
+    // _localStreamController.add(null) и _remoteStreamController.add(null) НЕ вызываются —
+    // _endCall() уже отправил null в stream-контроллеры.
+  }
+
+  /// Публичный метод полного сброса состояния звонка.
+  /// Безопасен для вызова при detached socket — не шлёт socket events.
+  void hardReset() {
+    _hardReset();
   }
 
   void dispose() {
@@ -552,6 +650,7 @@ class CallService {
     _localStreamController.close();
     _remoteStreamController.close();
     _incomingCallController.close();
+    _minimizedController.close();
   }
 
   /// Пишет лог одновременно в print (adb) и в файл (CallLogger)

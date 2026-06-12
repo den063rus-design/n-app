@@ -27,6 +27,7 @@ dependencies:
   firebase_messaging: ^15.2.4
   flutter_local_notifications: ^18.0.1
   path_provider: ^2.1.2
+  permission_handler: ^11.3.1
 
 dev_dependencies:
   flutter_test:
@@ -44,3 +45,6 @@ flutter_launcher_icons:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/ringtone.mp3
+    - assets/outgoing_ringback.mp3

@@ -8,6 +8,7 @@ import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
 import '../models/message.dart';
+import '../services/call_service.dart';
 import '../widgets/message_bubble.dart';
 import 'call_screen.dart';
 import 'chat_search_delegate.dart';
@@ -259,7 +260,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     try {
       final hasPermission = await _audioRecorder.hasPermission();
       if (!hasPermission) {
-        _showError('Нет разрешения на запись аудио');
+        // ТЗ 2: разрешение микрофона запрашивается централизованно в AppPermissionsService
+        // Показываем сообщение, а не запрашиваем сами
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Нет доступа к микрофону. Дайте разрешение в настройках.')),
+          );
+        }
         return;
       }
 
@@ -526,6 +533,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           IconButton(
             icon: const Icon(Icons.videocam),
             onPressed: () {
+              final callService = CallService();
+              if (callService.isCallScreenOpen) return; // guard от двойного открытия
+              callService.markCallScreenOpen();
+              if (!context.mounted) return;
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -533,6 +544,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     userId: widget.userId,
                     userName: widget.userName,
                     isIncoming: false,
+                    from: 'chat',
                   ),
                 ),
               );

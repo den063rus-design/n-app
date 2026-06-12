@@ -5,15 +5,15 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../services/api_service.dart';
+import '../services/call_service.dart';
+import '../services/call_ringtone_service.dart';
 
-/// Р вЂњР В»Р С•Р В±Р В°Р В»РЎРЉР Р…РЎвЂ№Р в„– Р С•Р В±РЎР‚Р В°Р В±Р С•РЎвЂљРЎвЂЎР С‘Р С” Р Т‘Р В»РЎРЏ РЎвЂћР С•Р Р…Р С•Р Р†РЎвЂ№РЎвЂ¦ FCM-РЎРѓР С•Р С•Р В±РЎвЂ°Р ВµР Р…Р С‘Р в„–.
-/// Р вЂќР С•Р В»Р В¶Р ВµР Р… Р В±РЎвЂ№РЎвЂљРЎРЉ Р С•Р С—РЎР‚Р ВµР Т‘Р ВµР В»РЎвЂР Р… Р Р…Р В° РЎС“РЎР‚Р С•Р Р†Р Р…Р Вµ РЎвЂљР С•Р С—Р В° (Р Р†Р Р…Р Вµ Р С”Р В»Р В°РЎРѓРЎРѓР В°), РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ Dart VM
-/// Р СР С•Р С–Р В»Р В° Р ВµР С–Р С• Р Р†РЎвЂ№Р В·Р Р†Р В°РЎвЂљРЎРЉ, Р Т‘Р В°Р В¶Р Вµ Р ВµРЎРѓР В»Р С‘ Р С—РЎР‚Р С‘Р В»Р С•Р В¶Р ВµР Р…Р С‘Р Вµ Р Р† РЎвЂћР С•Р Р…Р Вµ.
+/// Глобальный обработчик FCM-уведомлений в фоне (когда приложение свёрнуто или убито).
+/// Должен быть отдельной top-level функцией, т.к. Dart VM вызывает её вне контекста Flutter-виджетов.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
-  debugPrint('[FCM Background] Р СџР С•Р В»РЎС“РЎвЂЎР ВµР Р…Р С• РЎРѓР С•Р С•Р В±РЎвЂ°Р ВµР Р…Р С‘Р Вµ: ${message.messageId}');
-  debugPrint('[FCM Background] Data: ${message.data}');
+  debugPrint('[FCM_BG] push received — messageId=${message.messageId}, type=${message.data['type']}');
 
   final FlutterLocalNotificationsPlugin localNotifications =
       FlutterLocalNotificationsPlugin();
@@ -26,49 +26,78 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
   await localNotifications.initialize(initSettings);
 
-  final AndroidNotificationDetails androidDetails =
-      AndroidNotificationDetails(
-    'default_notification_channel',
-    'Р С›РЎРѓР Р…Р С•Р Р†Р Р…РЎвЂ№Р Вµ РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎРЏ',
-    channelDescription: 'Р Р€Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎРЏ Р С• Р Р…Р С•Р Р†РЎвЂ№РЎвЂ¦ РЎРѓР С•Р С•Р В±РЎвЂ°Р ВµР Р…Р С‘РЎРЏРЎвЂ¦ Р С‘ Р В·Р Р†Р С•Р Р…Р С”Р В°РЎвЂ¦',
-    importance: Importance.high,
-    priority: Priority.high,
-    showWhen: true,
-    enableVibration: true,
-    playSound: true,
-  );
-
-  final NotificationDetails details =
-      NotificationDetails(android: androidDetails);
-
-  // Р РЋР ВµРЎР‚Р С‘Р В°Р В»Р С‘Р В·РЎС“Р ВµР С Р Р†РЎРѓР Вµ Р Т‘Р В°Р Р…Р Р…РЎвЂ№Р Вµ Р Р† payload, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ Р С—РЎР‚Р С‘ РЎвЂљР В°Р С—Р Вµ Р С—Р С•Р В»РЎС“РЎвЂЎР С‘РЎвЂљРЎРЉ Р С—Р С•Р В»Р Р…РЎС“РЎР‹ Р С‘Р Р…РЎвЂћР С•РЎР‚Р СР В°РЎвЂ Р С‘РЎР‹
-  final payloadData = <String, String?>{};
-  payloadData['type'] = message.data['type'];
-  payloadData['senderId'] = message.data['senderId'];
-  payloadData['senderName'] = message.data['senderName'];
-  payloadData['messageId'] = message.data['messageId'];
-  payloadData['callId'] = message.data['callId'];
-  payloadData['callerId'] = message.data['callerId'];
-  payloadData['callerName'] = message.data['callerName'];
+  // Формируем payload
+  final payloadData = <String, String?>{
+    'type': message.data['type'],
+    'senderId': message.data['senderId'],
+    'senderName': message.data['senderName'],
+    'messageId': message.data['messageId'],
+    'callId': message.data['callId'],
+    'callerId': message.data['callerId'],
+    'callerName': message.data['callerName'],
+  };
   final payloadJson = jsonEncode(payloadData);
 
-  await localNotifications.show(
-    message.hashCode,
-    message.notification?.title ?? message.data['title'] ?? 'Р Р€Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘Р Вµ',
-    message.notification?.body ?? message.data['body'] ?? '',
-    details,
-    payload: payloadJson,
-  );
+  if (message.data['type'] == 'call') {
+    final AndroidNotificationDetails androidDetails =
+        AndroidNotificationDetails(
+      'incoming_call_channel',
+      'Входящие звонки',
+      channelDescription: 'Уведомления о входящих звонках',
+      importance: Importance.max,
+      priority: Priority.max,
+      playSound: true,
+      enableVibration: true,
+      fullScreenIntent: true,
+      category: AndroidNotificationCategory.call,
+      ongoing: true,
+      autoCancel: false,
+    );
+
+    final NotificationDetails details =
+        NotificationDetails(android: androidDetails);
+
+    await localNotifications.show(
+      message.hashCode,
+      message.data['callerName'] ?? 'Входящий звонок',
+      'Входящий звонок...',
+      details,
+      payload: payloadJson,
+    );
+  } else {
+    final AndroidNotificationDetails androidDetails =
+        AndroidNotificationDetails(
+      'default_notification_channel',
+      'Основные уведомления',
+      channelDescription: 'Уведомления о новых сообщениях и звонках',
+      importance: Importance.high,
+      priority: Priority.high,
+      showWhen: true,
+      enableVibration: true,
+      playSound: true,
+    );
+
+    final NotificationDetails details =
+        NotificationDetails(android: androidDetails);
+
+    await localNotifications.show(
+      message.hashCode,
+      message.notification?.title ?? message.data['title'] ?? 'Уведомление',
+      message.notification?.body ?? message.data['body'] ?? '',
+      details,
+      payload: payloadJson,
+    );
+  }
 }
 
-/// Р РЋР ВµРЎР‚Р Р†Р С‘РЎРѓ Р Т‘Р В»РЎРЏ РЎР‚Р В°Р В±Р С•РЎвЂљРЎвЂ№ РЎРѓ FCM push-РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎРЏР СР С‘.
+/// Сервис для работы с FCM push-уведомлениями.
 ///
-/// Р С›РЎвЂљР Р†Р ВµРЎвЂЎР В°Р ВµРЎвЂљ Р В·Р В°:
-/// - Р С‘Р Р…Р С‘РЎвЂ Р С‘Р В°Р В»Р С‘Р В·Р В°РЎвЂ Р С‘РЎР‹ FCM
-/// - Р В·Р В°Р С—РЎР‚Р С•РЎРѓ РЎР‚Р В°Р В·РЎР‚Р ВµРЎв‚¬Р ВµР Р…Р С‘РЎРЏ Р Р…Р В° РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎРЏ (Android 13+)
-/// - Р С—Р С•Р В»РЎС“РЎвЂЎР ВµР Р…Р С‘Р Вµ Р С‘ Р С•Р В±Р Р…Р С•Р Р†Р В»Р ВµР Р…Р С‘Р Вµ FCM token
-/// - Р С—Р С•Р С”Р В°Р В· Р В»Р С•Р С”Р В°Р В»РЎРЉР Р…РЎвЂ№РЎвЂ¦ РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘Р в„– Р Р† foreground
-/// - Р С•Р В±РЎР‚Р В°Р В±Р С•РЎвЂљР С”РЎС“ Р Р…Р В°Р В¶Р В°РЎвЂљР С‘Р в„– Р Р…Р В° РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎРЏ (Р Р…Р В°Р Р†Р С‘Р С–Р В°РЎвЂ Р С‘РЎРЏ)
+/// Отвечает за:
+/// - инициализацию FCM
+/// - запрос разрешения на уведомления (Android 13+)
+/// - получение и обновление FCM token
+/// - показ локальных уведомлений в foreground
+/// - обработку нажатий на уведомления (навигация)
 class PushService {
   static final PushService _instance = PushService._internal();
   factory PushService() => _instance;
@@ -82,7 +111,7 @@ class PushService {
   String? _fcmToken;
   String? get fcmToken => _fcmToken;
 
-  /// Р РЋРЎвЂљРЎР‚Р С‘Р С Р Т‘Р В»РЎРЏ Р С•Р В±РЎР‚Р В°Р В±Р С•РЎвЂљР С”Р С‘ Р Р…Р В°Р В¶Р В°РЎвЂљР С‘Р в„– Р Р…Р В° РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎРЏ (Р Р…Р В°Р Р†Р С‘Р С–Р В°РЎвЂ Р С‘РЎРЏ)
+  /// Стрим для обработки нажатий на уведомления (навигация)
   final _notificationTapStream =
       StreamController<Map<String, String?>>.broadcast();
   Stream<Map<String, String?>> get onNotificationTap =>
@@ -90,125 +119,192 @@ class PushService {
 
   bool _initialized = false;
 
-  /// Р ВР Р…Р С‘РЎвЂ Р С‘Р В°Р В»Р С‘Р В·Р С‘РЎР‚РЎС“Р ВµРЎвЂљ Firebase (Р ВµРЎРѓР В»Р С‘ Р ВµРЎвЂ°РЎвЂ Р Р…Р Вµ), FCM, Р В»Р С•Р С”Р В°Р В»РЎРЉР Р…РЎвЂ№Р Вµ РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎРЏ,
-  /// Р В·Р В°Р С—РЎР‚Р В°РЎв‚¬Р С‘Р Р†Р В°Р ВµРЎвЂљ РЎР‚Р В°Р В·РЎР‚Р ВµРЎв‚¬Р ВµР Р…Р С‘Р Вµ, Р С—Р С•Р В»РЎС“РЎвЂЎР В°Р ВµРЎвЂљ token.
+  /// Инициализирует Firebase (если ещё нет), FCM, локальные уведомления,
+  /// запрашивает разрешение, получает token.
   Future<void> init() async {
-    if (_initialized) return;
-
-    await Firebase.initializeApp();
-
-    // Р СњР В°РЎРѓРЎвЂљРЎР‚Р С•Р в„–Р С”Р В° Android-Р С”Р В°Р Р…Р В°Р В»Р В° РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘Р в„–
-    const AndroidNotificationChannel channel = AndroidNotificationChannel(
-      'default_notification_channel',
-      'Р С›РЎРѓР Р…Р С•Р Р†Р Р…РЎвЂ№Р Вµ РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎРЏ',
-      description: 'Р Р€Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎРЏ Р С• Р Р…Р С•Р Р†РЎвЂ№РЎвЂ¦ РЎРѓР С•Р С•Р В±РЎвЂ°Р ВµР Р…Р С‘РЎРЏРЎвЂ¦ Р С‘ Р В·Р Р†Р С•Р Р…Р С”Р В°РЎвЂ¦',
-      importance: Importance.high,
-      playSound: true,
-      enableVibration: true,
-    );
-
-    final AndroidFlutterLocalNotificationsPlugin? androidPlugin =
-        _localNotifications.resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
-
-    if (androidPlugin != null) {
-      await androidPlugin.createNotificationChannel(channel);
+    if (_initialized) {
+      debugPrint('[PUSH] Already initialized, skipping');
+      return;
     }
 
-    // Р ВР Р…Р С‘РЎвЂ Р С‘Р В°Р В»Р С‘Р В·Р В°РЎвЂ Р С‘РЎРЏ flutter_local_notifications
-    const AndroidInitializationSettings androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
+    debugPrint('[PUSH] init() — BEGIN');
 
-    const DarwinInitializationSettings iosSettings =
-        DarwinInitializationSettings(
-      requestAlertPermission: false,
-      requestBadgePermission: false,
-      requestSoundPermission: false,
-    );
+    try {
+      await Firebase.initializeApp();
+      debugPrint('[PUSH] Firebase.initializeApp() OK');
+    } catch (e, stack) {
+      debugPrint('[PUSH] 🔴 Firebase.initializeApp() failed: $e');
+      debugPrint('[PUSH] 🔴 StackTrace: $stack');
+      rethrow;
+    }
 
-    const InitializationSettings initSettings = InitializationSettings(
-      android: androidSettings,
-      iOS: iosSettings,
-    );
+    // Создаём Android-каналы уведомлений
+    try {
+      const AndroidNotificationChannel defaultChannel = AndroidNotificationChannel(
+        'default_notification_channel',
+        'Основные уведомления',
+        description: 'Уведомления о новых сообщениях и звонках',
+        importance: Importance.high,
+        playSound: true,
+        enableVibration: true,
+      );
 
-    await _localNotifications.initialize(
-      initSettings,
-      onDidReceiveNotificationResponse: _onNotificationTap,
-    );
+      const AndroidNotificationChannel callChannel = AndroidNotificationChannel(
+        'incoming_call_channel',
+        'Входящие звонки',
+        description: 'Уведомления о входящих звонках',
+        importance: Importance.max,
+        playSound: true,
+        enableVibration: true,
+      );
 
-    // Р В Р ВµР С–Р С‘РЎРѓРЎвЂљРЎР‚Р С‘РЎР‚РЎС“Р ВµР С background handler
+      final AndroidFlutterLocalNotificationsPlugin? androidPlugin =
+          _localNotifications.resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>();
+
+      if (androidPlugin != null) {
+        await androidPlugin.createNotificationChannel(defaultChannel);
+        await androidPlugin.createNotificationChannel(callChannel);
+      }
+    } catch (e, stack) {
+      debugPrint('[PUSH] 🔴 notification channels creation failed: $e');
+      debugPrint('[PUSH] 🔴 StackTrace: $stack');
+      rethrow;
+    }
+
+    // Инициализация flutter_local_notifications
+    try {
+      const AndroidInitializationSettings androidSettings =
+          AndroidInitializationSettings('@mipmap/ic_launcher');
+
+      const DarwinInitializationSettings iosSettings =
+          DarwinInitializationSettings(
+        requestAlertPermission: false,
+        requestBadgePermission: false,
+        requestSoundPermission: false,
+      );
+
+      const InitializationSettings initSettings = InitializationSettings(
+        android: androidSettings,
+        iOS: iosSettings,
+      );
+
+      await _localNotifications.initialize(
+        initSettings,
+        onDidReceiveNotificationResponse: _onNotificationTap,
+      );
+    } catch (e, stack) {
+      debugPrint('[PUSH] 🔴 localNotifications.initialize() failed: $e');
+      debugPrint('[PUSH] 🔴 StackTrace: $stack');
+      rethrow;
+    }
+
+    // Регистрируем background handler
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
-    // Р вЂ”Р В°Р С—РЎР‚Р В°РЎв‚¬Р С‘Р Р†Р В°Р ВµР С РЎР‚Р В°Р В·РЎР‚Р ВµРЎв‚¬Р ВµР Р…Р С‘Р Вµ Р Р…Р В° РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎРЏ (Android 13+)
+    // Запрашиваем разрешение на уведомления (Android 13+)
     await _requestPermission();
 
-    // Р СџР С•Р В»РЎС“РЎвЂЎР В°Р ВµР С FCM token
+    // Получаем FCM token
     await _refreshToken();
 
-    // Р РЋР В»РЎС“РЎв‚¬Р В°Р ВµР С Р С•Р В±Р Р…Р С•Р Р†Р В»Р ВµР Р…Р С‘Р Вµ token
+    // Слушаем обновление token
     _fcm.onTokenRefresh.listen((newToken) {
-      debugPrint('[FCM] Token Р С•Р В±Р Р…Р С•Р Р†Р В»РЎвЂР Р…: $newToken');
+      debugPrint('[FCM] Token обновлён: $newToken');
       _fcmToken = newToken;
       _sendTokenToBackend(newToken);
     });
 
-    // Р С›Р В±РЎР‚Р В°Р В±Р С•РЎвЂљР С”Р В° foreground-РЎРѓР С•Р С•Р В±РЎвЂ°Р ВµР Р…Р С‘Р в„–
+    // Обработка foreground-сообщений
     FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
 
-    // Р С›Р В±РЎР‚Р В°Р В±Р С•РЎвЂљР С”Р В° Р Р…Р В°Р В¶Р В°РЎвЂљР С‘РЎРЏ Р Р…Р В° РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘Р Вµ, Р С”Р С•Р С–Р Т‘Р В° Р С—РЎР‚Р С‘Р В»Р С•Р В¶Р ВµР Р…Р С‘Р Вµ Р В±РЎвЂ№Р В»Р С• Р В·Р В°Р С”РЎР‚РЎвЂ№РЎвЂљР С•
-    // Р С‘ Р С•РЎвЂљР С”РЎР‚РЎвЂ№РЎвЂљР С• Р С—Р С• РЎвЂљР В°Р С—РЎС“ Р Р…Р В° РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘Р Вµ (app terminated)
-    final RemoteMessage? initialMessage =
-        await FirebaseMessaging.instance.getInitialMessage();
-    if (initialMessage != null) {
-      debugPrint('[FCM] Р СџРЎР‚Р С‘Р В»Р С•Р В¶Р ВµР Р…Р С‘Р Вµ Р С•РЎвЂљР С”РЎР‚РЎвЂ№РЎвЂљР С• РЎРѓ РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎРЏ (terminated): ${initialMessage.data}');
-      _emitTapFromData(initialMessage.data);
+    // getInitialMessage() — приложение открыто из killed state
+    try {
+      final RemoteMessage? initialMessage =
+          await FirebaseMessaging.instance.getInitialMessage();
+      if (initialMessage != null) {
+        debugPrint('[FCM] App opened from killed state via push: type=${initialMessage.data['type']}');
+        await _emitTapFromData(initialMessage.data);
+      }
+    } catch (e, stack) {
+      debugPrint('[PUSH] 🔴 getInitialMessage() failed: $e');
+      debugPrint('[PUSH] 🔴 StackTrace: $stack');
+      rethrow;
     }
 
-    // Р С›Р В±РЎР‚Р В°Р В±Р С•РЎвЂљР С”Р В°, Р С”Р С•Р С–Р Т‘Р В° Р С—РЎР‚Р С‘Р В»Р С•Р В¶Р ВµР Р…Р С‘Р Вµ Р В±РЎвЂ№Р В»Р С• Р Р† РЎвЂћР С•Р Р…Р Вµ Р С‘ Р С—Р С•Р В»РЎРЉР В·Р С•Р Р†Р В°РЎвЂљР ВµР В»РЎРЉ РЎвЂљР В°Р С—Р Р…РЎС“Р В» РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘Р Вµ
-    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      debugPrint('[FCM] Р СџРЎР‚Р С‘Р В»Р С•Р В¶Р ВµР Р…Р С‘Р Вµ Р С•РЎвЂљР С”РЎР‚РЎвЂ№РЎвЂљР С• Р С‘Р В· РЎвЂћР С•Р Р…Р В° Р С—Р С• РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎР‹: ${message.data}');
-      _emitTapFromData(message.data);
+    // onMessageOpenedApp — приложение открыто из background
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) async {
+      debugPrint('[FCM] App opened from background via push: type=${message.data['type']}');
+      await _emitTapFromData(message.data);
     });
 
     _initialized = true;
-    debugPrint('[FCM] PushService Р С‘Р Р…Р С‘РЎвЂ Р С‘Р В°Р В»Р С‘Р В·Р С‘РЎР‚Р С•Р Р†Р В°Р Р…. Token: $_fcmToken');
+    debugPrint('[PUSH] init() — END. Token: $_fcmToken');
   }
 
-  /// Р вЂ”Р В°Р С—РЎР‚Р В°РЎв‚¬Р С‘Р Р†Р В°Р ВµРЎвЂљ РЎР‚Р В°Р В·РЎР‚Р ВµРЎв‚¬Р ВµР Р…Р С‘Р Вµ Р Р…Р В° РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎРЏ (Android 13+).
+  /// Единый guard для проверки, нужно ли игнорировать входящий call push.
+  /// Возвращает true, если push нужно проигнорировать.
+  /// Причина игнора пишется в лог.
+  bool _shouldIgnoreCallPush() {
+    final callService = CallService();
+    final state = callService.state;
+    final lastCallEndTimestamp = callService.lastCallEndTimestamp;
+
+    // 1. Если уже есть активный звонок (CALLING, RINGING, IN_CALL)
+    if (state != CallState.IDLE) {
+      debugPrint('[PUSH] Ignoring call push — state=$state (not IDLE)');
+      return true;
+    }
+
+    // 2. Если звонок завершился менее 5 секунд назад (stale push guard)
+    if (lastCallEndTimestamp != null) {
+      final elapsed = DateTime.now().millisecondsSinceEpoch - lastCallEndTimestamp;
+      if (elapsed < 5000) {
+        debugPrint('[PUSH] Ignoring call push — stale (call ended ${elapsed}ms ago)');
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /// Запрашивает разрешение на уведомления (Android 13+).
   Future<void> _requestPermission() async {
-    final NotificationSettings settings = await _fcm.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-      provisional: false,
-    );
-
-    debugPrint('[FCM] Р РЋРЎвЂљР В°РЎвЂљРЎС“РЎРѓ РЎР‚Р В°Р В·РЎР‚Р ВµРЎв‚¬Р ВµР Р…Р С‘РЎРЏ: ${settings.authorizationStatus}');
-  }
-
-  /// Р СџР С•Р В»РЎС“РЎвЂЎР В°Р ВµРЎвЂљ РЎвЂљР ВµР С”РЎС“РЎвЂ°Р С‘Р в„– FCM token.
-  Future<void> _refreshToken() async {
-    try {
-      _fcmToken = await _fcm.getToken();
-      debugPrint('[FCM] Р СџР С•Р В»РЎС“РЎвЂЎР ВµР Р… token: $_fcmToken');
-    } catch (e) {
-      debugPrint('[FCM] Р С›РЎв‚¬Р С‘Р В±Р С”Р В° Р С—Р С•Р В»РЎС“РЎвЂЎР ВµР Р…Р С‘РЎРЏ token: $e');
+    final status = await _fcm.getNotificationSettings();
+    if (status.authorizationStatus == AuthorizationStatus.notDetermined) {
+      final NotificationSettings settings = await _fcm.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+        provisional: false,
+      );
+      debugPrint('[FCM] Permission status: ${settings.authorizationStatus}');
     }
   }
 
-  /// Р С›РЎвЂљР С—РЎР‚Р В°Р Р†Р В»РЎРЏР ВµРЎвЂљ FCM token Р Р…Р В° backend.
+  /// Получает текущий FCM token.
+  Future<void> _refreshToken() async {
+    try {
+      _fcmToken = await _fcm.getToken();
+      debugPrint('[FCM] Token получен: $_fcmToken');
+    } catch (e) {
+      debugPrint('[FCM] Ошибка получения token: $e');
+    }
+  }
+
+  /// Отправляет FCM token на backend.
   Future<void> _sendTokenToBackend(String token) async {
     try {
       await ApiService().patch('/users/me/fcm-token', data: {
         'fcmToken': token,
       });
-      debugPrint('[FCM] Token Р С•РЎвЂљР С—РЎР‚Р В°Р Р†Р В»Р ВµР Р… Р Р…Р В° backend');
+      debugPrint('[FCM] Token отправлен на backend');
     } catch (e) {
-      debugPrint('[FCM] Р С›РЎв‚¬Р С‘Р В±Р С”Р В° Р С•РЎвЂљР С—РЎР‚Р В°Р Р†Р С”Р С‘ token Р Р…Р В° backend: $e');
+      debugPrint('[FCM] Ошибка отправки token на backend: $e');
     }
   }
 
-  /// Р СџРЎС“Р В±Р В»Р С‘РЎвЂЎР Р…РЎвЂ№Р в„– Р СР ВµРЎвЂљР С•Р Т‘ Р Т‘Р В»РЎРЏ Р С•РЎвЂљР С—РЎР‚Р В°Р Р†Р С”Р С‘ token (Р Р†РЎвЂ№Р В·РЎвЂ№Р Р†Р В°Р ВµРЎвЂљРЎРѓРЎРЏ Р С—Р С•РЎРѓР В»Р Вµ Р В»Р С•Р С–Р С‘Р Р…Р В°).
+  /// Публичный метод для отправки token (вызывается после логина).
   Future<void> sendTokenToBackend() async {
     if (_fcmToken != null) {
       await _sendTokenToBackend(_fcmToken!);
@@ -220,23 +316,79 @@ class PushService {
     }
   }
 
-  /// Р С›Р В±РЎР‚Р В°Р В±Р В°РЎвЂљРЎвЂ№Р Р†Р В°Р ВµРЎвЂљ foreground-РЎРѓР С•Р С•Р В±РЎвЂ°Р ВµР Р…Р С‘РЎРЏ РІР‚вЂќ Р С—Р С•Р С”Р В°Р В·РЎвЂ№Р Р†Р В°Р ВµРЎвЂљ Р В»Р С•Р С”Р В°Р В»РЎРЉР Р…Р С•Р Вµ РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘Р Вµ.
+  /// Обрабатывает foreground-сообщения — показывает локальное уведомление.
   void _handleForegroundMessage(RemoteMessage message) {
-    debugPrint('[FCM Foreground] Р СџР С•Р В»РЎС“РЎвЂЎР ВµР Р…Р С• РЎРѓР С•Р С•Р В±РЎвЂ°Р ВµР Р…Р С‘Р Вµ: ${message.messageId}');
-    debugPrint('[FCM Foreground] Data: ${message.data}');
+    final type = message.data['type'];
+    debugPrint('[FCM_FG] push received — type=$type');
 
-    final String title = message.notification?.title ??
-        message.data['title'] ??
-        'Р Р€Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘Р Вµ';
-    final String body = message.notification?.body ??
-        message.data['body'] ??
-        '';
+    if (type == 'call') {
+      // Guard: игнорируем если уже на звонке или stale push
+      if (_shouldIgnoreCallPush()) return;
 
-    _showLocalNotification(title, body, message.data);
+      // Показываем call-уведомление (без fullScreenIntent, чтобы не перебивать Flutter-route)
+      _showCallNotification(message.data);
+
+      // Запускаем рингтон, если он ещё не играет через socket-flow
+      if (!CallRingtoneService().isIncomingPlaying) {
+        debugPrint('[FCM_FG] Starting ringtone from foreground push');
+        CallRingtoneService().playIncomingRingtone();
+      }
+    } else {
+      // Для обычных сообщений — стандартное уведомление
+      final String title = message.notification?.title ??
+          message.data['title'] ??
+          'Уведомление';
+      final String body = message.notification?.body ??
+          message.data['body'] ??
+          '';
+
+      _showLocalNotification(title, body, message.data);
+    }
   }
 
-  /// Р СџР С•Р С”Р В°Р В·РЎвЂ№Р Р†Р В°Р ВµРЎвЂљ Р В»Р С•Р С”Р В°Р В»РЎРЉР Р…Р С•Р Вµ РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘Р Вµ РЎвЂЎР ВµРЎР‚Р ВµР В· flutter_local_notifications.
-  /// Р вЂ™ payload Р С—Р ВµРЎР‚Р ВµР Т‘Р В°РЎвЂРЎвЂљРЎРѓРЎРЏ JSON РЎРѓР С• Р Р†РЎРѓР ВµР СР С‘ Р С—Р С•Р В»РЎРЏР СР С‘ Р Т‘Р В°Р Р…Р Р…РЎвЂ№РЎвЂ¦.
+  /// Показывает call-style локальное уведомление (foreground).
+  /// ВАЖНО: fullScreenIntent убран для foreground, чтобы не перебивать
+  /// Flutter-route IncomingCallDialog. Для background fullScreenIntent
+  /// остаётся в firebaseMessagingBackgroundHandler().
+  void _showCallNotification(Map<String, dynamic> data) {
+    final AndroidNotificationDetails androidDetails =
+        AndroidNotificationDetails(
+      'incoming_call_channel',
+      'Входящие звонки',
+      channelDescription: 'Уведомления о входящих звонках',
+      importance: Importance.max,
+      priority: Priority.max,
+      playSound: true,
+      enableVibration: true,
+      category: AndroidNotificationCategory.call,
+      ongoing: true,
+      autoCancel: false,
+    );
+
+    final NotificationDetails details =
+        NotificationDetails(android: androidDetails);
+
+    final payloadMap = <String, String?>{
+      'type': data['type'] as String?,
+      'senderId': data['senderId'] as String?,
+      'senderName': data['senderName'] as String?,
+      'messageId': data['messageId'] as String?,
+      'callId': data['callId'] as String?,
+      'callerId': data['callerId'] as String?,
+      'callerName': data['callerName'] as String?,
+    };
+    final payloadJson = jsonEncode(payloadMap);
+
+    _localNotifications.show(
+      DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      data['callerName'] as String? ?? 'Входящий звонок',
+      'Входящий звонок...',
+      details,
+      payload: payloadJson,
+    );
+  }
+
+  /// Показывает локальное уведомление через flutter_local_notifications.
   void _showLocalNotification(
     String title,
     String body,
@@ -245,8 +397,8 @@ class PushService {
     final AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
       'default_notification_channel',
-      'Р С›РЎРѓР Р…Р С•Р Р†Р Р…РЎвЂ№Р Вµ РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎРЏ',
-      channelDescription: 'Р Р€Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎРЏ Р С• Р Р…Р С•Р Р†РЎвЂ№РЎвЂ¦ РЎРѓР С•Р С•Р В±РЎвЂ°Р ВµР Р…Р С‘РЎРЏРЎвЂ¦ Р С‘ Р В·Р Р†Р С•Р Р…Р С”Р В°РЎвЂ¦',
+      'Основные уведомления',
+      channelDescription: 'Уведомления о новых сообщениях и звонках',
       importance: Importance.high,
       priority: Priority.high,
       showWhen: true,
@@ -257,7 +409,6 @@ class PushService {
     final NotificationDetails details =
         NotificationDetails(android: androidDetails);
 
-    // Р РЋР ВµРЎР‚Р С‘Р В°Р В»Р С‘Р В·РЎС“Р ВµР С Р Р†РЎРѓР Вµ Р С—Р С•Р В»РЎРЏ Р Р† JSON-РЎРѓРЎвЂљРЎР‚Р С•Р С”РЎС“ Р Т‘Р В»РЎРЏ payload
     final payloadMap = <String, String?>{
       'type': data['type'] as String?,
       'senderId': data['senderId'] as String?,
@@ -278,29 +429,56 @@ class PushService {
     );
   }
 
-  /// Р С›Р В±РЎР‚Р В°Р В±Р В°РЎвЂљРЎвЂ№Р Р†Р В°Р ВµРЎвЂљ Р Р…Р В°Р В¶Р В°РЎвЂљР С‘Р Вµ Р Р…Р В° Р В»Р С•Р С”Р В°Р В»РЎРЉР Р…Р С•Р Вµ РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘Р Вµ (foreground/background).
-  /// Р СџР В°РЎР‚РЎРѓР С‘РЎвЂљ JSON Р С‘Р В· payload Р С‘ Р С•РЎвЂљР С—РЎР‚Р В°Р Р†Р В»РЎРЏР ВµРЎвЂљ Р Р† РЎРѓРЎвЂљРЎР‚Р С‘Р С.
+  /// Обрабатывает нажатие на локальное уведомление (foreground/background).
+  /// Парсит JSON из payload и отправляет в стрим.
   void _onNotificationTap(NotificationResponse response) {
-    debugPrint('[FCM] Р СћР В°Р С— Р С—Р С• РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎР‹: payload=${response.payload}');
-
     if (response.payload == null || response.payload!.isEmpty) return;
 
     try {
       final Map<String, dynamic> parsed =
           jsonDecode(response.payload!) as Map<String, dynamic>;
       final data = parsed.map((key, value) => MapEntry(key, value as String?));
+      debugPrint('[FCM_TAP] Notification tapped — type=${data['type']}');
       _notificationTapStream.add(data);
     } catch (e) {
-      debugPrint('[FCM] Р С›РЎв‚¬Р С‘Р В±Р С”Р В° Р С—Р В°РЎР‚РЎРѓР С‘Р Р…Р С–Р В° payload: $e');
-      // fallback РІР‚вЂќ Р ВµРЎРѓР В»Р С‘ payload РЎРЊРЎвЂљР С• Р С—РЎР‚Р С•РЎРѓРЎвЂљР С• type
+      debugPrint('[FCM_TAP] Ошибка парсинга payload: $e');
       _notificationTapStream.add({'type': response.payload});
     }
   }
 
-  /// Р С›РЎвЂљР С—РЎР‚Р В°Р Р†Р В»РЎРЏР ВµРЎвЂљ Р Т‘Р В°Р Р…Р Р…РЎвЂ№Р Вµ Р С‘Р В· FCM data Р Р† РЎРѓРЎвЂљРЎР‚Р С‘Р С Р Р…Р В°Р Р†Р С‘Р С–Р В°РЎвЂ Р С‘Р С‘.
-  void _emitTapFromData(Map<String, dynamic> data) {
+  /// Отправляет данные из FCM data в стрим навигации.
+  /// Для type='call' также немедленно восстанавливает состояние CallService
+  /// через hydrateIncomingCallFromPush, чтобы состояние RINGING было
+  /// установлено даже если подписка на стрим ещё не активна
+  /// (например, при getInitialMessage() до runApp()).
+  Future<void> _emitTapFromData(Map<String, dynamic> data) async {
     final type = data['type'] as String?;
     if (type == null) return;
+
+    // Для call-уведомлений — hydrate через CallService
+    if (type == 'call') {
+      // Guard: игнорируем если уже на звонке или stale push
+      if (_shouldIgnoreCallPush()) return;
+
+      final callId = data['callId'] as String?;
+      final callerId = data['callerId'] as String?;
+      final callerName = data['callerName'] as String?;
+      if (callId != null && callerId != null && callerName != null) {
+        debugPrint('[FCM_TAP] Hydrate from push — callId=$callId, callerId=$callerId');
+        CallService().hydrateIncomingCallFromPush(
+          callId: callId,
+          callerId: callerId,
+          callerName: callerName,
+        );
+      } else {
+        debugPrint('[FCM_TAP] Missing fields for hydrate: callId=$callId, callerId=$callerId, callerName=$callerName');
+        return;
+      }
+    }
+
+    // Небольшая задержка, чтобы hydrate гарантированно применился
+    // до того, как стрим будет обработан подписчиком
+    await Future.delayed(const Duration(milliseconds: 50));
 
     _notificationTapStream.add({
       'type': type,
@@ -313,7 +491,7 @@ class PushService {
     });
   }
 
-  /// Р С›РЎРѓР Р†Р С•Р В±Р С•Р В¶Р Т‘Р В°Р ВµРЎвЂљ РЎР‚Р ВµРЎРѓРЎС“РЎР‚РЎРѓРЎвЂ№.
+  /// Освобождает ресурсы.
   void dispose() {
     _notificationTapStream.close();
   }
