@@ -326,7 +326,6 @@ class PushService {
       if (_shouldIgnoreCallPush()) return;
 
       // Показываем call-уведомление (без fullScreenIntent, чтобы не перебивать Flutter-route)
-      _showCallNotification(message.data);
 
       // Запускаем рингтон, если он ещё не играет через socket-flow
       if (!CallRingtoneService().isIncomingPlaying) {

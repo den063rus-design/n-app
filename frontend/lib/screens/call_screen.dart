@@ -35,7 +35,7 @@ class _CallScreenState extends State<CallScreen> {
   StreamSubscription<MediaStream?>? _remoteStreamSub;
 
   // Отложенная задача закрытия экрана (заменяет Timer)
-  VoidCallback? _closeCallScreenTask;
+  Timer? _closeCallScreenTimer;
 
   // Флаг: было ли уже запланировано закрытие экрана после ENDED
   // Предотвращает повторный вызов _closeCallScreen при ребилдах StreamBuilder
@@ -113,7 +113,8 @@ class _CallScreenState extends State<CallScreen> {
     _closeScheduled = false;
 
     // Отменяем предыдущую отложенную задачу, если была
-    _closeCallScreenTask?.call();
+    _closeCallScreenTimer?.cancel();
+    _closeCallScreenTimer = null;
 
     if (delay == Duration.zero) {
       _log('_closeCallScreen() — immediate close');
@@ -124,22 +125,15 @@ class _CallScreenState extends State<CallScreen> {
         }
       });
     } else {
-      _log('_closeCallScreen() — delayed close in ${delay.inMilliseconds}ms');
-      final task = () {
+      _log('_closeCallScreen() ? delayed close in ${delay.inMilliseconds}ms');
+      _closeCallScreenTimer = Timer(delay, () {
         if (mounted) {
           _callService.markCallScreenClosed();
           if (Navigator.of(context).canPop()) {
             Navigator.pop(context);
           }
         }
-      };
-      _closeCallScreenTask = task;
-      Future.delayed(delay, () {
-        // Выполняем задачу только если она не была отменена
-        if (_closeCallScreenTask == task) {
-          _closeCallScreenTask = null;
-          task();
-        }
+        _closeCallScreenTimer = null;
       });
     }
   }
@@ -153,8 +147,8 @@ class _CallScreenState extends State<CallScreen> {
     _remoteStreamSub?.cancel();
 
     // Отменяем отложенную задачу закрытия
-    _closeCallScreenTask?.call();
-    _closeCallScreenTask = null;
+    _closeCallScreenTimer?.cancel();
+    _closeCallScreenTimer = null;
 
     _callService.markCallScreenClosed();
     _localRenderer.srcObject = null;
@@ -577,3 +571,4 @@ class _CallScreenState extends State<CallScreen> {
     _callLogger.log('CallScreen', message);
   }
 }
+

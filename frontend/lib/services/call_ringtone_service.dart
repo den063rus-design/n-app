@@ -93,7 +93,7 @@ class CallRingtoneService {
   /// Воспроизводит исходящий гудок (ringback tone).
   ///
   /// Если гудок уже играет — не дублирует.
-  /// Использует asset-файл 'assets/outgoing_ringback.mp3'.
+  /// Использует asset-файл 'assets/outgoing_ringback.wav'.
   /// Если файл не найден — логирует ошибку.
   Future<void> playOutgoingRingbackTone() async {
     if (_isOutgoingPlaying) {
@@ -112,11 +112,11 @@ class CallRingtoneService {
       _log('📞 playOutgoingRingbackTone — setAudioContext done');
       await _outgoingPlayer.setAudioContext(_audioContext);
       _log('📞 playOutgoingRingbackTone — play called');
-      await _outgoingPlayer.play(AssetSource('outgoing_ringback.mp3'));
-      _log('✅ playOutgoingRingbackTone — playing from assets/outgoing_ringback.mp3');
+      await _outgoingPlayer.play(AssetSource('outgoing_ringback.wav'));
+      _log('✅ playOutgoingRingbackTone — playing from assets/outgoing_ringback.wav');
     } catch (e) {
       _log('❌ playOutgoingRingbackTone — asset not found or playback failed: $e');
-      _log('❌ playOutgoingRingbackTone — ringback will NOT play. Place a real outgoing_ringback.mp3 in frontend/assets/');
+      _log('❌ playOutgoingRingbackTone — ringback will NOT play. Place a real outgoing_ringback.wav in frontend/assets/');
       _isOutgoingPlaying = false;
     }
   }

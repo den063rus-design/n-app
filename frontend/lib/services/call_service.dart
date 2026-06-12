@@ -507,6 +507,32 @@ class CallService {
       });
     };
 
+    _peerConnection!.onConnectionState = (state) {
+      _log('PeerConnection state: $state');
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+          state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+          state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
+        if (_state == CallState.CALLING ||
+            _state == CallState.RINGING ||
+            _state == CallState.IN_CALL) {
+          _endCall(reason: 'peer_disconnected');
+        }
+      }
+    };
+
+    _peerConnection!.onIceConnectionState = (state) {
+      _log('ICE state: $state');
+      if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
+          state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
+          state == RTCIceConnectionState.RTCIceConnectionStateClosed) {
+        if (_state == CallState.CALLING ||
+            _state == CallState.RINGING ||
+            _state == CallState.IN_CALL) {
+          _endCall(reason: 'peer_disconnected');
+        }
+      }
+    };
+
     // ===== 5. Обработка remote track =====
     _peerConnection!.onTrack = (event) {
       if (event.streams.isNotEmpty) {
@@ -568,6 +594,37 @@ class CallService {
     }
   }
 
+  void _disposePeerResources() {
+    try {
+      _peerConnection?.onIceCandidate = null;
+      _peerConnection?.onTrack = null;
+      _peerConnection?.onConnectionState = null;
+      _peerConnection?.onIceConnectionState = null;
+      _peerConnection?.close();
+    } catch (e) {
+      _log('peer cleanup failed: $e');
+    }
+
+    _peerConnection = null;
+
+    try {
+      _localStream?.getTracks().forEach((track) => track.stop());
+    } catch (e) {
+      _log('local stream cleanup failed: $e');
+    }
+
+    _localStream = null;
+    _remoteStream = null;
+  }
+
+  void handleConnectionLost() {
+    if (_state == CallState.CALLING ||
+        _state == CallState.RINGING ||
+        _state == CallState.IN_CALL) {
+      _endCall(reason: 'peer_disconnected');
+    }
+  }
+
   Future<void> _endCall({String? reason}) async {
     // Идемпотентность: если уже завершён или в IDLE — выходим
     if (_state == CallState.ENDED || _state == CallState.IDLE) {
@@ -584,6 +641,7 @@ class CallService {
 
     // Останавливаем все звуки звонка (await — чтобы звуки гарантированно остановились)
     await CallRingtoneService().stopAllCallSounds();
+    _disposePeerResources();
 
     // Немедленно уведомляем UI, что стримов больше нет
     _localStreamController.add(null);
@@ -592,6 +650,8 @@ class CallService {
     _stateController.add(_state);
     // Сбрасываем флаг минимизации
     _isMinimized = false;
+    _isCallScreenOpen = false;
+    _isIncomingDialogOpen = false;
     _log('✅ _endCall() — state=ENDED');
     // Закрываем лог-файл
     _callLogger.close();
@@ -621,11 +681,7 @@ class CallService {
     _isCameraOn = true;
     _isMicOn = true;
     _isFrontCamera = true;
-    _peerConnection?.close();
-    _peerConnection = null;
-    _localStream?.getTracks().forEach((track) => track.stop());
-    _localStream = null;
-    _remoteStream = null;
+    _disposePeerResources();
     _isIncomingDialogOpen = false;
     _isCallScreenOpen = false;
     _isMinimized = false;

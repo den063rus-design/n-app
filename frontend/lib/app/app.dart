@@ -642,6 +642,10 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       setState(() {
         _isOffline = !hasConnection;
       });
+
+      if (!hasConnection) {
+        CallService().handleConnectionLost();
+      }
     });
   }
 

@@ -48,3 +48,4 @@ flutter:
   assets:
     - assets/ringtone.mp3
     - assets/outgoing_ringback.mp3
+    - assets/outgoing_ringback.wav
