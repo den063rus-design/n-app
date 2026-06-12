@@ -73,4 +73,73 @@ export class CallService {
 
     return call;
   }
+
+  /**
+   * Находит активный (PENDING или ACCEPTED) звонок,
+   * в котором участвует пользователь (как caller или callee)
+   */
+  async findActiveCallByUserId(userId: number): Promise<{ call: any; otherUserId: number } | null> {
+    const call = await this.prisma.call.findFirst({
+      where: {
+        OR: [{ callerId: userId }, { calleeId: userId }],
+        status: { in: [CallStatus.PENDING, CallStatus.ACCEPTED] },
+      },
+      include: {
+        caller: { select: { id: true, fio: true } },
+        callee: { select: { id: true, fio: true } },
+      },
+    });
+
+    if (!call) {
+      return null;
+    }
+
+    const otherUserId = this.getOtherParticipant(call, userId);
+    return { call, otherUserId };
+  }
+
+  /**
+   * Находит звонок по ID без включения связанных данных
+   */
+  async findCallById(callId: number) {
+    return this.prisma.call.findUnique({
+      where: { id: callId },
+    });
+  }
+
+  /**
+   * Завершает звонок: устанавливает статус ENDED и endedAt.
+   * Защита от дублирования: если звонок уже ENDED — пропускаем update.
+   */
+  async endCall(callId: number): Promise<any> {
+    // Проверяем текущий статус, чтобы избежать двойного завершения
+    const existing = await this.prisma.call.findUnique({
+      where: { id: callId },
+      select: { id: true, status: true },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Звонок не найден');
+    }
+
+    if (existing.status === CallStatus.ENDED) {
+      // Звонок уже завершён — не делаем лишний update
+      return existing;
+    }
+
+    return this.prisma.call.update({
+      where: { id: callId },
+      data: {
+        status: CallStatus.ENDED,
+        endedAt: new Date(),
+      },
+    });
+  }
+
+  /**
+   * Возвращает ID второго участника звонка
+   */
+  getOtherParticipant(call: any, disconnectedUserId: number): number {
+    return call.callerId === disconnectedUserId ? call.calleeId : call.callerId;
+  }
 }

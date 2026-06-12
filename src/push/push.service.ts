@@ -45,6 +45,9 @@ export class PushService implements OnModuleInit {
     }
 
     try {
+      // Определяем тип уведомления для выбора Android-канала
+      const isCall = payload.data?.type === 'call';
+
       const message: Message = {
         token: payload.token,
         notification: {
@@ -55,10 +58,15 @@ export class PushService implements OnModuleInit {
         android: {
           priority: 'high',
           notification: {
-            channelId: 'default_notification_channel',
-            priority: 'high',
+            channelId: isCall ? 'incoming_call_channel' : 'default_notification_channel',
+            priority: isCall ? 'max' : 'high',
             defaultSound: true,
             defaultVibrateTimings: true,
+            ...(isCall ? {
+              notificationPriority: 'max',
+              visibility: 'public',
+              ticker: payload.title,
+            } : {}),
           },
         },
       };

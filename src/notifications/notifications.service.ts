@@ -63,13 +63,17 @@ export class NotificationsService {
         userId: String(userId),
       };
 
+      if (data.type === 'CALL') {
+        // Для звонка гарантированно передаём все обязательные поля
+        pushData['callId'] = data.data?.callId != null ? String(data.data.callId) : '';
+        pushData['callerId'] = data.data?.callerId != null ? String(data.data.callerId) : '';
+        pushData['callerName'] = data.data?.callerName ?? '';
+      }
+
       if (data.data) {
         if (data.data.messageId) pushData['messageId'] = String(data.data.messageId);
         if (data.data.senderId) pushData['senderId'] = String(data.data.senderId);
         if (data.data.senderName) pushData['senderName'] = String(data.data.senderName);
-        if (data.data.callId) pushData['callId'] = String(data.data.callId);
-        if (data.data.callerId) pushData['callerId'] = String(data.data.callerId);
-        if (data.data.callerName) pushData['callerName'] = String(data.data.callerName);
       }
 
       await this.pushService.sendPush({
