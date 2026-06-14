@@ -10,6 +10,12 @@ class SocketService {
 
   IO.Socket? _socket;
   Timer? _heartbeatTimer;
+  bool _isConnecting = false;
+  String? _currentToken;
+
+  // Флаг: был ли socket когда-либо подключён (для защиты от race condition
+  // при вызове setOnConnectCallback после connect)
+  bool _wasConnectedBefore = false;
 
   // CallLogger для записи call-логов в файл на телефоне
   final CallLogger _callLogger = CallLogger();
@@ -29,6 +35,7 @@ class SocketService {
   SocketService._internal();
 
   IO.Socket? get socket => _socket;
+  bool get isConnected => _socket?.connected ?? false;
 
   /// Устанавливает callback, который будет вызван при подключении socket
   void setOnConnectCallback(VoidCallback callback) {
@@ -38,15 +45,43 @@ class SocketService {
     if (_socket != null && _socket!.connected) {
       _log('[SOCKET_SERVICE] setOnConnectCallback — socket already connected, invoking callback immediately');
       callback();
+    } else if (_wasConnectedBefore) {
+      // Если connect уже был, но socket сейчас не в connected (например, reconnect),
+      // всё равно вызываем callback — listener-ы должны быть перерегистрированы
+      _log('[SOCKET_SERVICE] setOnConnectCallback — was connected before, calling callback immediately');
+      callback();
     }
   }
 
   /// Подключается к Socket.IO серверу с JWT токеном
   void connect(String token) {
+    if (_socket != null && _socket!.connected && _currentToken == token) {
+      _log('[SOCKET_SERVICE] 🔌 connect() skipped — socket already connected with same token');
+      return;
+    }
+    if (_isConnecting && _currentToken == token) {
+      _log('[SOCKET_SERVICE] 🔌 connect() skipped — connection already in progress');
+      return;
+    }
+
     _log('[SOCKET_SERVICE] 🔌 connect() called — token length: ${token.length}');
     _log('[SOCKET_SERVICE] 🔌 connect() — socketUrl: ${ApiConfig.socketUrl}');
     try {
-      _socket = IO.io(
+      final previousSocket = _socket;
+      if (previousSocket != null) {
+        _log('[SOCKET_SERVICE] 🔌 connect() — cleaning previous socket before reconnect');
+        try {
+          previousSocket.clearListeners();
+          previousSocket.disconnect();
+        } catch (e) {
+          _log('[SOCKET_SERVICE] ❌ previous socket cleanup failed: $e');
+        }
+      }
+
+      _isConnecting = true;
+      _currentToken = token;
+
+      final newSocket = IO.io(
         ApiConfig.socketUrl,
         IO.OptionBuilder()
             .setTransports(['websocket'])
@@ -54,9 +89,17 @@ class SocketService {
             .enableAutoConnect()
             .build(),
       );
+      _socket = newSocket;
 
-      _socket!.onConnect((_) {
-        _log('[SOCKET_SERVICE] ✅✅✅ Socket CONNECTED: ${_socket!.id}');
+      newSocket.onConnect((_) {
+        if (!identical(_socket, newSocket)) {
+          _log('[SOCKET_SERVICE] 🔌 stale onConnect ignored');
+          return;
+        }
+
+        _isConnecting = false;
+        _wasConnectedBefore = true;
+        _log('[SOCKET_SERVICE] ✅✅✅ Socket CONNECTED: ${newSocket.id}');
         _log('[SOCKET_SERVICE] ✅ Socket connected — transport: websocket');
         startHeartbeat();
 
@@ -72,24 +115,34 @@ class SocketService {
         }
       });
 
-      _socket!.onDisconnect((_) {
+      newSocket.onDisconnect((_) {
+        if (!identical(_socket, newSocket)) {
+          _log('[SOCKET_SERVICE] 🔌 stale onDisconnect ignored');
+          return;
+        }
+
+        _isConnecting = false;
         _log('[SOCKET_SERVICE] 🔌 Socket DISCONNECTED');
         stopHeartbeat();
         // Оповещаем подписчиков об отключении
         _connectionController.add(false);
       });
 
-      _socket!.onError((error) {
+      newSocket.onError((error) {
         _log('[SOCKET_SERVICE] ❌ Socket error: $error');
       });
 
-      _socket!.onConnectError((error) {
+      newSocket.onConnectError((error) {
+        if (identical(_socket, newSocket)) {
+          _isConnecting = false;
+        }
         _log('[SOCKET_SERVICE] ❌ Socket connection error: $error');
       });
 
-      _socket!.connect();
+      newSocket.connect();
       _log('[SOCKET_SERVICE] 🔌 connect() — socket.connect() called');
     } catch (e) {
+      _isConnecting = false;
       _log('[SOCKET_SERVICE] ❌ Socket connection failed: $e');
     }
   }
@@ -246,6 +299,8 @@ class SocketService {
       stopHeartbeat();
       _socket?.disconnect();
       _socket = null;
+      _isConnecting = false;
+      _currentToken = null;
       _log('[SOCKET_SERVICE] 🔌 disconnect() — done');
     } catch (e) {
       _log('[SOCKET_SERVICE] ❌ Socket disconnect error: $e');
@@ -259,6 +314,8 @@ class SocketService {
     stopHeartbeat();
     _socket?.disconnect();
     _socket = null;
+    _isConnecting = false;
+    _currentToken = null;
     _connectionController.close();
     _log('[SOCKET_SERVICE] 🗑️ dispose() — done');
   }

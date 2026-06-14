@@ -131,10 +131,13 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _enableStandardSystemUi();
     debugPrint('[APP_SHELL] Calling _checkAuth()');
-    _checkAuth();
+    // Сначала проверяем авторизацию (и подключаем socket), потом инициализируем сервисы
+    _checkAuth().then((_) => _initServices()).catchError((e) {
+      debugPrint('[APP_SHELL] ❌ _checkAuth failed: $e');
+      // Даже если _checkAuth упал, всё равно инициализируем сервисы
+      _initServices();
+    });
     _monitorConnectivity();
-    debugPrint('[APP_SHELL] Calling _initServices() (unawaited)');
-    unawaited(_initServices());
     debugPrint('[APP_SHELL] Calling _listenIncomingCalls()');
     _listenIncomingCalls();
     debugPrint('[APP_SHELL] Calling _listenPushNotificationTaps()');

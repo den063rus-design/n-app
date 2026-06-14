@@ -101,6 +101,14 @@ class CallService {
     await _requestPermissions();
     _socketService.setOnConnectCallback(_setupSocketListeners);
 
+    // Принудительная регистрация listener-ов, если socket уже подключён
+    // (защита от race condition: setOnConnectCallback мог быть вызван
+    // после того, как connect уже произошёл)
+    if (_socketService.socket != null && _socketService.socket!.connected) {
+      _log('[CallService] Socket already connected — registering listeners immediately');
+      _setupSocketListeners();
+    }
+
     // Подписываемся на изменения состояния подключения socket.
     // При каждом connect/reconnect сбрасываем флаг _listenersAttached,
     // чтобы _setupSocketListeners перерегистрировал listener-ы.
@@ -216,6 +224,13 @@ class CallService {
 
     _listenersAttached = true;
     _log('🔌 registering: call:incoming, call:accepted, call:signal, call:ended, call:rejected');
+
+    // Снимаем старые listener-ы перед регистрацией (на случай переподключения)
+    socket.off('call:incoming');
+    socket.off('call:accepted');
+    socket.off('call:signal');
+    socket.off('call:ended');
+    socket.off('call:rejected');
 
     _socketService.onCallEvent('call:incoming', (data) {
       _log('📞 call:incoming — data: $data, state=$_state');
