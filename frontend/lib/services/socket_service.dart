@@ -18,6 +18,14 @@ class SocketService {
   // Используется CallService для донавешивания listeners после connect
   VoidCallback? _onConnectCallback;
 
+  // StreamController для оповещения о состоянии подключения
+  // Испускает true при connect/reconnect и false при disconnect
+  final _connectionController = StreamController<bool>.broadcast();
+
+  /// Стрим, оповещающий об изменении состояния подключения socket.
+  /// true — подключён, false — отключён.
+  Stream<bool> get onConnectionChanged => _connectionController.stream;
+
   SocketService._internal();
 
   IO.Socket? get socket => _socket;
@@ -52,6 +60,9 @@ class SocketService {
         _log('[SOCKET_SERVICE] ✅ Socket connected — transport: websocket');
         startHeartbeat();
 
+        // Оповещаем подписчиков о подключении (connect/reconnect)
+        _connectionController.add(true);
+
         // Вызываем callback для донавешивания call-листенеров
         if (_onConnectCallback != null) {
           _log('[SOCKET_SERVICE] 🔔 Invoking onConnectCallback after connect');
@@ -64,6 +75,8 @@ class SocketService {
       _socket!.onDisconnect((_) {
         _log('[SOCKET_SERVICE] 🔌 Socket DISCONNECTED');
         stopHeartbeat();
+        // Оповещаем подписчиков об отключении
+        _connectionController.add(false);
       });
 
       _socket!.onError((error) {
@@ -237,6 +250,17 @@ class SocketService {
     } catch (e) {
       _log('[SOCKET_SERVICE] ❌ Socket disconnect error: $e');
     }
+  }
+
+  /// Освобождает ресурсы сервиса.
+  /// Должен вызываться при завершении работы приложения.
+  void dispose() {
+    _log('[SOCKET_SERVICE] 🗑️ dispose() called');
+    stopHeartbeat();
+    _socket?.disconnect();
+    _socket = null;
+    _connectionController.close();
+    _log('[SOCKET_SERVICE] 🗑️ dispose() — done');
   }
 
   /// Пишет лог одновременно в print (adb) и в файл (CallLogger)

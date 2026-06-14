@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import {
   OnGatewayConnection,
   OnGatewayDisconnect,
@@ -16,6 +17,8 @@ import { CallStatus } from '@prisma/client';
   namespace: '/',
 })
 export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  private readonly logger = new Logger(CallGateway.name);
+
   @WebSocketServer()
   server!: Server;
 
@@ -76,9 +79,11 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private sendToUser(userId: number, event: string, data: unknown) {
     const socketId = this.userSockets.get(userId);
-    if (socketId) {
-      this.server.to(socketId).emit(event, data);
+    if (!socketId) {
+      this.logger.warn(`[sendToUser] User ${userId} not connected — socket not found`);
+      return;
     }
+    this.server.to(socketId).emit(event, data);
   }
 
   private sendToBoth(callerId: number, calleeId: number, event: string, data: unknown) {
@@ -107,6 +112,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       const call = await this.callService.createCall(callerId, payload.calleeId);
 
+      this.logger.log(`[call:start] Sending call:incoming to user=${payload.calleeId}, callId=${call.id}`);
       this.sendToUser(payload.calleeId, 'call:incoming', {
         callId: call.id,
         callerId: call.callerId,

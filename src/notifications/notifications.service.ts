@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationType } from '@prisma/client';
 import { NotificationsGateway } from './notifications.gateway';
@@ -6,6 +6,8 @@ import { PushService } from '../push/push.service';
 
 @Injectable()
 export class NotificationsService {
+  private readonly logger = new Logger(NotificationsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsGateway: NotificationsGateway,
@@ -64,10 +66,20 @@ export class NotificationsService {
       };
 
       if (data.type === 'CALL') {
-        // Для звонка гарантированно передаём все обязательные поля
-        pushData['callId'] = data.data?.callId != null ? String(data.data.callId) : '';
-        pushData['callerId'] = data.data?.callerId != null ? String(data.data.callerId) : '';
-        pushData['callerName'] = data.data?.callerName ?? '';
+        const callId = data.data?.callId;
+        const callerId = data.data?.callerId;
+        const callerName = data.data?.callerName;
+
+        if (!callId || !callerId || !callerName) {
+          this.logger.error(
+            `[sendFcmPush] CALL notification missing required fields: callId=${callId}, callerId=${callerId}, callerName=${callerName}. Skipping FCM push.`,
+          );
+          return;
+        }
+
+        pushData['callId'] = String(callId);
+        pushData['callerId'] = String(callerId);
+        pushData['callerName'] = callerName;
       }
 
       if (data.data) {

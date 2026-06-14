@@ -93,10 +93,24 @@ class CallService {
   int? _lastCallEndTimestamp;
   int? get lastCallEndTimestamp => _lastCallEndTimestamp;
 
+  // Подписка на стрим изменения подключения socket
+  StreamSubscription<bool>? _connectionSubscription;
+
   Future<void> init() async {
     _log('🔧 init()');
     await _requestPermissions();
     _socketService.setOnConnectCallback(_setupSocketListeners);
+
+    // Подписываемся на изменения состояния подключения socket.
+    // При каждом connect/reconnect сбрасываем флаг _listenersAttached,
+    // чтобы _setupSocketListeners перерегистрировал listener-ы.
+    _connectionSubscription = _socketService.onConnectionChanged.listen((connected) {
+      if (connected) {
+        _log('🔌 Socket reconnected — resetting _listenersAttached for re-registration');
+        _listenersAttached = false;
+        _setupSocketListeners();
+      }
+    });
   }
 
   /// Отмечает, что экран звонка открыт (предотвращает дубли)
@@ -194,6 +208,12 @@ class CallService {
       return;
     }
 
+    // Если listener-ы уже зарегистрированы — пропускаем (защита от дублей)
+    if (_listenersAttached) {
+      _log('🔌 _setupSocketListeners() — listeners already attached, skipping');
+      return;
+    }
+
     _listenersAttached = true;
     _log('🔌 registering: call:incoming, call:accepted, call:signal, call:ended, call:rejected');
 
@@ -209,14 +229,26 @@ class CallService {
       // Игнорируем входящий звонок, если экран звонка уже открыт
       // (защита от дублей — экран мог быть открыт через push-уведомление)
       if (_isCallScreenOpen) {
-        _log('⚠️ call:incoming ignored — call screen already open, state=$_state');
-        return;
+        // Stale-проверка: если state IDLE или ENDED — сбросить флаг
+        if (_state == CallState.IDLE || _state == CallState.ENDED) {
+          markCallScreenClosed();
+          // не игнорируем — продолжаем выполнение
+        } else {
+          _log('⚠️ call:incoming ignored — call screen already open, state=$_state');
+          return;
+        }
       }
       // Игнорируем входящий звонок, если диалог входящего звонка уже открыт
       // (защита от дублей — предотвращает создание второго диалога)
       if (_isIncomingDialogOpen) {
-        _log('⚠️ call:incoming ignored — incoming dialog already open, state=$_state');
-        return;
+        // Stale-проверка: если state не RINGING — сбросить флаг
+        if (_state != CallState.RINGING) {
+          markIncomingDialogClosed();
+          // не игнорируем — продолжаем выполнение
+        } else {
+          _log('⚠️ call:incoming ignored — incoming dialog already open, state=$_state');
+          return;
+        }
       }
       // Отменяем отложенный сброс (если был завершён предыдущий звонок)
       _resetTimer?.cancel();
@@ -702,6 +734,7 @@ class CallService {
   }
 
   void dispose() {
+    _connectionSubscription?.cancel();
     _stateController.close();
     _localStreamController.close();
     _remoteStreamController.close();
