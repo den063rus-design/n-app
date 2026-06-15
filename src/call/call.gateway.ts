@@ -22,7 +22,10 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server!: Server;
 
-  private userSockets: Map<number, string> = new Map();
+  /** Хранит ВСЕ активные socketId для каждого userId.
+   *  Позволяет одному пользователю иметь несколько одновременных соединений
+   *  (reconnect, несколько вкладок/устройств) без потери событий. */
+  private userSockets: Map<number, Set<string>> = new Map();
   private callTimeouts: Map<number, NodeJS.Timeout> = new Map();
 
   constructor(
@@ -42,7 +45,16 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const userId = payload.sub;
 
       if (userId) {
-        this.userSockets.set(userId, client.id);
+        // Получаем или создаём Set для этого пользователя
+        let sockets = this.userSockets.get(userId);
+        if (!sockets) {
+          sockets = new Set<string>();
+          this.userSockets.set(userId, sockets);
+        }
+        sockets.add(client.id);
+
+        const socketCount = sockets.size;
+        console.log(`[CALL_GATEWAY] 🔌 user ${userId} connected, clientId=${client.id}, sockets=${socketCount}`);
       }
     } catch (error) {
       console.log(`[CALL_GATEWAY] 🔌 invalid token: ${error instanceof Error ? error.message : error}`);
@@ -50,10 +62,22 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   async handleDisconnect(client: Socket) {
-    for (const [userId, socketId] of this.userSockets.entries()) {
-      if (socketId === client.id) {
-        this.userSockets.delete(userId);
-        console.log(`[CALL_GATEWAY] 🔌 user ${userId} disconnected`);
+    // Ищем userId по client.id
+    for (const [userId, sockets] of this.userSockets.entries()) {
+      if (sockets.has(client.id)) {
+        sockets.delete(client.id);
+        const socketsLeft = sockets.size;
+        console.log(`[CALL_GATEWAY] 🔌 user ${userId} disconnected socket ${client.id}, socketsLeft=${socketsLeft}`);
+
+        // Если у пользователя больше нет активных сокетов — удаляем запись
+        if (socketsLeft === 0) {
+          this.userSockets.delete(userId);
+        }
+
+        // Если у пользователя ещё остались сокеты — не завершаем звонок
+        if (socketsLeft > 0) {
+          break;
+        }
 
         try {
           const activeCall = await this.callService.findActiveCallByUserId(userId);
@@ -77,13 +101,19 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   // ========== Вспомогательные методы ==========
 
+  /** Отправляет событие во ВСЕ активные socket'ы пользователя.
+   *  Если у пользователя несколько соединений — событие дойдёт до каждого. */
   private sendToUser(userId: number, event: string, data: unknown) {
-    const socketId = this.userSockets.get(userId);
-    if (!socketId) {
-      this.logger.warn(`[sendToUser] User ${userId} not connected — socket not found`);
+    const sockets = this.userSockets.get(userId);
+    if (!sockets || sockets.size === 0) {
+      console.log(`[CALL_GATEWAY] sendToUser user=${userId} event=${event} sockets=0 — user not connected`);
       return;
     }
-    this.server.to(socketId).emit(event, data);
+
+    console.log(`[CALL_GATEWAY] sendToUser user=${userId} event=${event} sockets=${sockets.size}`);
+    for (const socketId of sockets) {
+      this.server.to(socketId).emit(event, data);
+    }
   }
 
   private sendToBoth(callerId: number, calleeId: number, event: string, data: unknown) {

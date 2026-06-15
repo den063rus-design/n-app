@@ -256,66 +256,18 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
   /// Слушает входящие звонки и показывает IncomingCallDialog через fullscreen route.
   void _listenIncomingCalls() {
-    final callService = CallService();
-    _incomingCallSubscription = callService.incomingCallStream.listen((data) {
+    _incomingCallSubscription = CallService().incomingCallStream.listen((data) {
       if (!mounted) return;
 
       final callerId = data['callerId'] as int;
       final callerName = data['callerName'] as String;
       final callId = data['callId'] as int? ?? 0;
 
-      final currentRoute = (navigatorKey.currentContext != null)
-          ? ModalRoute.of(navigatorKey.currentContext!)?.settings.name
-          : 'null';
-
       debugPrint('[APP] 📞 _listenIncomingCalls — data=$data');
-      debugPrint('[APP] 📞 _listenIncomingCalls — state=${callService.state}, isCallScreenOpen=${callService.isCallScreenOpen}, isIncomingDialogOpen=${callService.isIncomingDialogOpen}, isMinimized=${callService.isMinimized}, currentCallId=${callService.currentCallId}, route=$currentRoute');
 
-      // Проверяем, что звонок действительно в статусе RINGING
-      if (callService.state != CallState.RINGING) {
-        debugPrint('[APP] ⚠️ _listenIncomingCalls — state is ${callService.state}, not RINGING — ignoring');
-        debugPrint('[APP] 🔍 DIAG: state=${callService.state}, isCallScreenOpen=${callService.isCallScreenOpen}, isIncomingDialogOpen=${callService.isIncomingDialogOpen}, isMinimized=${callService.isMinimized}, currentCallId=${callService.currentCallId}, route=$currentRoute');
-        // Проверка на залипший флаг isCallScreenOpen
-        if (callService.isCallScreenOpen &&
-            (callService.state == CallState.IDLE || callService.state == CallState.ENDED)) {
-          debugPrint('[APP] 🛠️ STALE FLAG DETECTED: isCallScreenOpen=true but state=${callService.state} — forcing markCallScreenClosed()');
-          callService.markCallScreenClosed();
-          // Не делаем return — продолжаем выполнение
-        } else {
-          return;
-        }
-      }
-
-      // Проверяем, не открыт ли уже экран звонка
-      if (callService.isCallScreenOpen) {
-        debugPrint('[APP] ⚠️ _listenIncomingCalls — call screen already open — ignoring');
-        debugPrint('[APP] 🔍 DIAG: state=${callService.state}, isCallScreenOpen=${callService.isCallScreenOpen}, isIncomingDialogOpen=${callService.isIncomingDialogOpen}, isMinimized=${callService.isMinimized}, currentCallId=${callService.currentCallId}, route=$currentRoute');
-        // Проверка на залипший флаг isCallScreenOpen
-        if (callService.state == CallState.IDLE || callService.state == CallState.ENDED) {
-          debugPrint('[APP] 🛠️ STALE FLAG DETECTED: isCallScreenOpen=true but state=${callService.state} — forcing markCallScreenClosed() and continuing');
-          callService.markCallScreenClosed();
-          // Не делаем return — продолжаем выполнение
-        } else {
-          return;
-        }
-      }
-
-      // Проверяем, не открыт ли уже диалог входящего звонка
-      if (callService.isIncomingDialogOpen) {
-        // Stale-проверка: если route не incoming_call_dialog — сбросить флаг
-        final routeName = ModalRoute.of(navigatorKey.currentContext!)?.settings.name;
-        if (routeName != 'incoming_call_dialog') {
-          callService.markIncomingDialogClosed();
-        } else {
-          debugPrint('[APP] ⚠️ _listenIncomingCalls — incoming dialog already open — ignoring');
-          debugPrint('[APP] 🔍 DIAG: state=${callService.state}, isCallScreenOpen=${callService.isCallScreenOpen}, isIncomingDialogOpen=${callService.isIncomingDialogOpen}, isMinimized=${callService.isMinimized}, currentCallId=${callService.currentCallId}, route=$currentRoute');
-          return;
-        }
-      }
-
-      debugPrint('[APP] ✅ _listenIncomingCalls — showing IncomingCallDialog via _showIncomingCallDialog, callerId=$callerId');
-
-      // Используем единый метод показа диалога
+      // Единая точка показа входящего диалога.
+      // Все guard'ы (уже на звонке, уже открыт диалог и т.д.)
+      // проверяются внутри _showIncomingCallDialog.
       _showIncomingCallDialog(
         callerId: callerId,
         callerName: callerName,
@@ -377,30 +329,13 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   /// Проверяет, не было ли восстановлено состояние входящего звонка из push
   /// до того, как подписка на стрим была установлена.
   ///
-  /// Если CallService в RINGING, но диалог ещё не показан — извлекает данные
-  /// звонка из CallService и показывает IncomingCallDialog.
+  /// Если CallService в RINGING — извлекает данные звонка из CallService
+  /// и вызывает _showIncomingCallDialog(). Все guard'ы внутри _showIncomingCallDialog().
   void _checkPendingIncomingCallFromPush() {
     final callService = CallService();
     if (callService.state != CallState.RINGING) {
       debugPrint('[APP_PUSH_TAP] _checkPendingIncomingCallFromPush — state=${callService.state}, not RINGING — nothing to do');
       return;
-    }
-    if (callService.isIncomingDialogOpen) {
-      // Stale-проверка: если top route не incoming_call_dialog — сбросить флаг
-      final routeName = ModalRoute.of(navigatorKey.currentContext!)?.settings.name;
-      if (routeName != 'incoming_call_dialog') {
-        callService.markIncomingDialogClosed();
-      } else {
-        return;
-      }
-    }
-    if (callService.isCallScreenOpen) {
-      // Stale-проверка: если state уже IDLE или ENDED — сбросить флаг
-      if (callService.state == CallState.IDLE || callService.state == CallState.ENDED) {
-        callService.markCallScreenClosed();
-      } else {
-        return;
-      }
     }
 
     final remoteUserId = callService.remoteUserId;
@@ -412,7 +347,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       return;
     }
 
-    debugPrint('[APP_PUSH_TAP] _checkPendingIncomingCallFromPush — state=RINGING, dialog not shown — showing IncomingCallDialog (callerId=$remoteUserId, callerName=$remoteUserName)');
+    debugPrint('[APP_PUSH_TAP] _checkPendingIncomingCallFromPush — state=RINGING — showing IncomingCallDialog (callerId=$remoteUserId, callerName=$remoteUserName)');
 
     _showIncomingCallDialog(
       callerId: remoteUserId,
@@ -423,54 +358,23 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   }
 
   /// Обрабатывает тап по call push-уведомлению.
-  /// Пытается восстановить состояние входящего звонка из payload.
   ///
-  /// Логика синхронизации с socket-flow:
-  /// - Если state=RINGING && isIncomingDialogOpen=true — диалог уже показан
-  ///   через socket, игнорируем tap.
-  /// - Если state=RINGING && isIncomingDialogOpen=false — socket установил
-  ///   RINGING, но диалог ещё не показан. Показываем диалог без hydrate.
-  /// - Если state!=RINGING — вызываем hydrateIncomingCallFromPush, затем
-  ///   показываем диалог.
+  /// Пытается восстановить состояние входящего звонка из payload,
+  /// затем вызывает единый метод _showIncomingCallDialog().
+  /// Все guard'ы (уже открыт диалог / CallScreen) проверяются внутри
+  /// _showIncomingCallDialog().
   void _handleCallPushTap(Map<String, String?> data) {
-    final callService = CallService();
-
-    // Guard от двойного вызова: если диалог или экран звонка уже открыты — игнорируем
-    if (callService.isIncomingDialogOpen) {
-      // Stale-проверка: если route уже не incoming_call_dialog — сбросить флаг
-      final routeName = ModalRoute.of(navigatorKey.currentContext!)?.settings.name;
-      if (routeName != 'incoming_call_dialog') {
-        callService.markIncomingDialogClosed();
-      } else {
-        return;
-      }
-    }
-    if (callService.isCallScreenOpen) {
-      // Stale-проверка: если state уже IDLE или ENDED — сбросить флаг
-      if (callService.state == CallState.IDLE || callService.state == CallState.ENDED) {
-        callService.markCallScreenClosed();
-      } else {
-        return;
-      }
-    }
-
     final callerIdStr = data['callerId'];
     final callerName = data['callerName'] ?? 'Входящий звонок';
     final callIdStr = data['callId'];
 
-    final currentRoute = (navigatorKey.currentContext != null)
-        ? ModalRoute.of(navigatorKey.currentContext!)?.settings.name
-        : 'null';
-
-    debugPrint('[APP_PUSH_TAP] _handleCallPushTap CALLED — callerId=$callerIdStr, callerName=$callerName');
-    debugPrint('[APP_PUSH_TAP] 🔍 DIAG: state=${callService.state}, isCallScreenOpen=${callService.isCallScreenOpen}, isIncomingDialogOpen=${callService.isIncomingDialogOpen}, isMinimized=${callService.isMinimized}, currentCallId=${callService.currentCallId}, route=$currentRoute');
+    debugPrint('[APP_PUSH_TAP] _handleCallPushTap — callerId=$callerIdStr, callerName=$callerName');
 
     if (callerIdStr == null) {
       debugPrint('[APP_PUSH_TAP] ⚠️ callerId is null, cannot process');
       return;
     }
 
-    // Парсим для передачи в _showIncomingCallDialog (который принимает int)
     final callerId = int.tryParse(callerIdStr);
     if (callerId == null) {
       debugPrint('[APP_PUSH_TAP] ⚠️ invalid callerId: $callerIdStr');
@@ -479,31 +383,12 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
     final callId = callIdStr != null ? int.tryParse(callIdStr) ?? 0 : 0;
 
-    debugPrint('[APP_PUSH_TAP] state=${callService.state}, isCallScreenOpen=${callService.isCallScreenOpen}');
+    final callService = CallService();
 
-    // Проверяем guards
-    if (callService.isCallScreenOpen) {
-      debugPrint('[APP_PUSH_TAP] ⚠️ call screen already open — ignoring');
-      debugPrint('[APP_PUSH_TAP] 🔍 DIAG: state=${callService.state}, isCallScreenOpen=${callService.isCallScreenOpen}, isIncomingDialogOpen=${callService.isIncomingDialogOpen}, isMinimized=${callService.isMinimized}, currentCallId=${callService.currentCallId}, route=$currentRoute');
-      // Проверка на залипший флаг isCallScreenOpen
-      if (callService.state == CallState.IDLE || callService.state == CallState.ENDED) {
-        debugPrint('[APP_PUSH_TAP] 🛠️ STALE FLAG DETECTED: isCallScreenOpen=true but state=${callService.state} — forcing markCallScreenClosed() and continuing');
-        callService.markCallScreenClosed();
-        // Не делаем return — продолжаем выполнение
-      } else {
-        return;
-      }
-    }
-
-    // Синхронизация с socket-flow: если state=RINGING и диалог уже открыт
-    if (callService.state == CallState.RINGING && callService.isIncomingDialogOpen) {
-      debugPrint('[APP_PUSH_TAP] ⏭️ push tap ignored — dialog already shown via socket (state=RINGING, isIncomingDialogOpen=true)');
-      return;
-    }
-
-    // Если state=RINGING, но диалог ещё не показан — показываем без hydrate
-    if (callService.state == CallState.RINGING && !callService.isIncomingDialogOpen) {
-      debugPrint('[APP_PUSH_TAP] state=RINGING but dialog not shown yet — showing dialog without hydrate');
+    // Если state уже RINGING — socket уже установил состояние,
+    // hydrate не нужен. Просто показываем диалог.
+    if (callService.state == CallState.RINGING) {
+      debugPrint('[APP_PUSH_TAP] state=RINGING — showing dialog without hydrate');
       _showIncomingCallDialog(
         callerId: callerId,
         callerName: callerName,
@@ -513,20 +398,14 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       return;
     }
 
-    if (callService.isIncomingDialogOpen) {
-      debugPrint('[APP_PUSH_TAP] ⚠️ incoming dialog already open — ignoring');
-      debugPrint('[APP_PUSH_TAP] 🔍 DIAG: state=${callService.state}, isCallScreenOpen=${callService.isCallScreenOpen}, isIncomingDialogOpen=${callService.isIncomingDialogOpen}, isMinimized=${callService.isMinimized}, currentCallId=${callService.currentCallId}, route=$currentRoute');
-      return;
-    }
+    // Если уже на звонке (CALLING / IN_CALL) — игнорируем push
     if (callService.state == CallState.CALLING ||
         callService.state == CallState.IN_CALL) {
-      debugPrint('[APP_PUSH_TAP] ⚠️ already in call (state=${callService.state}) — ignoring');
-      debugPrint('[APP_PUSH_TAP] 🔍 DIAG: state=${callService.state}, isCallScreenOpen=${callService.isCallScreenOpen}, isIncomingDialogOpen=${callService.isIncomingDialogOpen}, isMinimized=${callService.isMinimized}, currentCallId=${callService.currentCallId}, route=$currentRoute');
+      debugPrint('[APP_PUSH_TAP] ⚠️ already in call (state=${callService.state}) — ignoring push tap');
       return;
     }
 
-    // state != RINGING — восстанавливаем состояние из push
-    // Передаём строки напрямую — hydrateIncomingCallFromPush сама парсит их в int
+    // Восстанавливаем состояние из push
     debugPrint('[APP_PUSH_TAP] Hydrating incoming call from push (state=${callService.state})');
     callService.hydrateIncomingCallFromPush(
       callId: callIdStr ?? '',
@@ -545,11 +424,11 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   /// Единый метод показа IncomingCallDialog.
   ///
   /// Используется как из socket-flow (_listenIncomingCalls), так и из
-  /// push-flow (_handleCallPushTap). Гарантирует одинаковую логику:
-  /// 1. Проверяет guards (state, isCallScreenOpen, isIncomingDialogOpen)
-  /// 2. Вызывает markIncomingDialogOpen()
-  /// 3. Делает Navigator.push(IncomingCallDialog)
-  /// 4. В .then() обрабатывает результат (accept/reject)
+  /// push-flow (_handleCallPushTap / _checkPendingIncomingCallFromPush).
+  ///
+  /// Guard'ы (проверки):
+  /// 1. Если уже открыт incoming_call_dialog → return
+  /// 2. Если уже открыт CallScreen активного звонка → return
   void _showIncomingCallDialog({
     required int callerId,
     required String callerName,
@@ -558,19 +437,6 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   }) {
     final callService = CallService();
 
-    // Дополнительный guard от двойного вызова (на случай, если guards
-    // в _listenIncomingCalls / _handleCallPushTap пропустили два события)
-    if (callService.isIncomingDialogOpen) {
-      // Stale-проверка: если текущий route не incoming_call_dialog — сбросить флаг
-      final routeName = ModalRoute.of(navigatorKey.currentContext!)?.settings.name;
-      if (routeName != 'incoming_call_dialog') {
-        callService.markIncomingDialogClosed();
-      } else {
-        debugPrint('[APP] ⚠️ _showIncomingCallDialog — incoming dialog already open (double-call guard) — ignoring');
-        return;
-      }
-    }
-
     final currentRoute = (navigatorKey.currentContext != null)
         ? ModalRoute.of(navigatorKey.currentContext!)?.settings.name
         : 'null';
@@ -578,31 +444,24 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     debugPrint('[APP] 📞 _showIncomingCallDialog — callerId=$callerId, callerName=$callerName, callId=$callId, source=$source');
     debugPrint('[APP] 📞 _showIncomingCallDialog — state=${callService.state}, isCallScreenOpen=${callService.isCallScreenOpen}, isIncomingDialogOpen=${callService.isIncomingDialogOpen}, isMinimized=${callService.isMinimized}, currentCallId=${callService.currentCallId}, route=$currentRoute');
 
-    // Guard: state должен быть RINGING
-    if (callService.state != CallState.RINGING) {
-      debugPrint('[APP] ⚠️ _showIncomingCallDialog — state is ${callService.state}, not RINGING — ignoring');
-      return;
+    // Guard 1: уже открыт incoming_call_dialog
+    if (callService.isIncomingDialogOpen) {
+      // Stale-проверка: если текущий route не incoming_call_dialog — сбросить флаг
+      if (currentRoute != 'incoming_call_dialog') {
+        callService.markIncomingDialogClosed();
+      } else {
+        debugPrint('[APP] ⚠️ _showIncomingCallDialog — incoming dialog already open — ignoring');
+        return;
+      }
     }
 
-    // Guard: экран звонка не должен быть открыт
+    // Guard 2: уже открыт CallScreen активного звонка
     if (callService.isCallScreenOpen) {
       // Stale-проверка: если state IDLE или ENDED — сбросить флаг
       if (callService.state == CallState.IDLE || callService.state == CallState.ENDED) {
         callService.markCallScreenClosed();
       } else {
         debugPrint('[APP] ⚠️ _showIncomingCallDialog — call screen already open — ignoring');
-        return;
-      }
-    }
-
-    // Guard: диалог не должен быть уже открыт
-    if (callService.isIncomingDialogOpen) {
-      // Stale-проверка: если текущий route не incoming_call_dialog — сбросить флаг
-      final routeName = ModalRoute.of(navigatorKey.currentContext!)?.settings.name;
-      if (routeName != 'incoming_call_dialog') {
-        callService.markIncomingDialogClosed();
-      } else {
-        debugPrint('[APP] ⚠️ _showIncomingCallDialog — incoming dialog already open — ignoring');
         return;
       }
     }
@@ -640,9 +499,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       callService.markIncomingDialogClosed();
 
       if (result == true) {
-        // Принято — вызываем acceptCall (fire-and-forget, т.к. внутри есть
-        // Future.delayed(5s) для таймаута — не блокируем открытие CallScreen).
-        // Ошибки логируем, но не прерываем открытие экрана.
+        // Принято — вызываем acceptCall (fire-and-forget)
         debugPrint('[APP] ✅ _showIncomingCallDialog accepted — calling acceptCall()');
         unawaited(callService.acceptCall().catchError((e) {
           debugPrint('[APP] 🔴 acceptCall() threw: $e');
@@ -650,8 +507,6 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
         // Открываем CallScreen в addPostFrameCallback, чтобы дать Flutter
         // завершить текущий фрейм (закрытие диалога) перед открытием нового экрана.
-        // Это предотвращает визуальный "провал" (чёрный пустой кадр) между
-        // закрытием IncomingCallDialog и открытием CallScreen.
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           _openCallScreen(

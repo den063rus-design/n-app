@@ -222,28 +222,17 @@ class CallService {
 
     _socketService.onCallEvent('call:incoming', (data) {
       _log('📞 call:incoming — data: $data, state=$_state');
+
+      // Единственный guard на транспортном уровне:
+      // если уже на звонке — игнорируем входящий
       if (_state == CallState.CALLING ||
           _state == CallState.RINGING ||
           _state == CallState.IN_CALL) {
         _log('⚠️ call:incoming ignored — already in call, state=$_state');
         return;
       }
-      if (_isCallScreenOpen) {
-        if (_state == CallState.IDLE || _state == CallState.ENDED) {
-          markCallScreenClosed();
-        } else {
-          _log('⚠️ call:incoming ignored — call screen already open, state=$_state');
-          return;
-        }
-      }
-      if (_isIncomingDialogOpen) {
-        if (_state != CallState.RINGING) {
-          markIncomingDialogClosed();
-        } else {
-          _log('⚠️ call:incoming ignored — incoming dialog already open, state=$_state');
-          return;
-        }
-      }
+
+      // Сбрасываем состояние и устанавливаем RINGING
       _resetTimer?.cancel();
       _hardReset();
       _state = CallState.RINGING;
@@ -252,6 +241,9 @@ class CallService {
       _remoteUserName = data['callerName'] ?? 'Пользователь';
       _stateController.add(_state);
       _log('✅ call:incoming processed — callId=$_currentCallId, callerId=$_remoteUserId');
+
+      // Доставляем событие в UI-слой (app.dart).
+      // UI-слой сам решает, показывать диалог или нет.
       _incomingCallController.add({
         'callId': data['callId'],
         'callerId': data['callerId'],
