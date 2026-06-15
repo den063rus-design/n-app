@@ -60,12 +60,10 @@ export class PushService implements OnModuleInit {
           priority: 'high',
           notification: {
             channelId: isCall ? 'incoming_call_channel' : 'default_notification_channel',
-            priority: isCall ? 'max' : 'high',
             defaultSound: true,
             defaultVibrateTimings: true,
             ...(isCall
               ? {
-                  notificationPriority: 'max',
                   visibility: 'public',
                   ticker: payload.title,
                 }

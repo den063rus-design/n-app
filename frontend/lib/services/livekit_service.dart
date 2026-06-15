@@ -84,14 +84,15 @@ class LiveKitService {
 
     try {
       connectionState.value = LiveKitConnectionState.connecting;
-      debugPrint('[LIVEKIT] Connecting to call $callId...');
+      debugPrint('[LIVEKIT] LIVEKIT connectToCall begin callId=$callId');
 
       // 1. Получаем токен
       final tokenData = await _apiService.getLiveKitToken(callId);
       final token = tokenData['token'] as String;
       final wsUrl = tokenData['wsUrl'] as String;
+      final roomName = tokenData['roomName'] as String? ?? 'unknown';
 
-      debugPrint('[LIVEKIT] Token received, wsUrl=$wsUrl');
+      debugPrint('[LIVEKIT] LIVEKIT token received wsUrl=$wsUrl roomName=$roomName');
 
       // 2. Создаём Room
       _room?.dispose();
@@ -107,13 +108,19 @@ class LiveKitService {
       _setupRoomListeners();
 
       // 4. Подключаемся
+      debugPrint('[LIVEKIT] LIVEKIT room connect start');
       await _room!.connect(wsUrl, token);
-
-      debugPrint('[LIVEKIT] Connected to room: ${_room!.name}');
+      debugPrint('[LIVEKIT] LIVEKIT room connected name=${_room!.name}');
 
       // 5. Включаем микрофон и камеру
-      await _room!.localParticipant?.setMicrophoneEnabled(true);
-      await _room!.localParticipant?.setCameraEnabled(true);
+      if (_room!.localParticipant != null) {
+        debugPrint('[LIVEKIT] LIVEKIT local mic enabled');
+        await _room!.localParticipant!.setMicrophoneEnabled(true);
+        debugPrint('[LIVEKIT] LIVEKIT local camera enabled');
+        await _room!.localParticipant!.setCameraEnabled(true);
+      } else {
+        debugPrint('[LIVEKIT] ⚠️ LIVEKIT localParticipant is null after connect');
+      }
 
       // 6. Обновляем состояние
       isMicEnabled.value = true;
@@ -121,11 +128,16 @@ class LiveKitService {
 
       // 7. Получаем локальный видео-трек
       _updateLocalVideoTrack();
+      if (localVideoTrack.value != null) {
+        debugPrint('[LIVEKIT] LIVEKIT local video track found');
+      } else {
+        debugPrint('[LIVEKIT] LIVEKIT local video track missing (may appear after camera warmup)');
+      }
 
       connectionState.value = LiveKitConnectionState.connected;
-      debugPrint('[LIVEKIT] ✅ Connected successfully');
+      debugPrint('[LIVEKIT] LIVEKIT ✅ Connected successfully');
     } catch (e, stack) {
-      debugPrint('[LIVEKIT] ❌ Connection failed: $e');
+      debugPrint('[LIVEKIT] ❌ LIVEKIT error: $e');
       debugPrint('[LIVEKIT] StackTrace: $stack');
       connectionState.value = LiveKitConnectionState.error;
     } finally {
@@ -135,7 +147,7 @@ class LiveKitService {
 
   /// Отключается от LiveKit комнаты.
   Future<void> disconnect() async {
-    debugPrint('[LIVEKIT] Disconnecting...');
+    debugPrint('[LIVEKIT] LIVEKIT disconnect callId=$_currentCallId');
 
     // Отменяем подписку на события
     if (_roomEventsCancel != null) {
@@ -158,7 +170,7 @@ class LiveKitService {
     connectionState.value = LiveKitConnectionState.disconnected;
     _currentCallId = null;
 
-    debugPrint('[LIVEKIT] ✅ Disconnected');
+    debugPrint('[LIVEKIT] ✅ LIVEKIT disconnected');
   }
 
   /// Включить/выключить микрофон.
@@ -210,37 +222,37 @@ class LiveKitService {
     // Используем events.listen() который возвращает CancelListenFunc
     _roomEventsCancel = _room!.events.listen((event) {
       if (event is RoomDisconnectedEvent) {
-        debugPrint('[LIVEKIT] Room disconnected');
+        debugPrint('[LIVEKIT] LIVEKIT Room disconnected');
         connectionState.value = LiveKitConnectionState.disconnected;
         localVideoTrack.value = null;
         remoteVideoTrack.value = null;
         remoteParticipant.value = null;
       } else if (event is RoomReconnectingEvent) {
-        debugPrint('[LIVEKIT] Room reconnecting...');
+        debugPrint('[LIVEKIT] LIVEKIT Room reconnecting...');
         connectionState.value = LiveKitConnectionState.reconnecting;
       } else if (event is RoomReconnectedEvent) {
-        debugPrint('[LIVEKIT] Room reconnected');
+        debugPrint('[LIVEKIT] LIVEKIT Room reconnected');
         connectionState.value = LiveKitConnectionState.connected;
       } else if (event is TrackPublishedEvent) {
         debugPrint(
-            '[LIVEKIT] Track published: ${event.publication.source}');
+            '[LIVEKIT] LIVEKIT Track published: ${event.publication.source} kind=${event.publication.kind}');
       } else if (event is TrackSubscribedEvent) {
         debugPrint(
-            '[LIVEKIT] Track subscribed: ${event.track.source}');
+            '[LIVEKIT] LIVEKIT Track subscribed: source=${event.track.source} kind=${event.track.kind} participant=${event.participant.identity}');
         _onTrackSubscribed(event.track, event.participant);
       } else if (event is TrackUnsubscribedEvent) {
         debugPrint(
-            '[LIVEKIT] Track unsubscribed: ${event.track.source}');
+            '[LIVEKIT] LIVEKIT Track unsubscribed: ${event.track.source}');
         if (event.track is VideoTrack) {
           remoteVideoTrack.value = null;
         }
       } else if (event is ParticipantConnectedEvent) {
         debugPrint(
-            '[LIVEKIT] Participant connected: ${event.participant.identity}');
+            '[LIVEKIT] LIVEKIT remote participant connected: ${event.participant.identity}');
         remoteParticipant.value = event.participant;
       } else if (event is ParticipantDisconnectedEvent) {
         debugPrint(
-            '[LIVEKIT] Participant disconnected: ${event.participant.identity}');
+            '[LIVEKIT] LIVEKIT remote participant disconnected: ${event.participant.identity}');
         remoteParticipant.value = null;
         remoteVideoTrack.value = null;
       }
@@ -251,9 +263,16 @@ class LiveKitService {
   void _onTrackSubscribed(Track track, RemoteParticipant participant) {
     if (track is VideoTrack) {
       debugPrint(
-          '[LIVEKIT] Remote video track received from ${participant.identity}');
+          '[LIVEKIT] LIVEKIT remote video track subscribed from ${participant.identity}');
       remoteVideoTrack.value = track;
       remoteParticipant.value = participant;
+    } else if (track is AudioTrack) {
+      debugPrint(
+          '[LIVEKIT] LIVEKIT remote audio track subscribed from ${participant.identity}');
+      // Audio track is handled automatically by LiveKit
+    } else {
+      debugPrint(
+          '[LIVEKIT] LIVEKIT remote track subscribed (unknown type): ${track.runtimeType} from ${participant.identity}');
     }
   }
 

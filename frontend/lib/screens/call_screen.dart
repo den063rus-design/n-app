@@ -224,7 +224,13 @@ class _CallScreenState extends State<CallScreen> {
   /// Remote video через LiveKit VideoTrackRenderer
   Widget _buildRemoteVideo() {
     final remoteTrack = _liveKitService.remoteVideoTrack.value;
+    final connState = _liveKitService.connectionState.value;
+    final hasRemoteParticipant = _liveKitService.remoteParticipant.value != null;
+
+    _log('_buildRemoteVideo — remoteTrack=${remoteTrack != null}, connState=$connState, hasRemoteParticipant=$hasRemoteParticipant');
+
     if (remoteTrack != null) {
+      _log('_buildRemoteVideo — RENDERING remote video track');
       return VideoTrackRenderer(
         remoteTrack,
         fit: VideoViewFit.cover,
@@ -232,6 +238,21 @@ class _CallScreenState extends State<CallScreen> {
     }
 
     // Fallback — показываем имя собеседника, пока нет видео
+    String statusText;
+    if (connState == LiveKitConnectionState.connecting) {
+      statusText = 'Подключение...';
+    } else if (connState == LiveKitConnectionState.connected && !hasRemoteParticipant) {
+      statusText = 'Ожидание собеседника...';
+    } else if (connState == LiveKitConnectionState.connected && hasRemoteParticipant) {
+      statusText = 'Собеседник подключился, ожидание видео...';
+    } else if (connState == LiveKitConnectionState.error) {
+      statusText = 'Ошибка подключения';
+    } else {
+      statusText = 'Ожидание собеседника...';
+    }
+
+    _log('_buildRemoteVideo — FALLBACK: statusText="$statusText"');
+
     return Container(
       color: Colors.black87,
       child: Center(
@@ -246,9 +267,7 @@ class _CallScreenState extends State<CallScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              _liveKitService.connectionState.value == LiveKitConnectionState.connecting
-                  ? 'Подключение...'
-                  : 'Ожидание собеседника...',
+              statusText,
               style: const TextStyle(color: Colors.white54, fontSize: 14),
             ),
           ],

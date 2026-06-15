@@ -43,6 +43,20 @@ export class LiveKitController {
     @Body() dto: GetTokenDto,
     @CurrentUser() user: CurrentUserType,
   ) {
-    return this.liveKitService.createTokenForCall(dto.callId, user);
+    console.log(
+      `[LIVEKIT_CONTROLLER] LIVEKIT_TOKEN request userId=${user.id} callId=${dto.callId}`,
+    );
+    try {
+      const result = await this.liveKitService.createTokenForCall(dto.callId, user);
+      console.log(
+        `[LIVEKIT_CONTROLLER] LIVEKIT_TOKEN success userId=${user.id} callId=${dto.callId} roomName=${result.roomName}`,
+      );
+      return result;
+    } catch (error) {
+      console.error(
+        `[LIVEKIT_CONTROLLER] LIVEKIT_TOKEN denied userId=${user.id} callId=${dto.callId} reason=${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw error;
+    }
   }
 }

@@ -248,7 +248,7 @@ class CallService {
     });
 
     _socketService.onCallEvent('call:accepted', (data) async {
-      _log('📞 call:accepted — data: $data, state=$_state');
+      _log('📞 call:accepted received callId=${data['callId']}, state=$_state');
 
       await CallRingtoneService().stopAllCallSounds();
 
@@ -259,12 +259,15 @@ class CallService {
       // Переходим в IN_CALL и подключаемся к LiveKit
       _state = CallState.IN_CALL;
       _stateController.add(_state);
-      _log('🚀 Connecting to LiveKit as CALLER');
+      _log('📞 CALL_SERVICE caller connecting to LiveKit callId=$_currentCallId');
 
       // Подключаемся к LiveKit комнате
       if (_currentCallId != null) {
         await _liveKitService.connectToCall(_currentCallId!);
+        _log('📞 CALL_SERVICE LiveKit listeners attached (caller)');
         _setupLiveKitListeners();
+      } else {
+        _log('⚠️ CALL_SERVICE call:accepted but _currentCallId is null');
       }
     });
 
@@ -352,18 +355,25 @@ class CallService {
 
   /// Подписывается на изменения состояния LiveKit для синхронизации с CallService.
   void _setupLiveKitListeners() {
+    // Защита от дублирования: отписываемся от старых listener-ов перед подпиской
+    if (_liveKitRemoteVideoListener != null) {
+      _liveKitService.remoteVideoTrack.removeListener(_liveKitRemoteVideoListener!);
+    }
+    if (_liveKitStateListener != null) {
+      _liveKitService.connectionState.removeListener(_liveKitStateListener!);
+    }
+
     // Слушаем изменения remote video track для обновления стримов
     _liveKitRemoteVideoListener = () {
-      // При получении remote video обновляем состояние
-      if (_liveKitService.remoteVideoTrack.value != null) {
-        _log('✅ Remote video track received via LiveKit');
-      }
+      final hasRemoteVideo = _liveKitService.remoteVideoTrack.value != null;
+      _log('📹 LiveKit remote video track changed: ${hasRemoteVideo ? "PRESENT" : "null"}');
     };
     _liveKitService.remoteVideoTrack.addListener(_liveKitRemoteVideoListener!);
 
     // Слушаем состояние подключения
     _liveKitStateListener = () {
       final connState = _liveKitService.connectionState.value;
+      _log('🔌 LiveKit connection state changed: $connState (call state=$_state)');
       if (connState == LiveKitConnectionState.disconnected &&
           (_state == CallState.IN_CALL || _state == CallState.CALLING)) {
         _log('🔴 LiveKit disconnected during active call');
@@ -424,9 +434,10 @@ class CallService {
     // (не ждём 5 секунд как в старом flow)
     _state = CallState.IN_CALL;
     _stateController.add(_state);
-    _log('🚀 Connecting to LiveKit as CALLEE');
+    _log('📞 CALL_SERVICE callee connecting to LiveKit callId=$callId');
 
     await _liveKitService.connectToCall(callId!);
+    _log('📞 CALL_SERVICE LiveKit listeners attached (callee)');
     _setupLiveKitListeners();
   }
 

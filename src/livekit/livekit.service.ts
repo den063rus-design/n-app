@@ -64,6 +64,10 @@ export class LiveKitService {
     callId: number,
     user: CurrentUserType,
   ): Promise<LiveKitTokenResponse> {
+    this.logger.log(
+      `[LIVEKIT_SERVICE] createTokenForCall begin userId=${user.id} callId=${callId}`,
+    );
+
     // 1. Проверяем, что звонок существует и пользователь участвует
     const call = await this.callService.findCallForParticipant(
       callId,
@@ -71,24 +75,43 @@ export class LiveKitService {
     );
 
     if (!call) {
+      this.logger.warn(
+        `[LIVEKIT_SERVICE] createTokenForCall call not found userId=${user.id} callId=${callId}`,
+      );
       throw new NotFoundException('Звонок не найден');
     }
 
+    this.logger.log(
+      `[LIVEKIT_SERVICE] createTokenForCall call found callId=${call.id} status=${call.status} callerId=${call.callerId} calleeId=${call.calleeId}`,
+    );
+
     // 2. Проверяем, что пользователь — участник звонка
     if (call.callerId !== user.id && call.calleeId !== user.id) {
+      this.logger.warn(
+        `[LIVEKIT_SERVICE] createTokenForCall forbidden userId=${user.id} not participant of callId=${callId}`,
+      );
       throw new ForbiddenException('Вы не являетесь участником этого звонка');
     }
 
     // 3. Проверяем, что звонок не завершён
     if (call.status === CallStatus.ENDED) {
+      this.logger.warn(
+        `[LIVEKIT_SERVICE] createTokenForCall ended userId=${user.id} callId=${callId}`,
+      );
       throw new GoneException('Звонок уже завершён');
     }
 
     if (call.status === CallStatus.REJECTED) {
+      this.logger.warn(
+        `[LIVEKIT_SERVICE] createTokenForCall rejected userId=${user.id} callId=${callId}`,
+      );
       throw new GoneException('Звонок был отклонён');
     }
 
     if (call.status === CallStatus.MISSED) {
+      this.logger.warn(
+        `[LIVEKIT_SERVICE] createTokenForCall missed userId=${user.id} callId=${callId}`,
+      );
       throw new GoneException('Звонок был пропущен');
     }
 
@@ -97,6 +120,9 @@ export class LiveKitService {
       call.status !== CallStatus.PENDING &&
       call.status !== CallStatus.ACCEPTED
     ) {
+      this.logger.warn(
+        `[LIVEKIT_SERVICE] createTokenForCall invalid status userId=${user.id} callId=${callId} status=${call.status}`,
+      );
       throw new ForbiddenException(
         'Статус звонка не допускает подключение',
       );
@@ -104,6 +130,10 @@ export class LiveKitService {
 
     // 5. Создаём LiveKit AccessToken
     const roomName = this.buildRoomName(callId);
+    this.logger.log(
+      `[LIVEKIT_SERVICE] createTokenForCall roomName=${roomName} userId=${user.id} callId=${callId}`,
+    );
+
     const at = new AccessToken(this.apiKey, this.apiSecret, {
       identity: String(user.id),
       name: user.fio,
@@ -119,7 +149,7 @@ export class LiveKitService {
     const token = await at.toJwt();
 
     this.logger.log(
-      `Токен выдан: user=${user.id} (${user.fio}), callId=${callId}, room=${roomName}`,
+      `[LIVEKIT_SERVICE] LIVEKIT_TOKEN success userId=${user.id} callId=${callId} roomName=${roomName}`,
     );
 
     return {
