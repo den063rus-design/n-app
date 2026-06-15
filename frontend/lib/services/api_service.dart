@@ -272,9 +272,16 @@ class ApiService {
   /// Тело: { "callId": 123 }
   /// Ответ: { "wsUrl": "...", "roomName": "...", "token": "..." }
   Future<Map<String, dynamic>> getLiveKitToken(int callId) async {
-    final response = await post('/livekit/token', data: {
-      'callId': callId,
-    });
-    return response as Map<String, dynamic>;
+    debugPrint('[API] API getLiveKitToken request callId=$callId');
+    try {
+      final response = await post('/livekit/token', data: {
+        'callId': callId,
+      });
+      debugPrint('[API] API getLiveKitToken success status=200 data=$response');
+      return response as Map<String, dynamic>;
+    } catch (e) {
+      debugPrint('[API] API getLiveKitToken error status=error body=$e');
+      rethrow;
+    }
   }
 }

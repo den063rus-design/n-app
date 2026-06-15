@@ -87,6 +87,7 @@ class LiveKitService {
       debugPrint('[LIVEKIT] LIVEKIT connectToCall begin callId=$callId');
 
       // 1. Получаем токен
+      debugPrint('[LIVEKIT] LIVEKIT token request start callId=$callId');
       final tokenData = await _apiService.getLiveKitToken(callId);
       final token = tokenData['token'] as String;
       final wsUrl = tokenData['wsUrl'] as String;
@@ -114,10 +115,12 @@ class LiveKitService {
 
       // 5. Включаем микрофон и камеру
       if (_room!.localParticipant != null) {
-        debugPrint('[LIVEKIT] LIVEKIT local mic enabled');
+        debugPrint('[LIVEKIT] LIVEKIT local mic enable start');
         await _room!.localParticipant!.setMicrophoneEnabled(true);
-        debugPrint('[LIVEKIT] LIVEKIT local camera enabled');
+        debugPrint('[LIVEKIT] LIVEKIT local mic enable done');
+        debugPrint('[LIVEKIT] LIVEKIT local camera enable start');
         await _room!.localParticipant!.setCameraEnabled(true);
+        debugPrint('[LIVEKIT] LIVEKIT local camera enable done');
       } else {
         debugPrint('[LIVEKIT] ⚠️ LIVEKIT localParticipant is null after connect');
       }
