@@ -22,10 +22,6 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server!: Server;
 
-  /** Хранит ВСЕ активные socketId для каждого userId.
-   *  Позволяет одному пользователю иметь несколько одновременных соединений
-   *  (reconnect, несколько вкладок/устройств) без потери событий. */
-  private userSockets: Map<number, Set<string>> = new Map();
   private callTimeouts: Map<number, NodeJS.Timeout> = new Map();
 
   constructor(
@@ -45,16 +41,9 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const userId = payload.sub;
 
       if (userId) {
-        // Получаем или создаём Set для этого пользователя
-        let sockets = this.userSockets.get(userId);
-        if (!sockets) {
-          sockets = new Set<string>();
-          this.userSockets.set(userId, sockets);
-        }
-        sockets.add(client.id);
-
-        const socketCount = sockets.size;
-        console.log(`[CALL_GATEWAY] 🔌 user ${userId} connected, clientId=${client.id}, sockets=${socketCount}`);
+        const roomName = `user:${userId}`;
+        client.join(roomName);
+        console.log(`[CALL_GATEWAY] 🔌 user ${userId} joined room ${roomName}, clientId=${client.id}`);
       }
     } catch (error) {
       console.log(`[CALL_GATEWAY] 🔌 invalid token: ${error instanceof Error ? error.message : error}`);
@@ -62,58 +51,57 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   async handleDisconnect(client: Socket) {
-    // Ищем userId по client.id
-    for (const [userId, sockets] of this.userSockets.entries()) {
-      if (sockets.has(client.id)) {
-        sockets.delete(client.id);
-        const socketsLeft = sockets.size;
-        console.log(`[CALL_GATEWAY] 🔌 user ${userId} disconnected socket ${client.id}, socketsLeft=${socketsLeft}`);
+    // Определяем userId по токену из handshake (если ещё доступен)
+    // или просто логируем disconnect
+    try {
+      const token = client.handshake.auth?.token as string | undefined;
+      if (token) {
+        const payload = this.jwtService.verify<{ sub: number }>(token);
+        const userId = payload.sub;
+        console.log(`[CALL_GATEWAY] 🔌 user ${userId} disconnected, clientId=${client.id}`);
 
-        // Если у пользователя больше нет активных сокетов — удаляем запись
+        // Проверяем, есть ли у пользователя активный звонок
+        // и не осталось ли других сокетов в комнате
+        const roomName = `user:${userId}`;
+        const room = this.server.sockets.adapter.rooms.get(roomName);
+        const socketsLeft = room ? room.size : 0;
+
         if (socketsLeft === 0) {
-          this.userSockets.delete(userId);
-        }
+          console.log(`[CALL_GATEWAY] 🔌 user ${userId} has no more sockets — checking active call`);
 
-        // Если у пользователя ещё остались сокеты — не завершаем звонок
-        if (socketsLeft > 0) {
-          break;
-        }
-
-        try {
-          const activeCall = await this.callService.findActiveCallByUserId(userId);
-          if (activeCall) {
-            const { call, otherUserId } = activeCall;
-            this.clearCallTimeout(call.id);
-            await this.callService.endCall(call.id);
-            this.sendToBoth(userId, otherUserId, 'call:ended', {
-              callId: call.id,
-              reason: 'peer_disconnected',
-            });
+          try {
+            const activeCall = await this.callService.findActiveCallByUserId(userId);
+            if (activeCall) {
+              const { call, otherUserId } = activeCall;
+              this.clearCallTimeout(call.id);
+              await this.callService.endCall(call.id);
+              this.sendToBoth(userId, otherUserId, 'call:ended', {
+                callId: call.id,
+                reason: 'peer_disconnected',
+              });
+            }
+          } catch (error) {
+            console.error(`[CALL_GATEWAY] 🔌 disconnect error for user ${userId}:`, error);
           }
-        } catch (error) {
-          console.error(`[CALL_GATEWAY] 🔌 disconnect error for user ${userId}:`, error);
+        } else {
+          console.log(`[CALL_GATEWAY] 🔌 user ${userId} still has ${socketsLeft} socket(s) in room — not ending call`);
         }
-
-        break;
+      } else {
+        console.log(`[CALL_GATEWAY] 🔌 anonymous client disconnected, clientId=${client.id}`);
       }
+    } catch (error) {
+      console.log(`[CALL_GATEWAY] 🔌 disconnect (token invalid or expired), clientId=${client.id}`);
     }
   }
 
   // ========== Вспомогательные методы ==========
 
-  /** Отправляет событие во ВСЕ активные socket'ы пользователя.
-   *  Если у пользователя несколько соединений — событие дойдёт до каждого. */
+  /** Отправляет событие в комнату пользователя (user:<userId>).
+   *  Socket.IO сам доставит событие во все активные socket'ы пользователя. */
   private sendToUser(userId: number, event: string, data: unknown) {
-    const sockets = this.userSockets.get(userId);
-    if (!sockets || sockets.size === 0) {
-      console.log(`[CALL_GATEWAY] sendToUser user=${userId} event=${event} sockets=0 — user not connected`);
-      return;
-    }
-
-    console.log(`[CALL_GATEWAY] sendToUser user=${userId} event=${event} sockets=${sockets.size}`);
-    for (const socketId of sockets) {
-      this.server.to(socketId).emit(event, data);
-    }
+    const roomName = `user:${userId}`;
+    this.logger.log(`[CALL_GATEWAY] sendToUser room=${roomName} event=${event}`);
+    this.server.to(roomName).emit(event, data);
   }
 
   private sendToBoth(callerId: number, calleeId: number, event: string, data: unknown) {
