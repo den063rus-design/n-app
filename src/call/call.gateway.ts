@@ -43,10 +43,15 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (userId) {
         const roomName = `user:${userId}`;
         client.join(roomName);
-        console.log(`[CALL_GATEWAY] 🔌 user ${userId} joined room ${roomName}, clientId=${client.id}`);
+        const roomSize = this.server.sockets.adapter.rooms.get(roomName)?.size ?? 0;
+        this.logger.log(
+          `[CALL_GATEWAY] CONNECT user=${userId} clientId=${client.id} room=${roomName} roomSize=${roomSize} transport=${client.conn.transport.name}`,
+        );
       }
     } catch (error) {
-      console.log(`[CALL_GATEWAY] 🔌 invalid token: ${error instanceof Error ? error.message : error}`);
+      this.logger.error(
+        `[CALL_GATEWAY] CONNECT invalid token clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -58,7 +63,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (token) {
         const payload = this.jwtService.verify<{ sub: number }>(token);
         const userId = payload.sub;
-        console.log(`[CALL_GATEWAY] 🔌 user ${userId} disconnected, clientId=${client.id}`);
+        this.logger.warn(`[CALL_GATEWAY] DISCONNECT user=${userId} clientId=${client.id}`);
 
         // Проверяем, есть ли у пользователя активный звонок
         // и не осталось ли других сокетов в комнате
@@ -81,16 +86,22 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
               });
             }
           } catch (error) {
-            console.error(`[CALL_GATEWAY] 🔌 disconnect error for user ${userId}:`, error);
+            this.logger.error(
+              `[CALL_GATEWAY] DISCONNECT error user=${userId} ${error instanceof Error ? error.message : String(error)}`,
+            );
           }
         } else {
-          console.log(`[CALL_GATEWAY] 🔌 user ${userId} still has ${socketsLeft} socket(s) in room — not ending call`);
+          this.logger.log(
+            `[CALL_GATEWAY] DISCONNECT user=${userId} still has ${socketsLeft} socket(s) -> keeping call alive`,
+          );
         }
       } else {
-        console.log(`[CALL_GATEWAY] 🔌 anonymous client disconnected, clientId=${client.id}`);
+        this.logger.warn(`[CALL_GATEWAY] DISCONNECT anonymous clientId=${client.id}`);
       }
     } catch (error) {
-      console.log(`[CALL_GATEWAY] 🔌 disconnect (token invalid or expired), clientId=${client.id}`);
+      this.logger.warn(
+        `[CALL_GATEWAY] DISCONNECT token invalid/expired clientId=${client.id}`,
+      );
     }
   }
 
@@ -100,7 +111,10 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
    *  Socket.IO сам доставит событие во все активные socket'ы пользователя. */
   private sendToUser(userId: number, event: string, data: unknown) {
     const roomName = `user:${userId}`;
-    this.logger.log(`[CALL_GATEWAY] sendToUser room=${roomName} event=${event}`);
+    const roomSize = this.server.sockets.adapter.rooms.get(roomName)?.size ?? 0;
+    this.logger.log(
+      `[CALL_GATEWAY] SEND room=${roomName} user=${userId} event=${event} sockets=${roomSize} payload=${JSON.stringify(data)}`,
+    );
     this.server.to(roomName).emit(event, data);
   }
 
@@ -113,11 +127,16 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @SubscribeMessage('call:start')
   async handleCallStart(client: Socket, payload: { calleeId: number }) {
-    console.log(`[CALL_GATEWAY] 📞 call:start — calleeId=${payload.calleeId}`);
+    this.logger.log(
+      `[CALL_GATEWAY] CALL_START clientId=${client.id} calleeId=${payload.calleeId}`,
+    );
     try {
       const token = client.handshake.auth?.token as string;
       const callerPayload = this.jwtService.verify<{ sub: number }>(token);
       const callerId = callerPayload.sub;
+      this.logger.log(
+        `[CALL_GATEWAY] CALL_START resolved callerId=${callerId} -> calleeId=${payload.calleeId}`,
+      );
 
       const existingCallerCall = await this.callService.findActiveCallByUserId(callerId);
       if (existingCallerCall) {
@@ -170,14 +189,18 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       return { success: true, callId: call.id };
     } catch (error) {
-      console.error('[CALL_GATEWAY] ❌ call:start error:', error);
+      this.logger.error(
+        `[CALL_GATEWAY] CALL_START error clientId=${client.id} ${error instanceof Error ? error.message : String(error)}`,
+      );
       return { success: false, error: 'Не удалось инициировать звонок' };
     }
   }
 
   @SubscribeMessage('call:accept')
   async handleCallAccept(client: Socket, payload: { callId: number }) {
-    console.log(`[CALL_GATEWAY] ✅ call:accept — callId=${payload.callId}`);
+    this.logger.log(
+      `[CALL_GATEWAY] CALL_ACCEPT clientId=${client.id} callId=${payload.callId}`,
+    );
     try {
       const token = client.handshake.auth?.token as string;
       const acceptorPayload = this.jwtService.verify<{ sub: number }>(token);
@@ -203,6 +226,9 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         new Date(),
       );
 
+      this.logger.log(
+        `[CALL_GATEWAY] CALL_ACCEPT callId=${call.id} notifying callerId=${call.callerId}`,
+      );
       this.sendToUser(call.callerId, 'call:accepted', {
         callId: call.id,
         calleeId: call.calleeId,
