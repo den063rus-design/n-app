@@ -108,6 +108,45 @@ export class CallService {
   }
 
   /**
+   * Находит звонок по ID и проверяет, что пользователь является участником.
+   * Возвращает полный объект звонка с включёнными данными участников.
+   * Если звонок не найден или пользователь не участник — возвращает null.
+   */
+  async findCallForParticipant(
+    callId: number,
+    userId: number,
+  ): Promise<{
+    id: number;
+    callerId: number;
+    calleeId: number;
+    status: string;
+    startedAt: Date | null;
+    endedAt: Date | null;
+    createdAt: Date;
+    caller: { id: number; fio: string };
+    callee: { id: number; fio: string };
+  } | null> {
+    const call = await this.prisma.call.findUnique({
+      where: { id: callId },
+      include: {
+        caller: { select: { id: true, fio: true } },
+        callee: { select: { id: true, fio: true } },
+      },
+    });
+
+    if (!call) {
+      return null;
+    }
+
+    // Проверяем, что пользователь — caller или callee
+    if (call.callerId !== userId && call.calleeId !== userId) {
+      return null;
+    }
+
+    return call;
+  }
+
+  /**
    * Завершает звонок: устанавливает статус ENDED и endedAt.
    * Защита от дублирования: если звонок уже ENDED — пропускаем update.
    */

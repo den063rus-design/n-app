@@ -7,6 +7,7 @@ import { FilesModule } from './files/files.module';
 import { CallModule } from './call/call.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PushModule } from './push/push.module';
+import { LiveKitModule } from './livekit/livekit.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { PushModule } from './push/push.module';
     CallModule,
     NotificationsModule,
     PushModule,
+    LiveKitModule,
   ],
   controllers: [],
   providers: [],
