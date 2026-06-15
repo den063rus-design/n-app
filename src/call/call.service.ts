@@ -4,6 +4,11 @@ import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class CallService {
+  /** Максимальный возраст PENDING звонка в миллисекундах.
+   *  Если PENDING звонок старше этого значения — он считается stale
+   *  и автоматически завершается при новой попытке звонка. */
+  static readonly STALE_CALL_TIMEOUT_MS = 45_000;
+
   constructor(private readonly prisma: PrismaService) {}
 
   async createCall(callerId: number, calleeId: number) {
@@ -75,25 +80,35 @@ export class CallService {
   }
 
   /**
-   * Находит активный (PENDING или ACCEPTED) звонок,
-   * в котором участвует пользователь (как caller или callee)
+   * Находит ВСЕ активные (PENDING или ACCEPTED) звонки пользователя,
+   * отсортированные от самого свежего к самому старому.
+   * Возвращает массив, чтобы caller мог обработать несколько залипших звонков.
    */
-  async findActiveCallByUserId(userId: number): Promise<{ call: any; otherUserId: number } | null> {
-    const call = await this.prisma.call.findFirst({
+  async findActiveCallsByUserId(userId: number): Promise<any[]> {
+    return this.prisma.call.findMany({
       where: {
         OR: [{ callerId: userId }, { calleeId: userId }],
         status: { in: [CallStatus.PENDING, CallStatus.ACCEPTED] },
       },
+      orderBy: { createdAt: 'desc' },
       include: {
         caller: { select: { id: true, fio: true } },
         callee: { select: { id: true, fio: true } },
       },
     });
+  }
 
-    if (!call) {
+  /**
+   * Находит самый свежий активный (PENDING или ACCEPTED) звонок пользователя.
+   * Используется в handleDisconnect для проверки, есть ли активный звонок.
+   */
+  async findActiveCallByUserId(userId: number): Promise<{ call: any; otherUserId: number } | null> {
+    const calls = await this.findActiveCallsByUserId(userId);
+    if (calls.length === 0) {
       return null;
     }
 
+    const call = calls[0]; // Самый свежий (orderBy: createdAt desc)
     const otherUserId = this.getOtherParticipant(call, userId);
     return { call, otherUserId };
   }

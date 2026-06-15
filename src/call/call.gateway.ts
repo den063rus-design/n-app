@@ -98,6 +98,72 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  /** Отправляет call:incoming и создаёт push-уведомление для callee.
+   *  Вынесено в отдельный метод, чтобы не дублировать код
+   *  для нового звонка и для reused pending звонка. */
+  private async notifyIncomingCall(call: any) {
+    const calleeId = call.calleeId;
+
+    this.logger.log(
+      `[CALL_GATEWAY] notifyIncomingCall callId=${call.id} calleeId=${calleeId} callerName=${call.caller.fio}`,
+    );
+
+    this.sendToUser(calleeId, 'call:incoming', {
+      callId: call.id,
+      callerId: call.callerId,
+      callerName: call.caller.fio,
+    });
+
+    await this.notificationsService.createNotification({
+      userId: calleeId,
+      type: 'CALL',
+      title: 'Входящий звонок',
+      body: `Вам звонит ${call.caller.fio}`,
+      data: {
+        callId: call.id,
+        callerId: call.callerId,
+        callerName: call.caller.fio,
+      },
+    });
+  }
+
+  /** Устанавливает таймаут 30 секунд на PENDING звонок.
+   *  Если за это время звонок не принят — завершает его. */
+  private setupCallTimeout(callId: number) {
+    const timeout = setTimeout(async () => {
+      try {
+        const currentCall = await this.callService.findCallById(callId);
+        if (currentCall && currentCall.status === CallStatus.PENDING) {
+          this.logger.warn(`[CALL_GATEWAY] NO_ANSWER timeout callId=${callId}`);
+          await this.callService.endCall(callId);
+          this.sendToBoth(currentCall.callerId, currentCall.calleeId, 'call:ended', {
+            callId,
+            reason: 'no_answer',
+          });
+        }
+      } catch (error) {
+        this.logger.error(
+          `[CALL_GATEWAY] NO_ANSWER failed callId=${callId} error=${error instanceof Error ? error.message : String(error)}`,
+        );
+      } finally {
+        this.callTimeouts.delete(callId);
+      }
+    }, 30000);
+
+    this.callTimeouts.set(callId, timeout);
+  }
+
+  /** Проверяет, является ли PENDING звонок stale (старше STALE_CALL_TIMEOUT_MS).
+   *  Используется для автоматической очистки залипших звонков после перезапуска backend. */
+  private isStalePendingCall(call: any): boolean {
+    if (call.status !== CallStatus.PENDING) {
+      return false;
+    }
+
+    const age = Date.now() - new Date(call.createdAt).getTime();
+    return age > CallService.STALE_CALL_TIMEOUT_MS;
+  }
+
   @SubscribeMessage('call:start')
   async handleCallStart(client: Socket, payload: { calleeId: number }) {
     this.logger.log(
@@ -111,71 +177,94 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         `[CALL_GATEWAY] CALL_START resolved callerId=${callerId} calleeId=${payload.calleeId}`,
       );
 
-      const existingCallerCall = await this.callService.findActiveCallByUserId(callerId);
-      if (existingCallerCall) {
+      // ========== Проверка активных звонков caller ==========
+      const callerCalls = await this.callService.findActiveCallsByUserId(callerId);
+
+      // Фильтруем: ищем реальный ACCEPTED (не stale PENDING)
+      const callerAcceptedCall = callerCalls.find(
+        (c) => c.status === CallStatus.ACCEPTED,
+      );
+      if (callerAcceptedCall) {
         this.logger.warn(
-          `[CALL_GATEWAY] CALL_START blocked callerId=${callerId} reason=caller_busy callId=${existingCallerCall.call.id}`,
+          `[CALL_GATEWAY] CALL_START blocked active accepted callId=${callerAcceptedCall.id} callerId=${callerId}`,
         );
         return { success: false, error: 'У вас уже есть активный звонок' };
       }
 
-      const existingCalleeCall = await this.callService.findActiveCallByUserId(payload.calleeId);
-      if (existingCalleeCall) {
+      // Stale PENDING — автоматически завершаем
+      for (const c of callerCalls) {
+        if (this.isStalePendingCall(c)) {
+          this.logger.warn(
+            `[CALL_GATEWAY] CALL_START stale pending cleaned callId=${c.id} callerId=${callerId} createdAt=${c.createdAt}`,
+          );
+          await this.callService.endCall(c.id);
+        }
+      }
+
+      // ========== Проверка активных звонков callee ==========
+      const calleeCalls = await this.callService.findActiveCallsByUserId(payload.calleeId);
+
+      // Фильтруем: ищем реальный ACCEPTED
+      const calleeAcceptedCall = calleeCalls.find(
+        (c) => c.status === CallStatus.ACCEPTED,
+      );
+      if (calleeAcceptedCall) {
         this.logger.warn(
-          `[CALL_GATEWAY] CALL_START blocked callerId=${callerId} calleeId=${payload.calleeId} reason=callee_busy callId=${existingCalleeCall.call.id}`,
+          `[CALL_GATEWAY] CALL_START blocked callee accepted callId=${calleeAcceptedCall.id} calleeId=${payload.calleeId}`,
         );
         return { success: false, error: 'Пользователь уже занят другим звонком' };
       }
 
+      // Stale PENDING у callee — автоматически завершаем
+      for (const c of calleeCalls) {
+        if (this.isStalePendingCall(c)) {
+          this.logger.warn(
+            `[CALL_GATEWAY] CALL_START stale pending cleaned callId=${c.id} calleeId=${payload.calleeId} createdAt=${c.createdAt}`,
+          );
+          await this.callService.endCall(c.id);
+        }
+      }
+
+      // ========== Перечитываем данные после очистки stale ==========
+      // После endCall() stale-звонков нужно получить актуальное состояние,
+      // чтобы existingPendingBetween гарантированно был не-stale.
+      const freshCallerCalls = await this.callService.findActiveCallsByUserId(callerId);
+
+      // ========== Сценарий B: reuse существующего PENDING между теми же пользователями ==========
+      // Ищем PENDING звонок, где caller=callerId, callee=calleeId
+      const existingPendingBetween = freshCallerCalls.find(
+        (c) =>
+          c.status === CallStatus.PENDING &&
+          c.callerId === callerId &&
+          c.calleeId === payload.calleeId,
+      );
+
+      if (existingPendingBetween) {
+        this.logger.log(
+          `[CALL_GATEWAY] CALL_START reused pending callId=${existingPendingBetween.id} callerId=${callerId} calleeId=${payload.calleeId}`,
+        );
+
+        // Очищаем старый таймаут, если он ещё висит (in-memory timeout мог сохраниться)
+        this.clearCallTimeout(existingPendingBetween.id);
+
+        // Переиспользуем существующий звонок — повторно отправляем call:incoming
+        await this.notifyIncomingCall(existingPendingBetween);
+
+        // Переустанавливаем таймаут (старый мог быть потерян при перезапуске backend)
+        this.setupCallTimeout(existingPendingBetween.id);
+
+        return { success: true, callId: existingPendingBetween.id, reused: true };
+      }
+
+      // ========== Сценарий: новый звонок ==========
       const call = await this.callService.createCall(callerId, payload.calleeId);
-      const calleeRoom = this.getUserRoomName(payload.calleeId);
 
       this.logger.log(
         `[CALL_GATEWAY] CALL_START created callId=${call.id} callerId=${callerId} calleeId=${payload.calleeId}`,
       );
-      this.logger.log(
-        `[CALL_GATEWAY] CALL_START before_emit event=call:incoming room=${calleeRoom} sockets=${this.getRoomSize(calleeRoom)}`,
-      );
 
-      this.sendToUser(payload.calleeId, 'call:incoming', {
-        callId: call.id,
-        callerId: call.callerId,
-        callerName: call.caller.fio,
-      });
-
-      await this.notificationsService.createNotification({
-        userId: payload.calleeId,
-        type: 'CALL',
-        title: 'Входящий звонок',
-        body: `Вам звонит ${call.caller.fio}`,
-        data: {
-          callId: call.id,
-          callerId: call.callerId,
-          callerName: call.caller.fio,
-        },
-      });
-
-      const timeout = setTimeout(async () => {
-        try {
-          const currentCall = await this.callService.findCallById(call.id);
-          if (currentCall && currentCall.status === CallStatus.PENDING) {
-            this.logger.warn(`[CALL_GATEWAY] NO_ANSWER timeout callId=${call.id}`);
-            await this.callService.endCall(call.id);
-            this.sendToBoth(call.callerId, call.calleeId, 'call:ended', {
-              callId: call.id,
-              reason: 'no_answer',
-            });
-          }
-        } catch (error) {
-          this.logger.error(
-            `[CALL_GATEWAY] NO_ANSWER failed callId=${call.id} error=${error instanceof Error ? error.message : String(error)}`,
-          );
-        } finally {
-          this.callTimeouts.delete(call.id);
-        }
-      }, 30000);
-
-      this.callTimeouts.set(call.id, timeout);
+      await this.notifyIncomingCall(call);
+      this.setupCallTimeout(call.id);
 
       return { success: true, callId: call.id };
     } catch (error) {
