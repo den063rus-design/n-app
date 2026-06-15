@@ -21,6 +21,10 @@ export class NotificationsService {
     body?: string;
     data?: any;
   }) {
+    this.logger.log(
+      `[NOTIFICATIONS] CREATE_NOTIFICATION type=${data.type} userId=${data.userId} title="${data.title}" body="${data.body}"`,
+    );
+
     const notification = await this.prisma.notification.create({
       data: {
         userId: data.userId,
@@ -31,16 +35,20 @@ export class NotificationsService {
       },
     });
 
-    // Realtime-РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘Р Вµ РЎвЂЎР ВµРЎР‚Р ВµР В· WebSocket
+    this.logger.log(
+      `[NOTIFICATIONS] CREATE_NOTIFICATION done id=${notification.id} userId=${data.userId} type=${data.type}`,
+    );
+
+    // Realtime-уведомление через WebSocket
     this.notificationsGateway.sendNotification(data.userId, notification);
 
-    // Р С›Р В±Р Р…Р С•Р Р†Р В»РЎРЏР ВµР С unread count Р Т‘Р В»РЎРЏ Р С—Р С•Р В»РЎС“РЎвЂЎР В°РЎвЂљР ВµР В»РЎРЏ
+    // Обновляем unread count для пользователя
     const unreadCount = await this.prisma.notification.count({
       where: { userId: data.userId, isRead: false },
     });
     this.notificationsGateway.sendUnreadCount(data.userId, unreadCount);
 
-    // FCM push-РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘Р Вµ
+    // FCM push-уведомление
     await this.sendFcmPush(data.userId, data);
 
     return notification;
@@ -51,13 +59,20 @@ export class NotificationsService {
     data: { type: 'MESSAGE' | 'CALL'; title: string; body?: string; data?: any },
   ) {
     try {
+      this.logger.log(
+        `[NOTIFICATIONS] SEND_FCM begin userId=${userId} type=${data.type}`,
+      );
+
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
         select: { fcmToken: true },
       });
 
       if (!user?.fcmToken) {
-        return; // Р СњР ВµРЎвЂљ FCM token РІР‚вЂќ Р Р…Р С‘РЎвЂЎР ВµР С–Р С• Р Р…Р Вµ Р С•РЎвЂљР С—РЎР‚Р В°Р Р†Р В»РЎРЏР ВµР С
+        this.logger.warn(
+          `[NOTIFICATIONS] SEND_FCM missing token userId=${userId} — skipping FCM push`,
+        );
+        return;
       }
 
       const pushData: Record<string, string> = {
@@ -71,8 +86,8 @@ export class NotificationsService {
         const callerName = data.data?.callerName;
 
         if (!callId || !callerId || !callerName) {
-          this.logger.error(
-            `[sendFcmPush] CALL notification missing required fields: callId=${callId}, callerId=${callerId}, callerName=${callerName}. Skipping FCM push.`,
+          this.logger.warn(
+            `[NOTIFICATIONS] SEND_FCM skipped because missing required call fields userId=${userId} callId=${callId} callerId=${callerId} callerName=${callerName}`,
           );
           return;
         }
@@ -88,15 +103,24 @@ export class NotificationsService {
         if (data.data.senderName) pushData['senderName'] = String(data.data.senderName);
       }
 
+      this.logger.log(
+        `[NOTIFICATIONS] SEND_FCM payload userId=${userId} type=${pushData['type']} callId=${pushData['callId']} callerId=${pushData['callerId']} callerName=${pushData['callerName']}`,
+      );
+
       await this.pushService.sendPush({
         token: user.fcmToken,
         title: data.title,
         body: data.body ?? '',
         data: pushData,
       });
+
+      this.logger.log(
+        `[NOTIFICATIONS] SEND_FCM success userId=${userId}`,
+      );
     } catch (error) {
-      // Р СњР Вµ Р Р†Р В°Р В»Р С‘Р С Р С•РЎРѓР Р…Р С•Р Р†Р Р…Р С•Р в„– flow
-      console.error('FCM push error:', (error as Error).message);
+      this.logger.error(
+        `[NOTIFICATIONS] SEND_FCM failed userId=${userId} error=${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -127,7 +151,6 @@ export class NotificationsService {
   }
 
   async markAsRead(notificationId: number) {
-    // Р РЋР Р…Р В°РЎвЂЎР В°Р В»Р В° Р С—Р С•Р В»РЎС“РЎвЂЎР В°Р ВµР С РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘Р Вµ, РЎвЂЎРЎвЂљР С•Р В±РЎвЂ№ РЎС“Р В·Р Р…Р В°РЎвЂљРЎРЉ userId
     const notification = await this.prisma.notification.findUnique({
       where: { id: notificationId },
       select: { userId: true },
@@ -142,7 +165,7 @@ export class NotificationsService {
       data: { isRead: true },
     });
 
-    // Realtime-Р С•Р В±Р Р…Р С•Р Р†Р В»Р ВµР Р…Р С‘Р Вµ unread count Р С—Р С•РЎРѓР В»Р Вµ Р С—РЎР‚Р С•РЎвЂЎРЎвЂљР ВµР Р…Р С‘РЎРЏ
+    // Realtime-обновление unread count после прочтения
     const unreadCount = await this.prisma.notification.count({
       where: { userId: notification.userId, isRead: false },
     });

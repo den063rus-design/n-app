@@ -10,7 +10,7 @@ export class PushService implements OnModuleInit {
     const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
     if (!serviceAccountPath) {
       this.logger.warn(
-        'FIREBASE_SERVICE_ACCOUNT_PATH Р Р…Р Вµ Р В·Р В°Р Т‘Р В°Р Р…. FCM push-РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘РЎРЏ Р С•РЎвЂљР С”Р В»РЎР‹РЎвЂЎР ВµР Р…РЎвЂ№.',
+        'FIREBASE_SERVICE_ACCOUNT_PATH is not set. FCM push notifications will be disabled.',
       );
       return;
     }
@@ -21,17 +21,17 @@ export class PushService implements OnModuleInit {
       initializeApp({
         credential: cert(serviceAccount),
       });
-      this.logger.log('Firebase Admin Р С‘Р Р…Р С‘РЎвЂ Р С‘Р В°Р В»Р С‘Р В·Р С‘РЎР‚Р С•Р Р†Р В°Р Р… РЎС“РЎРѓР С—Р ВµРЎв‚¬Р Р…Р С•');
+      this.logger.log('Firebase Admin initialized successfully');
     } catch (error) {
       this.logger.error(
-        `Р С›РЎв‚¬Р С‘Р В±Р С”Р В° Р С‘Р Р…Р С‘РЎвЂ Р С‘Р В°Р В»Р С‘Р В·Р В°РЎвЂ Р С‘Р С‘ Firebase Admin: ${(error as Error).message}`,
+        `Error initializing Firebase Admin: ${(error as Error).message}`,
       );
     }
   }
 
   /**
-   * Р С›РЎвЂљР С—РЎР‚Р В°Р Р†Р В»РЎРЏР ВµРЎвЂљ push-РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘Р Вµ РЎвЂЎР ВµРЎР‚Р ВµР В· FCM.
-   * Р СњР Вµ Р В±РЎР‚Р С•РЎРѓР В°Р ВµРЎвЂљ Р С‘РЎРѓР С”Р В»РЎР‹РЎвЂЎР ВµР Р…Р С‘Р в„– РІР‚вЂќ РЎвЂљР С•Р В»РЎРЉР С”Р С• Р В»Р С•Р С–Р С‘РЎР‚РЎС“Р ВµРЎвЂљ Р С•РЎв‚¬Р С‘Р В±Р С”Р С‘.
+   * Sends a push notification via FCM.
+   * Does not throw — errors are logged only.
    */
   async sendPush(payload: {
     token: string;
@@ -40,12 +40,12 @@ export class PushService implements OnModuleInit {
     data?: Record<string, string>;
   }): Promise<void> {
     if (!getApps().length) {
-      this.logger.warn('Firebase Admin Р Р…Р Вµ Р С‘Р Р…Р С‘РЎвЂ Р С‘Р В°Р В»Р С‘Р В·Р С‘РЎР‚Р С•Р Р†Р В°Р Р…. Push Р Р…Р Вµ Р С•РЎвЂљР С—РЎР‚Р В°Р Р†Р В»Р ВµР Р….');
+      this.logger.warn('Firebase Admin is not initialized. Push not sent.');
       return;
     }
 
     try {
-      // Определяем тип уведомления для выбора Android-канала
+      // Determine notification type for Android channel selection
       const isCall = payload.data?.type === 'call';
 
       const message: Message = {
@@ -62,20 +62,24 @@ export class PushService implements OnModuleInit {
             priority: isCall ? 'max' : 'high',
             defaultSound: true,
             defaultVibrateTimings: true,
-            ...(isCall ? {
-              notificationPriority: 'max',
-              visibility: 'public',
-              ticker: payload.title,
-            } : {}),
+            ...(isCall
+              ? {
+                  notificationPriority: 'max',
+                  visibility: 'public',
+                  ticker: payload.title,
+                }
+              : {}),
           },
         },
       };
 
       const response = await getMessaging().send(message);
-      this.logger.log(`FCM push Р С•РЎвЂљР С—РЎР‚Р В°Р Р†Р В»Р ВµР Р… РЎС“РЎРѓР С—Р ВµРЎв‚¬Р Р…Р С•: ${response}`);
+      this.logger.log(
+        `[PUSH_SERVICE] FCM sent successfully: ${response} token=${payload.token?.substring(0, 20)}... type=${payload.data?.type}`,
+      );
     } catch (error) {
       this.logger.error(
-        `Р С›РЎв‚¬Р С‘Р В±Р С”Р В° Р С•РЎвЂљР С—РЎР‚Р В°Р Р†Р С”Р С‘ FCM push: ${(error as Error).message}`,
+        `[PUSH_SERVICE] FCM send failed: ${(error as Error).message} token=${payload.token?.substring(0, 20)}...`,
       );
     }
   }

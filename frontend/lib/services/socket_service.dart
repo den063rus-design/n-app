@@ -13,10 +13,6 @@ class SocketService {
   bool _isConnecting = false;
   String? _currentToken;
 
-  // Флаг: был ли socket когда-либо подключён (для защиты от race condition
-  // при вызове setOnConnectCallback после connect)
-  bool _wasConnectedBefore = false;
-
   // CallLogger для записи call-логов в файл на телефоне
   final CallLogger _callLogger = CallLogger();
 
@@ -37,18 +33,18 @@ class SocketService {
   IO.Socket? get socket => _socket;
   bool get isConnected => _socket?.connected ?? false;
 
-  /// Устанавливает callback, который будет вызван при подключении socket
+  /// Устанавливает callback, который будет вызван при подключении socket.
+  /// Callback вызывается ТОЛЬКО из onConnect (socket_service.dart:110),
+  /// чтобы избежать дублирования регистрации listener-ов.
   void setOnConnectCallback(VoidCallback callback) {
     _log('[SOCKET_SERVICE] setOnConnectCallback — callback set');
     _onConnectCallback = callback;
-    // Если socket уже подключён — вызываем сразу
+    // Если socket уже подключён — вызываем сразу.
+    // Это единственный случай, когда callback вызывается вне onConnect:
+    // при инициализации CallService.init(), когда socket уже был подключён
+    // до установки callback.
     if (_socket != null && _socket!.connected) {
       _log('[SOCKET_SERVICE] setOnConnectCallback — socket already connected, invoking callback immediately');
-      callback();
-    } else if (_wasConnectedBefore) {
-      // Если connect уже был, но socket сейчас не в connected (например, reconnect),
-      // всё равно вызываем callback — listener-ы должны быть перерегистрированы
-      _log('[SOCKET_SERVICE] setOnConnectCallback — was connected before, calling callback immediately');
       callback();
     }
   }
@@ -98,7 +94,6 @@ class SocketService {
         }
 
         _isConnecting = false;
-        _wasConnectedBefore = true;
         _log('[SOCKET_SERVICE] ✅✅✅ Socket CONNECTED: ${newSocket.id}');
         _log('[SOCKET_SERVICE] ✅ Socket connected — transport: websocket');
         startHeartbeat();

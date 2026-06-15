@@ -17,7 +17,7 @@ import '../services/call_service.dart';
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
   debugPrint(
-    '[FCM_BG] push received — messageId=${message.messageId}, type=${message.data['type']}',
+    '[FCM_BG] push received — messageId=${message.messageId}, type=${message.data['type']}, callId=${message.data['callId']}, callerId=${message.data['callerId']}, callerName=${message.data['callerName']}',
   );
 
   final FlutterLocalNotificationsPlugin localNotifications =
@@ -43,6 +43,10 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   final payloadJson = jsonEncode(payloadData);
 
   if (message.data['type'] == 'call') {
+    debugPrint(
+      '[FCM_BG] Showing call notification — callerName=${message.data['callerName']}, callId=${message.data['callId']}',
+    );
+
     const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
       'incoming_call_channel',
@@ -69,6 +73,10 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       payload: payloadJson,
     );
   } else {
+    debugPrint(
+      '[FCM_BG] Showing default notification — title=${message.notification?.title ?? message.data['title']}',
+    );
+
     const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
       'default_notification_channel',
@@ -246,7 +254,7 @@ class PushService {
     final lastCallEndTimestamp = callService.lastCallEndTimestamp;
 
     if (state != CallState.IDLE && state != CallState.ENDED) {
-      debugPrint('[PUSH] Ignoring call push — state=$state (active call in progress)');
+      debugPrint('[PUSH] PUSH ignored because state=$state (active call in progress)');
       return true;
     }
 
@@ -255,7 +263,7 @@ class PushService {
           DateTime.now().millisecondsSinceEpoch - lastCallEndTimestamp;
       if (elapsed < 5000) {
         debugPrint(
-          '[PUSH] Ignoring call push — stale (call ended ${elapsed}ms ago)',
+          '[PUSH] PUSH ignored because stale (call ended ${elapsed}ms ago)',
         );
         return true;
       }
@@ -315,7 +323,9 @@ class PushService {
   /// Обрабатывает foreground-сообщения.
   void _handleForegroundMessage(RemoteMessage message) {
     final type = message.data['type'];
-    debugPrint('[FCM_FG] push received — type=$type');
+    debugPrint(
+      '[FCM_FG] push received — type=$type, callId=${message.data['callId']}, callerId=${message.data['callerId']}, callerName=${message.data['callerName']}',
+    );
 
     if (type == 'call') {
       if (_shouldIgnoreCallPush()) return;
@@ -332,7 +342,7 @@ class PushService {
       }
 
       debugPrint(
-        '[FCM_FG] Hydrate incoming call from foreground push — callId=$callId, callerId=$callerId',
+        '[FCM_FG] PUSH hydrate callId=$callId, callerId=$callerId, callerName=$callerName',
       );
       CallService().hydrateIncomingCallFromPush(
         callId: callId,
@@ -473,6 +483,9 @@ class PushService {
   /// Отправляет данные из FCM data в навигационный стрим.
   Future<void> _emitTapFromData(Map<String, dynamic> data) async {
     final type = data['type'] as String?;
+    debugPrint(
+      '[FCM_TAP] push tapped — type=$type, callId=${data['callId']}, callerId=${data['callerId']}, callerName=${data['callerName']}',
+    );
     if (type == null) return;
 
     if (type == 'call') {
@@ -484,7 +497,7 @@ class PushService {
 
       if (callId != null && callerId != null && callerName != null) {
         debugPrint(
-          '[FCM_TAP] Hydrate from push — callId=$callId, callerId=$callerId',
+          '[FCM_TAP] PUSH hydrate callId=$callId, callerId=$callerId, callerName=$callerName',
         );
         CallService().hydrateIncomingCallFromPush(
           callId: callId,

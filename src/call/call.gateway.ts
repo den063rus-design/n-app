@@ -167,7 +167,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('call:start')
   async handleCallStart(client: Socket, payload: { calleeId: number }) {
     this.logger.log(
-      `[CALL_GATEWAY] CALL_START clientId=${client.id} calleeId=${payload.calleeId}`,
+      `[CALL_GATEWAY] CALL_START begin clientId=${client.id} calleeId=${payload.calleeId}`,
     );
 
     try {
@@ -179,6 +179,9 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // ========== Проверка активных звонков caller ==========
       const callerCalls = await this.callService.findActiveCallsByUserId(callerId);
+      this.logger.log(
+        `[CALL_GATEWAY] CALL_START caller active calls count=${callerCalls.length} callerId=${callerId}`,
+      );
 
       // Фильтруем: ищем реальный ACCEPTED (не stale PENDING)
       const callerAcceptedCall = callerCalls.find(
@@ -186,7 +189,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       );
       if (callerAcceptedCall) {
         this.logger.warn(
-          `[CALL_GATEWAY] CALL_START blocked active accepted callId=${callerAcceptedCall.id} callerId=${callerId}`,
+          `[CALL_GATEWAY] CALL_START blocked caller_busy callId=${callerAcceptedCall.id} callerId=${callerId}`,
         );
         return { success: false, error: 'У вас уже есть активный звонок' };
       }
@@ -195,7 +198,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       for (const c of callerCalls) {
         if (this.isStalePendingCall(c)) {
           this.logger.warn(
-            `[CALL_GATEWAY] CALL_START stale pending cleaned callId=${c.id} callerId=${callerId} createdAt=${c.createdAt}`,
+            `[CALL_GATEWAY] CALL_START stale cleaned callId=${c.id} callerId=${callerId} createdAt=${c.createdAt}`,
           );
           await this.callService.endCall(c.id);
         }
@@ -203,6 +206,9 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // ========== Проверка активных звонков callee ==========
       const calleeCalls = await this.callService.findActiveCallsByUserId(payload.calleeId);
+      this.logger.log(
+        `[CALL_GATEWAY] CALL_START callee active calls count=${calleeCalls.length} calleeId=${payload.calleeId}`,
+      );
 
       // Фильтруем: ищем реальный ACCEPTED
       const calleeAcceptedCall = calleeCalls.find(
@@ -210,7 +216,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       );
       if (calleeAcceptedCall) {
         this.logger.warn(
-          `[CALL_GATEWAY] CALL_START blocked callee accepted callId=${calleeAcceptedCall.id} calleeId=${payload.calleeId}`,
+          `[CALL_GATEWAY] CALL_START blocked callee_busy callId=${calleeAcceptedCall.id} calleeId=${payload.calleeId}`,
         );
         return { success: false, error: 'Пользователь уже занят другим звонком' };
       }
@@ -219,7 +225,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       for (const c of calleeCalls) {
         if (this.isStalePendingCall(c)) {
           this.logger.warn(
-            `[CALL_GATEWAY] CALL_START stale pending cleaned callId=${c.id} calleeId=${payload.calleeId} createdAt=${c.createdAt}`,
+            `[CALL_GATEWAY] CALL_START stale cleaned callId=${c.id} calleeId=${payload.calleeId} createdAt=${c.createdAt}`,
           );
           await this.callService.endCall(c.id);
         }
@@ -253,18 +259,34 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         // Переустанавливаем таймаут (старый мог быть потерян при перезапуске backend)
         this.setupCallTimeout(existingPendingBetween.id);
 
+        this.logger.log(
+          `[CALL_GATEWAY] CALL_START done success callId=${existingPendingBetween.id} reused=true`,
+        );
+
         return { success: true, callId: existingPendingBetween.id, reused: true };
       }
 
       // ========== Сценарий: новый звонок ==========
+      this.logger.log(
+        `[CALL_GATEWAY] CALL_START creating new call callerId=${callerId} calleeId=${payload.calleeId}`,
+      );
+
       const call = await this.callService.createCall(callerId, payload.calleeId);
 
       this.logger.log(
         `[CALL_GATEWAY] CALL_START created callId=${call.id} callerId=${callerId} calleeId=${payload.calleeId}`,
       );
 
+      this.logger.log(
+        `[CALL_GATEWAY] CALL_START notifyIncomingCall callId=${call.id} calleeId=${payload.calleeId}`,
+      );
+
       await this.notifyIncomingCall(call);
       this.setupCallTimeout(call.id);
+
+      this.logger.log(
+        `[CALL_GATEWAY] CALL_START done success callId=${call.id}`,
+      );
 
       return { success: true, callId: call.id };
     } catch (error) {

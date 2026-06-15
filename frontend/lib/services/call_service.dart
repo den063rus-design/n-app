@@ -39,9 +39,6 @@ class CallService {
   bool _isMicOn = true;
   bool _isFrontCamera = true;
 
-  // Флаг: были ли уже навешены listeners (чтобы не дублировать)
-  bool _listenersAttached = false;
-
   // Флаг: открыт ли экран звонка (для предотвращения дублей)
   bool _isCallScreenOpen = false;
 
@@ -117,8 +114,7 @@ class CallService {
     // Подписываемся на изменения состояния подключения socket.
     _connectionSubscription = _socketService.onConnectionChanged.listen((connected) {
       if (connected) {
-        _log('🔌 Socket reconnected — resetting _listenersAttached for re-registration');
-        _listenersAttached = false;
+        _log('🔌 Socket reconnected — re-registering listeners');
         _setupSocketListeners();
       }
     });
@@ -198,37 +194,37 @@ class CallService {
   }
 
   void _setupSocketListeners() {
-    _log('🔌 _setupSocketListeners()');
+    _log('🔌 _setupSocketListeners begin');
 
     final socket = _socketService.socket;
     if (socket == null) {
-      _log('🔌 _setupSocketListeners() — socket is NULL');
+      _log('🔌 _setupSocketListeners — socket is NULL');
       return;
     }
 
-    if (_listenersAttached) {
-      _log('🔌 _setupSocketListeners() — listeners already attached, skipping');
-      return;
-    }
+    // Убираем guard _listenersAttached — socket.off() + socket.on() идемпотентны.
+    // После reconnect socket.io создаёт новый объект socket, и listener-ы
+    // на старом объекте не переносятся. Поэтому всегда перерегистрируем.
+    _log('🔌 _setupSocketListeners — registering listeners (idempotent)');
 
-    _listenersAttached = true;
-    _log('🔌 registering: call:incoming, call:accepted, call:signal, call:ended, call:rejected');
-
+    // Всегда отписываемся перед подпиской, чтобы избежать дублирования
     socket.off('call:incoming');
     socket.off('call:accepted');
     socket.off('call:signal');
     socket.off('call:ended');
     socket.off('call:rejected');
 
+    _log('🔌 _setupSocketListeners — registering: call:incoming');
+
     _socketService.onCallEvent('call:incoming', (data) {
-      _log('📞 call:incoming — data: $data, state=$_state');
+      _log('📞 call:incoming RECEIVED — data: $data, state=$_state');
 
       // Единственный guard на транспортном уровне:
       // если уже на звонке — игнорируем входящий
       if (_state == CallState.CALLING ||
           _state == CallState.RINGING ||
           _state == CallState.IN_CALL) {
-        _log('⚠️ call:incoming ignored — already in call, state=$_state');
+        _log('📞 call:incoming ignored because state=$_state');
         return;
       }
 

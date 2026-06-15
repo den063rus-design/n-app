@@ -263,7 +263,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       final callerName = data['callerName'] as String;
       final callId = data['callId'] as int? ?? 0;
 
-      debugPrint('[APP] 📞 _listenIncomingCalls — data=$data');
+      debugPrint('[APP] 📞 APP incoming socket event — callerId=$callerId, callerName=$callerName, callId=$callId');
 
       // Единая точка показа входящего диалога.
       // Все guard'ы (уже на звонке, уже открыт диалог и т.д.)
@@ -334,7 +334,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   void _checkPendingIncomingCallFromPush() {
     final callService = CallService();
     if (callService.state != CallState.RINGING) {
-      debugPrint('[APP_PUSH_TAP] _checkPendingIncomingCallFromPush — state=${callService.state}, not RINGING — nothing to do');
+      debugPrint('[APP] _checkPendingIncomingCallFromPush — state=${callService.state}, not RINGING — nothing to do');
       return;
     }
 
@@ -343,11 +343,11 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     final currentCallId = callService.currentCallId;
 
     if (remoteUserId == null) {
-      debugPrint('[APP_PUSH_TAP] _checkPendingIncomingCallFromPush — remoteUserId is null, cannot show dialog');
+      debugPrint('[APP] _checkPendingIncomingCallFromPush — remoteUserId is null, cannot show dialog');
       return;
     }
 
-    debugPrint('[APP_PUSH_TAP] _checkPendingIncomingCallFromPush — state=RINGING — showing IncomingCallDialog (callerId=$remoteUserId, callerName=$remoteUserName)');
+    debugPrint('[APP] _checkPendingIncomingCallFromPush — state=RINGING — showing IncomingCallDialog (callerId=$remoteUserId, callerName=$remoteUserName)');
 
     _showIncomingCallDialog(
       callerId: remoteUserId,
@@ -368,16 +368,16 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     final callerName = data['callerName'] ?? 'Входящий звонок';
     final callIdStr = data['callId'];
 
-    debugPrint('[APP_PUSH_TAP] _handleCallPushTap — callerId=$callerIdStr, callerName=$callerName');
+    debugPrint('[APP] APP incoming push tap — callerId=$callerIdStr, callerName=$callerName, callId=$callIdStr');
 
     if (callerIdStr == null) {
-      debugPrint('[APP_PUSH_TAP] ⚠️ callerId is null, cannot process');
+      debugPrint('[APP] ⚠️ callerId is null, cannot process');
       return;
     }
 
     final callerId = int.tryParse(callerIdStr);
     if (callerId == null) {
-      debugPrint('[APP_PUSH_TAP] ⚠️ invalid callerId: $callerIdStr');
+      debugPrint('[APP] ⚠️ invalid callerId: $callerIdStr');
       return;
     }
 
@@ -388,7 +388,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     // Если state уже RINGING — socket уже установил состояние,
     // hydrate не нужен. Просто показываем диалог.
     if (callService.state == CallState.RINGING) {
-      debugPrint('[APP_PUSH_TAP] state=RINGING — showing dialog without hydrate');
+      debugPrint('[APP] state=RINGING — showing dialog without hydrate');
       _showIncomingCallDialog(
         callerId: callerId,
         callerName: callerName,
@@ -401,12 +401,12 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     // Если уже на звонке (CALLING / IN_CALL) — игнорируем push
     if (callService.state == CallState.CALLING ||
         callService.state == CallState.IN_CALL) {
-      debugPrint('[APP_PUSH_TAP] ⚠️ already in call (state=${callService.state}) — ignoring push tap');
+      debugPrint('[APP] ⚠️ already in call (state=${callService.state}) — ignoring push tap');
       return;
     }
 
     // Восстанавливаем состояние из push
-    debugPrint('[APP_PUSH_TAP] Hydrating incoming call from push (state=${callService.state})');
+    debugPrint('[APP] Hydrating incoming call from push (state=${callService.state})');
     callService.hydrateIncomingCallFromPush(
       callId: callIdStr ?? '',
       callerId: callerIdStr,
@@ -441,8 +441,8 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         ? ModalRoute.of(navigatorKey.currentContext!)?.settings.name
         : 'null';
 
-    debugPrint('[APP] 📞 _showIncomingCallDialog — callerId=$callerId, callerName=$callerName, callId=$callId, source=$source');
-    debugPrint('[APP] 📞 _showIncomingCallDialog — state=${callService.state}, isCallScreenOpen=${callService.isCallScreenOpen}, isIncomingDialogOpen=${callService.isIncomingDialogOpen}, isMinimized=${callService.isMinimized}, currentCallId=${callService.currentCallId}, route=$currentRoute');
+    debugPrint('[APP] APP showIncomingCallDialog begin — callerId=$callerId, callerName=$callerName, callId=$callId, source=$source');
+    debugPrint('[APP] APP showIncomingCallDialog — state=${callService.state}, isCallScreenOpen=${callService.isCallScreenOpen}, isIncomingDialogOpen=${callService.isIncomingDialogOpen}, isMinimized=${callService.isMinimized}, currentCallId=${callService.currentCallId}, route=$currentRoute');
 
     // Guard 1: уже открыт incoming_call_dialog
     if (callService.isIncomingDialogOpen) {
@@ -450,7 +450,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       if (currentRoute != 'incoming_call_dialog') {
         callService.markIncomingDialogClosed();
       } else {
-        debugPrint('[APP] ⚠️ _showIncomingCallDialog — incoming dialog already open — ignoring');
+        debugPrint('[APP] APP showIncomingCallDialog blocked because incoming dialog already open');
         return;
       }
     }
@@ -461,12 +461,12 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       if (callService.state == CallState.IDLE || callService.state == CallState.ENDED) {
         callService.markCallScreenClosed();
       } else {
-        debugPrint('[APP] ⚠️ _showIncomingCallDialog — call screen already open — ignoring');
+        debugPrint('[APP] APP showIncomingCallDialog blocked because call screen already open');
         return;
       }
     }
 
-    debugPrint('[APP] ✅ _showIncomingCallDialog — showing IncomingCallDialog (source=$source)');
+    debugPrint('[APP] APP showIncomingCallDialog — passed guards, pushing route (source=$source)');
 
     // Проверка mounted перед Navigator.push
     if (navigatorKey.currentContext == null) {
@@ -481,6 +481,8 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     // Отмечаем, что диалог открыт только перед реальным Navigator.push,
     // чтобы флаг не залипал, если до этого был ранний return.
     callService.markIncomingDialogOpen();
+
+    debugPrint('[APP] APP showIncomingCallDialog pushed route');
 
     // Показываем IncomingCallDialog как fullscreen route
     Navigator.push<bool>(
