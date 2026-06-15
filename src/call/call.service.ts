@@ -85,7 +85,7 @@ export class CallService {
    * Возвращает массив, чтобы caller мог обработать несколько залипших звонков.
    */
   async findActiveCallsByUserId(userId: number): Promise<any[]> {
-    return this.prisma.call.findMany({
+    const calls = await this.prisma.call.findMany({
       where: {
         OR: [{ callerId: userId }, { calleeId: userId }],
         status: { in: [CallStatus.PENDING, CallStatus.ACCEPTED] },
@@ -96,6 +96,19 @@ export class CallService {
         callee: { select: { id: true, fio: true } },
       },
     });
+
+    // Диагностика: логируем каждый найденный звонок
+    for (const c of calls) {
+      console.log(
+        `[CALL_SERVICE] findActiveCallsByUserId user=${userId} ` +
+        `callId=${c.id} status=${c.status} callerId=${c.callerId} calleeId=${c.calleeId} ` +
+        `createdAt=${c.createdAt?.toISOString?.() ?? c.createdAt} ` +
+        `startedAt=${c.startedAt?.toISOString?.() ?? c.startedAt ?? 'null'} ` +
+        `endedAt=${c.endedAt?.toISOString?.() ?? c.endedAt ?? 'null'}`,
+      );
+    }
+
+    return calls;
   }
 
   /**

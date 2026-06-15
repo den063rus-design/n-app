@@ -107,16 +107,37 @@ export class NotificationsService {
         `[NOTIFICATIONS] SEND_FCM payload userId=${userId} type=${pushData['type']} callId=${pushData['callId']} callerId=${pushData['callerId']} callerName=${pushData['callerName']}`,
       );
 
-      await this.pushService.sendPush({
+      const result = await this.pushService.sendPush({
         token: user.fcmToken,
         title: data.title,
         body: data.body ?? '',
         data: pushData,
       });
 
-      this.logger.log(
-        `[NOTIFICATIONS] SEND_FCM success userId=${userId}`,
-      );
+      if (result.success) {
+        this.logger.log(
+          `[NOTIFICATIONS] SEND_FCM success userId=${userId}`,
+        );
+      } else {
+        // Push не ушёл — логируем причину
+        this.logger.error(
+          `[NOTIFICATIONS] SEND_FCM failed userId=${userId} errorCode=${result.errorCode} error=${result.errorMessage}`,
+        );
+
+        // Если токен битый — очищаем его в БД
+        if (result.errorCode === 'token_invalid') {
+          this.logger.warn(
+            `[NOTIFICATIONS] SEND_FCM token invalid, clearing token for userId=${userId}`,
+          );
+          await this.prisma.user.update({
+            where: { id: userId },
+            data: { fcmToken: null },
+          });
+          this.logger.log(
+            `[NOTIFICATIONS] SEND_FCM token cleared for userId=${userId}`,
+          );
+        }
+      }
     } catch (error) {
       this.logger.error(
         `[NOTIFICATIONS] SEND_FCM failed userId=${userId} error=${error instanceof Error ? error.message : String(error)}`,

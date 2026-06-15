@@ -164,6 +164,38 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return age > CallService.STALE_CALL_TIMEOUT_MS;
   }
 
+  /** Проверяет, является ли ACCEPTED звонок stale.
+   *  Критерии: статус ACCEPTED, но startedAt отсутствует (никогда не был реально начат)
+   *  ИЛИ звонок старше 5 минут без endedAt (залипший).
+   *  Такие звонки не должны блокировать новые. */
+  private isStaleAcceptedCall(call: any): boolean {
+    if (call.status !== CallStatus.ACCEPTED) {
+      return false;
+    }
+
+    // Если звонок ACCEPTED, но never started — явно мёртвый
+    if (!call.startedAt) {
+      const age = Date.now() - new Date(call.createdAt).getTime();
+      return age > CallService.STALE_CALL_TIMEOUT_MS;
+    }
+
+    // Если звонок ACCEPTED и startedAt есть, но прошло больше 5 минут
+    // с момента старта — считаем его залипшим (нормальный звонок не длится вечно)
+    const age = Date.now() - new Date(call.startedAt).getTime();
+    return age > 5 * 60 * 1000; // 5 минут
+  }
+
+  /** Логирует детальную информацию о звонке для диагностики. */
+  private logCallDetail(prefix: string, call: any): void {
+    this.logger.log(
+      `${prefix} callId=${call.id} status=${call.status} ` +
+      `callerId=${call.callerId} calleeId=${call.calleeId} ` +
+      `createdAt=${call.createdAt?.toISOString?.() ?? call.createdAt} ` +
+      `startedAt=${call.startedAt?.toISOString?.() ?? call.startedAt ?? 'null'} ` +
+      `endedAt=${call.endedAt?.toISOString?.() ?? call.endedAt ?? 'null'}`,
+    );
+  }
+
   @SubscribeMessage('call:start')
   async handleCallStart(client: Socket, payload: { calleeId: number }) {
     this.logger.log(
@@ -183,13 +215,19 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         `[CALL_GATEWAY] CALL_START caller active calls count=${callerCalls.length} callerId=${callerId}`,
       );
 
-      // Фильтруем: ищем реальный ACCEPTED (не stale PENDING)
+      // Диагностика: логируем каждый звонок caller
+      for (const c of callerCalls) {
+        this.logCallDetail('[CALL_GATEWAY] CALL_START caller call detail', c);
+      }
+
+      // Фильтруем: ищем реальный ACCEPTED (не stale PENDING и не stale ACCEPTED)
       const callerAcceptedCall = callerCalls.find(
-        (c) => c.status === CallStatus.ACCEPTED,
+        (c) => c.status === CallStatus.ACCEPTED && !this.isStaleAcceptedCall(c),
       );
       if (callerAcceptedCall) {
-        this.logger.warn(
-          `[CALL_GATEWAY] CALL_START blocked caller_busy callId=${callerAcceptedCall.id} callerId=${callerId}`,
+        this.logCallDetail(
+          '[CALL_GATEWAY] CALL_START blocked caller_busy — blocking call detail',
+          callerAcceptedCall,
         );
         return { success: false, error: 'У вас уже есть активный звонок' };
       }
@@ -204,19 +242,35 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
       }
 
+      // Stale ACCEPTED — автоматически завершаем (залипшие звонки без startedAt)
+      for (const c of callerCalls) {
+        if (this.isStaleAcceptedCall(c)) {
+          this.logger.warn(
+            `[CALL_GATEWAY] CALL_START stale accepted cleaned callId=${c.id} callerId=${callerId} createdAt=${c.createdAt} startedAt=${c.startedAt}`,
+          );
+          await this.callService.endCall(c.id);
+        }
+      }
+
       // ========== Проверка активных звонков callee ==========
       const calleeCalls = await this.callService.findActiveCallsByUserId(payload.calleeId);
       this.logger.log(
         `[CALL_GATEWAY] CALL_START callee active calls count=${calleeCalls.length} calleeId=${payload.calleeId}`,
       );
 
-      // Фильтруем: ищем реальный ACCEPTED
+      // Диагностика: логируем каждый звонок callee
+      for (const c of calleeCalls) {
+        this.logCallDetail('[CALL_GATEWAY] CALL_START callee call detail', c);
+      }
+
+      // Фильтруем: ищем реальный ACCEPTED (не stale)
       const calleeAcceptedCall = calleeCalls.find(
-        (c) => c.status === CallStatus.ACCEPTED,
+        (c) => c.status === CallStatus.ACCEPTED && !this.isStaleAcceptedCall(c),
       );
       if (calleeAcceptedCall) {
-        this.logger.warn(
-          `[CALL_GATEWAY] CALL_START blocked callee_busy callId=${calleeAcceptedCall.id} calleeId=${payload.calleeId}`,
+        this.logCallDetail(
+          '[CALL_GATEWAY] CALL_START blocked callee_busy — blocking call detail',
+          calleeAcceptedCall,
         );
         return { success: false, error: 'Пользователь уже занят другим звонком' };
       }
@@ -226,6 +280,16 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         if (this.isStalePendingCall(c)) {
           this.logger.warn(
             `[CALL_GATEWAY] CALL_START stale cleaned callId=${c.id} calleeId=${payload.calleeId} createdAt=${c.createdAt}`,
+          );
+          await this.callService.endCall(c.id);
+        }
+      }
+
+      // Stale ACCEPTED у callee — автоматически завершаем
+      for (const c of calleeCalls) {
+        if (this.isStaleAcceptedCall(c)) {
+          this.logger.warn(
+            `[CALL_GATEWAY] CALL_START stale accepted cleaned callId=${c.id} calleeId=${payload.calleeId} createdAt=${c.createdAt} startedAt=${c.startedAt}`,
           );
           await this.callService.endCall(c.id);
         }

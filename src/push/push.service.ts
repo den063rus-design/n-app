@@ -31,17 +31,18 @@ export class PushService implements OnModuleInit {
 
   /**
    * Sends a push notification via FCM.
-   * Does not throw — errors are logged only.
+   * Returns result object so caller can react to specific errors.
+   * Does not throw — errors are caught and returned.
    */
   async sendPush(payload: {
     token: string;
     title: string;
     body: string;
     data?: Record<string, string>;
-  }): Promise<void> {
+  }): Promise<{ success: boolean; errorCode?: string; errorMessage?: string }> {
     if (!getApps().length) {
       this.logger.warn('Firebase Admin is not initialized. Push not sent.');
-      return;
+      return { success: false, errorCode: 'not_initialized', errorMessage: 'Firebase Admin not initialized' };
     }
 
     try {
@@ -77,10 +78,26 @@ export class PushService implements OnModuleInit {
       this.logger.log(
         `[PUSH_SERVICE] FCM sent successfully: ${response} token=${payload.token?.substring(0, 20)}... type=${payload.data?.type}`,
       );
+      return { success: true };
     } catch (error) {
+      const errMsg = (error as Error).message;
       this.logger.error(
-        `[PUSH_SERVICE] FCM send failed: ${(error as Error).message} token=${payload.token?.substring(0, 20)}...`,
+        `[PUSH_SERVICE] FCM send failed: ${errMsg} token=${payload.token?.substring(0, 20)}...`,
       );
+
+      // Определяем тип ошибки для caller
+      const isTokenInvalid =
+        errMsg.includes('Requested entity was not found') ||
+        errMsg.includes('registration-token-not-registered') ||
+        errMsg.includes('InvalidRegistration') ||
+        errMsg.includes('NotRegistered') ||
+        errMsg.includes('UNREGISTERED');
+
+      return {
+        success: false,
+        errorCode: isTokenInvalid ? 'token_invalid' : 'other',
+        errorMessage: errMsg,
+      };
     }
   }
 }
