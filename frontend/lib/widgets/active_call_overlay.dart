@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:livekit_client/livekit_client.dart';
 import '../services/call_service.dart';
 import '../services/call_logger.dart';
+import '../services/livekit_service.dart';
 
 /// Маленькое плавающее окно активного звонка поверх приложения.
 ///
@@ -27,17 +28,18 @@ class ActiveCallOverlay extends StatefulWidget {
 class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
   final CallService _callService = CallService();
   final CallLogger _callLogger = CallLogger();
-  final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
+  final LiveKitService _liveKitService = LiveKitService();
 
-  StreamSubscription<MediaStream?>? _remoteStreamSub;
   StreamSubscription<CallState>? _stateSub;
   StreamSubscription<bool>? _minimizedSub;
 
   Offset _position = const Offset(16, 100);
   bool _visible = false;
 
+  // Подписки на LiveKit
+  VoidCallback? _remoteVideoListener;
+
   bool _shouldShowOverlay(CallState state, bool isMinimized) {
-    // Guard: не показываем overlay в терминальных состояниях
     if (state == CallState.ENDED || state == CallState.IDLE) return false;
     return isMinimized &&
         (state == CallState.CALLING ||
@@ -52,18 +54,8 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
         _visible = shouldShow;
       });
       if (shouldShow) {
-        // Восстанавливаем remoteRenderer, если был сброшен
-        if (_remoteRenderer.srcObject == null) {
-          final currentRemote = _callService.currentRemoteStream;
-          if (currentRemote != null) {
-            _remoteRenderer.srcObject = currentRemote;
-          }
-        }
         _log('overlay shown');
       } else {
-        // При скрытии overlay отвязываем remoteRenderer,
-        // чтобы при новом звонке не мелькнул старый кадр
-        _remoteRenderer.srcObject = null;
         _log('overlay hidden');
       }
     }
@@ -72,31 +64,16 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
   @override
   void initState() {
     super.initState();
-    _initRenderer();
     _subscribe();
-  }
 
-  Future<void> _initRenderer() async {
-    try {
-      await _remoteRenderer.initialize();
-
-      final currentRemote = _callService.currentRemoteStream;
-      if (currentRemote != null) {
-        _remoteRenderer.srcObject = currentRemote;
-        if (mounted) setState(() {});
-      }
-    } catch (e) {
-      _log('❌ Remote renderer init FAILED: $e');
-    }
+    // Подписываемся на remote video
+    _remoteVideoListener = () {
+      if (mounted) setState(() {});
+    };
+    _liveKitService.remoteVideoTrack.addListener(_remoteVideoListener!);
   }
 
   void _subscribe() {
-    _remoteStreamSub = _callService.remoteStream.listen((stream) {
-      if (!mounted) return;
-      _remoteRenderer.srcObject = stream;
-      setState(() {});
-    });
-
     _stateSub = _callService.stateStream.listen((state) {
       if (!mounted) return;
       _updateVisibility(state, _callService.isMinimized);
@@ -107,19 +84,17 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
       _updateVisibility(_callService.state, isMinimized);
     });
 
-    // Синхронизируем _visible с текущим состоянием и вызываем setState,
-    // чтобы build() отреагировал на начальное значение
     _visible = _shouldShowOverlay(_callService.state, _callService.isMinimized);
     if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
-    _remoteStreamSub?.cancel();
     _stateSub?.cancel();
     _minimizedSub?.cancel();
-    _remoteRenderer.srcObject = null;
-    _remoteRenderer.dispose();
+    if (_remoteVideoListener != null) {
+      _liveKitService.remoteVideoTrack.removeListener(_remoteVideoListener!);
+    }
     super.dispose();
   }
 
@@ -178,12 +153,11 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
               borderRadius: BorderRadius.circular(14),
               child: Stack(
                 children: [
-                  // Remote video
-                  if (_remoteRenderer.srcObject != null)
-                    RTCVideoView(
-                      _remoteRenderer,
-                      objectFit:
-                          RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                  // Remote video через LiveKit
+                  if (_liveKitService.remoteVideoTrack.value != null)
+                    VideoTrackRenderer(
+                      _liveKitService.remoteVideoTrack.value!,
+                      fit: VideoViewFit.cover,
                     )
                   else
                     // Fallback — аватар/имя, если видео нет

@@ -261,4 +261,20 @@ class ApiService {
         .map((c) => Call.fromJson(c as Map<String, dynamic>))
         .toList();
   }
+
+  // =================================================================
+  // LiveKit
+  // =================================================================
+
+  /// Получает LiveKit AccessToken для указанного звонка.
+  ///
+  /// POST /livekit/token
+  /// Тело: { "callId": 123 }
+  /// Ответ: { "wsUrl": "...", "roomName": "...", "token": "..." }
+  Future<Map<String, dynamic>> getLiveKitToken(int callId) async {
+    final response = await post('/livekit/token', data: {
+      'callId': callId,
+    });
+    return response as Map<String, dynamic>;
+  }
 }
