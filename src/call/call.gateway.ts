@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import {
   OnGatewayConnection,
   OnGatewayDisconnect,
@@ -6,11 +7,10 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { Server, Socket } from 'socket.io';
-import { JwtService } from '@nestjs/jwt';
-import { CallService } from './call.service';
-import { NotificationsService } from '../notifications/notifications.service';
 import { CallStatus } from '@prisma/client';
+import { Namespace, Socket } from 'socket.io';
+import { NotificationsService } from '../notifications/notifications.service';
+import { CallService } from './call.service';
 
 @WebSocketGateway({
   cors: { origin: process.env.CORS_ORIGIN ?? 'http://localhost:3000', credentials: true },
@@ -20,7 +20,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(CallGateway.name);
 
   @WebSocketServer()
-  server!: Server;
+  server!: Namespace;
 
   private callTimeouts: Map<number, NodeJS.Timeout> = new Map();
 
@@ -32,124 +32,111 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   handleConnection(client: Socket) {
     try {
-      const token = client.handshake.auth?.token as string | undefined;
-      if (!token) {
+      const userId = this.getUserIdFromToken(client);
+      if (!userId) {
+        this.logger.warn(`[CALL_GATEWAY] CONNECT skipped clientId=${client.id} reason=no_token`);
         return;
       }
 
-      const payload = this.jwtService.verify<{ sub: number }>(token);
-      const userId = payload.sub;
+      const roomName = this.getUserRoomName(userId);
+      client.join(roomName);
 
-      if (userId) {
-        const roomName = `user:${userId}`;
-        client.join(roomName);
-        const roomSize = this.server.sockets.adapter.rooms.get(roomName)?.size ?? 0;
-        this.logger.log(
-          `[CALL_GATEWAY] CONNECT user=${userId} clientId=${client.id} room=${roomName} roomSize=${roomSize} transport=${client.conn.transport.name}`,
-        );
-      }
+      this.logger.log(
+        `[CALL_GATEWAY] CONNECT user=${userId} clientId=${client.id} room=${roomName} roomSize=${this.getRoomSize(roomName)} transport=${client.conn.transport.name}`,
+      );
     } catch (error) {
       this.logger.error(
-        `[CALL_GATEWAY] CONNECT invalid token clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`,
+        `[CALL_GATEWAY] CONNECT failed clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
 
   async handleDisconnect(client: Socket) {
-    // Определяем userId по токену из handshake (если ещё доступен)
-    // или просто логируем disconnect
     try {
-      const token = client.handshake.auth?.token as string | undefined;
-      if (token) {
-        const payload = this.jwtService.verify<{ sub: number }>(token);
-        const userId = payload.sub;
-        this.logger.warn(`[CALL_GATEWAY] DISCONNECT user=${userId} clientId=${client.id}`);
-
-        // Проверяем, есть ли у пользователя активный звонок
-        // и не осталось ли других сокетов в комнате
-        const roomName = `user:${userId}`;
-        const room = this.server.sockets.adapter.rooms.get(roomName);
-        const socketsLeft = room ? room.size : 0;
-
-        if (socketsLeft === 0) {
-          console.log(`[CALL_GATEWAY] 🔌 user ${userId} has no more sockets — checking active call`);
-
-          try {
-            const activeCall = await this.callService.findActiveCallByUserId(userId);
-            if (activeCall) {
-              const { call, otherUserId } = activeCall;
-              this.clearCallTimeout(call.id);
-              await this.callService.endCall(call.id);
-              this.sendToBoth(userId, otherUserId, 'call:ended', {
-                callId: call.id,
-                reason: 'peer_disconnected',
-              });
-            }
-          } catch (error) {
-            this.logger.error(
-              `[CALL_GATEWAY] DISCONNECT error user=${userId} ${error instanceof Error ? error.message : String(error)}`,
-            );
-          }
-        } else {
-          this.logger.log(
-            `[CALL_GATEWAY] DISCONNECT user=${userId} still has ${socketsLeft} socket(s) -> keeping call alive`,
-          );
-        }
-      } else {
+      const userId = this.getUserIdFromToken(client);
+      if (!userId) {
         this.logger.warn(`[CALL_GATEWAY] DISCONNECT anonymous clientId=${client.id}`);
+        return;
       }
-    } catch (error) {
+
+      const roomName = this.getUserRoomName(userId);
+      const socketsLeft = this.getRoomSize(roomName);
+
       this.logger.warn(
-        `[CALL_GATEWAY] DISCONNECT token invalid/expired clientId=${client.id}`,
+        `[CALL_GATEWAY] DISCONNECT user=${userId} clientId=${client.id} room=${roomName} socketsLeft=${socketsLeft}`,
+      );
+
+      if (socketsLeft > 0) {
+        this.logger.log(
+          `[CALL_GATEWAY] DISCONNECT keep_alive user=${userId} room=${roomName} socketsLeft=${socketsLeft}`,
+        );
+        return;
+      }
+
+      const activeCall = await this.callService.findActiveCallByUserId(userId);
+      if (!activeCall) {
+        this.logger.log(`[CALL_GATEWAY] DISCONNECT no_active_call user=${userId}`);
+        return;
+      }
+
+      const { call, otherUserId } = activeCall;
+      this.clearCallTimeout(call.id);
+      await this.callService.endCall(call.id);
+
+      this.logger.warn(
+        `[CALL_GATEWAY] DISCONNECT ending_call callId=${call.id} user=${userId} otherUserId=${otherUserId}`,
+      );
+
+      this.sendToBoth(userId, otherUserId, 'call:ended', {
+        callId: call.id,
+        reason: 'peer_disconnected',
+      });
+    } catch (error) {
+      this.logger.error(
+        `[CALL_GATEWAY] DISCONNECT failed clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
-
-  // ========== Вспомогательные методы ==========
-
-  /** Отправляет событие в комнату пользователя (user:<userId>).
-   *  Socket.IO сам доставит событие во все активные socket'ы пользователя. */
-  private sendToUser(userId: number, event: string, data: unknown) {
-    const roomName = `user:${userId}`;
-    const roomSize = this.server.sockets.adapter.rooms.get(roomName)?.size ?? 0;
-    this.logger.log(
-      `[CALL_GATEWAY] SEND room=${roomName} user=${userId} event=${event} sockets=${roomSize} payload=${JSON.stringify(data)}`,
-    );
-    this.server.to(roomName).emit(event, data);
-  }
-
-  private sendToBoth(callerId: number, calleeId: number, event: string, data: unknown) {
-    this.sendToUser(callerId, event, data);
-    this.sendToUser(calleeId, event, data);
-  }
-
-  // ========== Входящие события ==========
 
   @SubscribeMessage('call:start')
   async handleCallStart(client: Socket, payload: { calleeId: number }) {
     this.logger.log(
       `[CALL_GATEWAY] CALL_START clientId=${client.id} calleeId=${payload.calleeId}`,
     );
+
     try {
-      const token = client.handshake.auth?.token as string;
-      const callerPayload = this.jwtService.verify<{ sub: number }>(token);
-      const callerId = callerPayload.sub;
+      const callerId = this.requireUserIdFromToken(client);
+
       this.logger.log(
-        `[CALL_GATEWAY] CALL_START resolved callerId=${callerId} -> calleeId=${payload.calleeId}`,
+        `[CALL_GATEWAY] CALL_START resolved callerId=${callerId} calleeId=${payload.calleeId}`,
       );
 
       const existingCallerCall = await this.callService.findActiveCallByUserId(callerId);
       if (existingCallerCall) {
+        this.logger.warn(
+          `[CALL_GATEWAY] CALL_START blocked callerId=${callerId} reason=caller_busy callId=${existingCallerCall.call.id}`,
+        );
         return { success: false, error: 'У вас уже есть активный звонок' };
       }
+
       const existingCalleeCall = await this.callService.findActiveCallByUserId(payload.calleeId);
       if (existingCalleeCall) {
+        this.logger.warn(
+          `[CALL_GATEWAY] CALL_START blocked callerId=${callerId} calleeId=${payload.calleeId} reason=callee_busy callId=${existingCalleeCall.call.id}`,
+        );
         return { success: false, error: 'Пользователь уже занят другим звонком' };
       }
 
       const call = await this.callService.createCall(callerId, payload.calleeId);
+      const calleeRoom = this.getUserRoomName(payload.calleeId);
 
-      this.logger.log(`[call:start] Sending call:incoming to user=${payload.calleeId}, callId=${call.id}`);
+      this.logger.log(
+        `[CALL_GATEWAY] CALL_START created callId=${call.id} callerId=${callerId} calleeId=${payload.calleeId}`,
+      );
+      this.logger.log(
+        `[CALL_GATEWAY] CALL_START before_emit event=call:incoming room=${calleeRoom} sockets=${this.getRoomSize(calleeRoom)}`,
+      );
+
       this.sendToUser(payload.calleeId, 'call:incoming', {
         callId: call.id,
         callerId: call.callerId,
@@ -172,25 +159,28 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         try {
           const currentCall = await this.callService.findCallById(call.id);
           if (currentCall && currentCall.status === CallStatus.PENDING) {
-            console.log(`[CALL_GATEWAY] ⏰ no_answer timeout — call ${call.id}`);
+            this.logger.warn(`[CALL_GATEWAY] NO_ANSWER timeout callId=${call.id}`);
             await this.callService.endCall(call.id);
             this.sendToBoth(call.callerId, call.calleeId, 'call:ended', {
               callId: call.id,
               reason: 'no_answer',
             });
           }
-        } catch (err) {
-          console.error(`[CALL_GATEWAY] ⏰ timeout error for call ${call.id}:`, err);
+        } catch (error) {
+          this.logger.error(
+            `[CALL_GATEWAY] NO_ANSWER failed callId=${call.id} error=${error instanceof Error ? error.message : String(error)}`,
+          );
         } finally {
           this.callTimeouts.delete(call.id);
         }
       }, 30000);
+
       this.callTimeouts.set(call.id, timeout);
 
       return { success: true, callId: call.id };
     } catch (error) {
       this.logger.error(
-        `[CALL_GATEWAY] CALL_START error clientId=${client.id} ${error instanceof Error ? error.message : String(error)}`,
+        `[CALL_GATEWAY] CALL_START failed clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`,
       );
       return { success: false, error: 'Не удалось инициировать звонок' };
     }
@@ -201,16 +191,20 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log(
       `[CALL_GATEWAY] CALL_ACCEPT clientId=${client.id} callId=${payload.callId}`,
     );
-    try {
-      const token = client.handshake.auth?.token as string;
-      const acceptorPayload = this.jwtService.verify<{ sub: number }>(token);
-      const acceptorId = acceptorPayload.sub;
 
+    try {
+      const acceptorId = this.requireUserIdFromToken(client);
       const existingCall = await this.callService.findCallById(payload.callId);
+
       if (!existingCall) {
+        this.logger.warn(`[CALL_GATEWAY] CALL_ACCEPT missing callId=${payload.callId}`);
         return { success: false, error: 'Звонок не найден' };
       }
+
       if (existingCall.status !== CallStatus.PENDING) {
+        this.logger.warn(
+          `[CALL_GATEWAY] CALL_ACCEPT expired callId=${payload.callId} status=${existingCall.status}`,
+        );
         this.sendToUser(acceptorId, 'call:ended', {
           callId: payload.callId,
           reason: 'expired',
@@ -227,8 +221,9 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       );
 
       this.logger.log(
-        `[CALL_GATEWAY] CALL_ACCEPT callId=${call.id} notifying callerId=${call.callerId}`,
+        `[CALL_GATEWAY] CALL_ACCEPT notify callerId=${call.callerId} callId=${call.id}`,
       );
+
       this.sendToUser(call.callerId, 'call:accepted', {
         callId: call.id,
         calleeId: call.calleeId,
@@ -236,14 +231,19 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       return { success: true };
     } catch (error) {
-      console.error('[CALL_GATEWAY] ❌ call:accept error:', error);
+      this.logger.error(
+        `[CALL_GATEWAY] CALL_ACCEPT failed clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`,
+      );
       return { success: false, error: 'Не удалось принять звонок' };
     }
   }
 
   @SubscribeMessage('call:reject')
   async handleCallReject(client: Socket, payload: { callId: number }) {
-    console.log(`[CALL_GATEWAY] ❌ call:reject — callId=${payload.callId}`);
+    this.logger.log(
+      `[CALL_GATEWAY] CALL_REJECT clientId=${client.id} callId=${payload.callId}`,
+    );
+
     try {
       this.clearCallTimeout(payload.callId);
 
@@ -266,23 +266,25 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       return { success: true };
     } catch (error) {
-      console.error('[CALL_GATEWAY] ❌ call:reject error:', error);
+      this.logger.error(
+        `[CALL_GATEWAY] CALL_REJECT failed clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`,
+      );
       return { success: false, error: 'Не удалось отклонить звонок' };
     }
   }
 
   @SubscribeMessage('call:end')
   async handleCallEnd(client: Socket, payload: { callId: number }) {
-    console.log(`[CALL_GATEWAY] 🔴 call:end — callId=${payload.callId}`);
+    this.logger.log(`[CALL_GATEWAY] CALL_END clientId=${client.id} callId=${payload.callId}`);
+
     try {
-      if (payload.callId == null || payload.callId === undefined) {
+      if (payload.callId == null) {
         return { success: false, error: 'callId is required' };
       }
 
       this.clearCallTimeout(payload.callId);
 
       const call = await this.callService.getCallById(payload.callId);
-
       const now = new Date();
       const duration = call.startedAt
         ? Math.floor((now.getTime() - call.startedAt.getTime()) / 1000)
@@ -298,7 +300,9 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       return { success: true };
     } catch (error) {
-      console.error('[CALL_GATEWAY] ❌ call:end error:', error);
+      this.logger.error(
+        `[CALL_GATEWAY] CALL_END failed clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`,
+      );
       return { success: false, error: 'Не удалось завершить звонок' };
     }
   }
@@ -306,13 +310,23 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('call:signal')
   async handleCallSignal(
     client: Socket,
-    payload: { callId: number; type: string; sdp?: string; candidate?: string; sdpMid?: string; sdpMLineIndex?: number },
+    payload: {
+      callId: number;
+      type: string;
+      sdp?: string;
+      candidate?: string;
+      sdpMid?: string;
+      sdpMLineIndex?: number;
+    },
   ) {
-    console.log(`[CALL_GATEWAY] 📡 call:signal — type=${payload.type}, callId=${payload.callId}`);
+    this.logger.log(
+      `[CALL_GATEWAY] CALL_SIGNAL clientId=${client.id} type=${payload.type} callId=${payload.callId}`,
+    );
+
     try {
       const fromUserId = this.getUserIdFromToken(client);
       if (!fromUserId) {
-        console.error('[CALL_GATEWAY] 📡 call:signal — could not determine sender');
+        this.logger.warn(`[CALL_GATEWAY] CALL_SIGNAL skipped clientId=${client.id} reason=no_user`);
         return { success: false, error: 'Не удалось определить отправителя' };
       }
 
@@ -331,30 +345,65 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       return { success: true };
     } catch (error) {
-      console.error('[CALL_GATEWAY] ❌ call:signal error:', error);
+      this.logger.error(
+        `[CALL_GATEWAY] CALL_SIGNAL failed clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`,
+      );
       return { success: false, error: 'Не удалось передать сигнал' };
     }
   }
 
-  // ========== Вспомогательные методы ==========
+  private sendToUser(userId: number, event: string, data: unknown) {
+    const roomName = this.getUserRoomName(userId);
+    const roomSize = this.getRoomSize(roomName);
+
+    this.logger.log(
+      `[CALL_GATEWAY] SEND user=${userId} room=${roomName} event=${event} sockets=${roomSize} payload=${JSON.stringify(data)}`,
+    );
+
+    this.server.to(roomName).emit(event, data);
+  }
+
+  private sendToBoth(callerId: number, calleeId: number, event: string, data: unknown) {
+    this.sendToUser(callerId, event, data);
+    this.sendToUser(calleeId, event, data);
+  }
 
   private clearCallTimeout(callId: number) {
     const timeout = this.callTimeouts.get(callId);
-    if (timeout) {
-      clearTimeout(timeout);
-      this.callTimeouts.delete(callId);
+    if (!timeout) {
+      return;
     }
+
+    clearTimeout(timeout);
+    this.callTimeouts.delete(callId);
+  }
+
+  private getUserRoomName(userId: number) {
+    return `user:${userId}`;
+  }
+
+  private getRoomSize(roomName: string) {
+    return this.server.adapter.rooms.get(roomName)?.size ?? 0;
+  }
+
+  private requireUserIdFromToken(client: Socket) {
+    const userId = this.getUserIdFromToken(client);
+    if (!userId) {
+      throw new Error('JWT token is missing or invalid');
+    }
+    return userId;
   }
 
   private getUserIdFromToken(client: Socket): number | null {
     try {
-      const token = client.handshake.auth?.token as string;
+      const token = client.handshake.auth?.token as string | undefined;
       if (!token) {
         return null;
       }
+
       const payload = this.jwtService.verify<{ sub: number }>(token);
       return payload.sub;
-    } catch (error) {
+    } catch {
       return null;
     }
   }
