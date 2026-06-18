@@ -45,6 +45,9 @@ class CallService {
   // Флаг: открыт ли диалог входящего звонка (для предотвращения дублей)
   bool _isIncomingDialogOpen = false;
 
+  // Флаг: предотвращает повторный вызов acceptCall()
+  bool _isAcceptingCall = false;
+
   // Флаг: свёрнут ли звонок в mini-call overlay
   bool _isMinimized = false;
 
@@ -248,7 +251,7 @@ class CallService {
     });
 
     _socketService.onCallEvent('call:accepted', (data) async {
-      _log('📞 call:accepted received callId=${data['callId']}, state=$_state');
+      _log('📞 CALL_SERVICE call:accepted received callId=${data['callId']}, state=$_state');
 
       await CallRingtoneService().stopAllCallSounds();
 
@@ -256,16 +259,44 @@ class CallService {
         _currentCallId = data['callId'];
       }
 
-      // Переходим в IN_CALL и подключаемся к LiveKit
-      _state = CallState.IN_CALL;
-      _stateController.add(_state);
-      _log('📞 CALL_SERVICE caller connecting to LiveKit callId=$_currentCallId');
+      _log('📞 CALL_SERVICE caller _currentCallId before connect=$_currentCallId');
 
       // Подключаемся к LiveKit комнате
       if (_currentCallId != null) {
-        await _liveKitService.connectToCall(_currentCallId!);
-        _log('📞 CALL_SERVICE LiveKit listeners attached (caller)');
-        _setupLiveKitListeners();
+        _log('📞 CALL_SERVICE caller connecting to LiveKit callId=$_currentCallId');
+
+        _log('[CALLER_FLOW] before connectToCall callId=$_currentCallId state=$_state livekitState=${_liveKitService.connectionState.value}');
+
+        try {
+          await _liveKitService.connectToCall(_currentCallId!);
+          _log('[CALLER_FLOW] after connectToCall callId=$_currentCallId livekitState=${_liveKitService.connectionState.value}');
+          _log('📞 CALL_SERVICE caller connectToCall finished');
+
+          // Проверка: LiveKit действительно подключился
+          if (_liveKitService.connectionState.value != LiveKitConnectionState.connected) {
+            _log('🔴 CALL_SERVICE caller LiveKit not connected after connect state=${_liveKitService.connectionState.value}');
+            throw StateError('LiveKit did not reach connected state for callId=$_currentCallId');
+          }
+          _log('[CALLER_FLOW] connected confirmed callId=$_currentCallId');
+
+          // Только после успешного connectToCall переходим в IN_CALL
+          _log('[CALLER_FLOW] setting IN_CALL callId=$_currentCallId');
+          _state = CallState.IN_CALL;
+          _stateController.add(_state);
+
+          _setupLiveKitListeners();
+          _log('[CALLER_FLOW] caller success callId=$_currentCallId finalState=$_state');
+        } catch (e) {
+          _log('🔴 CALL_SERVICE caller connect failure callId=$_currentCallId state=$_state error=$e');
+          _log('📤 CALL_SERVICE caller sending call:end because connect failed callId=$_currentCallId');
+          // Уведомляем backend о завершении звонка, чтобы не блокировать последующие
+          if (_currentCallId != null) {
+            _socketService.sendCallEvent('call:end', {
+              'callId': _currentCallId,
+            });
+          }
+          _endCall(reason: 'connection_failed');
+        }
       } else {
         _log('⚠️ CALL_SERVICE call:accepted but _currentCallId is null');
       }
@@ -413,32 +444,73 @@ class CallService {
   }
 
   Future<void> acceptCall() async {
-    _log('✅ acceptCall() — callId=$_currentCallId, state=$_state');
+    _log('📞 CALL_SERVICE acceptCall begin currentCallId=$_currentCallId, state=$_state');
 
-    await CallRingtoneService().stopAllCallSounds();
-    _resetTimer?.cancel();
-
-    if (_currentCallId == null) {
-      _log('⚠️ acceptCall() — _currentCallId is NULL');
+    // Защита от повторного вызова acceptCall()
+    if (_isAcceptingCall) {
+      _log('⚠️ CALL_SERVICE acceptCall skipped — already accepting');
       return;
     }
+    _isAcceptingCall = true;
 
-    final callId = _currentCallId;
+    try {
+      await CallRingtoneService().stopAllCallSounds();
+      _resetTimer?.cancel();
 
-    _socketService.sendCallEvent('call:accept', {
-      'callId': callId,
-    });
-    _log('✅ call:accept sent');
+      if (_currentCallId == null) {
+        _log('⚠️ CALL_SERVICE acceptCall — _currentCallId is NULL');
+        return;
+      }
 
-    // Подключаемся к LiveKit сразу после отправки accept
-    // (не ждём 5 секунд как в старом flow)
-    _state = CallState.IN_CALL;
-    _stateController.add(_state);
-    _log('📞 CALL_SERVICE callee connecting to LiveKit callId=$callId');
+      final callId = _currentCallId;
 
-    await _liveKitService.connectToCall(callId!);
-    _log('📞 CALL_SERVICE LiveKit listeners attached (callee)');
-    _setupLiveKitListeners();
+      _socketService.sendCallEvent('call:accept', {
+        'callId': callId,
+      });
+      _log('📞 CALL_SERVICE call:accept sent callId=$callId');
+
+      // НЕ ставим IN_CALL до успешного подключения к LiveKit.
+      // Оставляем RINGING (или IDLE), чтобы UI не переключался преждевременно.
+      _log('📞 CALL_SERVICE callee connecting to LiveKit callId=$callId');
+
+      _log('[ACCEPT_FLOW] before connectToCall callId=$callId state=$_state livekitState=${_liveKitService.connectionState.value}');
+
+      try {
+        await _liveKitService.connectToCall(callId!);
+        _log('[ACCEPT_FLOW] after connectToCall callId=$callId livekitState=${_liveKitService.connectionState.value}');
+        _log('📞 CALL_SERVICE callee connectToCall finished');
+
+        // Проверка: LiveKit действительно подключился
+        if (_liveKitService.connectionState.value != LiveKitConnectionState.connected) {
+          _log('🔴 CALL_SERVICE callee LiveKit not connected after connect state=${_liveKitService.connectionState.value}');
+          throw StateError('LiveKit did not reach connected state for callId=$callId');
+        }
+        _log('[ACCEPT_FLOW] connected confirmed callId=$callId');
+
+        // Только после успешного connectToCall переходим в IN_CALL
+        _log('[ACCEPT_FLOW] setting IN_CALL callId=$callId');
+        _state = CallState.IN_CALL;
+        _stateController.add(_state);
+        _log('📞 CALL_SERVICE callee state set to IN_CALL');
+
+        _setupLiveKitListeners();
+        _log('[ACCEPT_FLOW] acceptCall success callId=$callId finalState=$_state');
+      } catch (e) {
+        _log('🔴 CALL_SERVICE acceptCall connect failure callId=$callId state=$_state error=$e');
+        _log('📤 CALL_SERVICE sending call:end because connect failed callId=$callId');
+        // Уведомляем backend о завершении звонка, чтобы не блокировать последующие
+        if (callId != null) {
+          _socketService.sendCallEvent('call:end', {
+            'callId': callId,
+          });
+        }
+        _endCall(reason: 'connection_failed');
+        // Пробрасываем исключение наверх, чтобы app.dart знал, что accept не удался
+        rethrow;
+      }
+    } finally {
+      _isAcceptingCall = false;
+    }
   }
 
   Future<void> rejectCall() async {

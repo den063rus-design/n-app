@@ -67,15 +67,26 @@ class LiveKitService {
   /// 4. Включает микрофон и камеру
   Future<void> connectToCall(int callId) async {
     if (_isConnecting) {
-      debugPrint('[LIVEKIT] Already connecting, skipping');
-      return;
+      debugPrint('[LIVEKIT] 🔴 LIVEKIT connectToCall skipped — already connecting callId=$callId');
+      throw StateError('LiveKit connection already in progress for callId=$callId');
     }
+
+    String currentStep = 'start';
+    debugPrint('[LIVEKIT_STEP] step=1 begin callId=$callId');
+
+    // Cleanup stale room before reconnecting
+    if (_room != null) {
+      debugPrint('[LIVEKIT] LIVEKIT cleaning up stale room before connect callId=$callId');
+      await disconnect();
+    }
+    currentStep = 'stale_check';
+    debugPrint('[LIVEKIT_STEP] step=2 stale_check roomExists=${_room != null} currentCallId=$_currentCallId state=${connectionState.value}');
 
     // Если уже подключены к этому звонку — не переподключаемся
     if (_room != null &&
         _currentCallId == callId &&
         _room!.connectionState == ConnectionState.connected) {
-      debugPrint('[LIVEKIT] Already connected to call $callId, skipping');
+      debugPrint('[LIVEKIT] LIVEKIT skipped because already connected to same call callId=$callId');
       return;
     }
 
@@ -87,15 +98,28 @@ class LiveKitService {
       debugPrint('[LIVEKIT] LIVEKIT connectToCall begin callId=$callId');
 
       // 1. Получаем токен
+      currentStep = 'token_request';
+      debugPrint('[LIVEKIT_STEP] step=3 token_request_start callId=$callId');
       debugPrint('[LIVEKIT] LIVEKIT token request start callId=$callId');
-      final tokenData = await _apiService.getLiveKitToken(callId);
+      Map<String, dynamic> tokenData;
+      try {
+        tokenData = await _apiService.getLiveKitToken(callId);
+      } catch (e) {
+        debugPrint('[LIVEKIT] LIVEKIT token request failed error=$e');
+        connectionState.value = LiveKitConnectionState.error;
+        rethrow;
+      }
       final token = tokenData['token'] as String;
       final wsUrl = tokenData['wsUrl'] as String;
       final roomName = tokenData['roomName'] as String? ?? 'unknown';
 
+      debugPrint('[LIVEKIT_STEP] step=4 token_received wsUrl=$wsUrl roomName=$roomName tokenLength=${token.length}');
       debugPrint('[LIVEKIT] LIVEKIT token received wsUrl=$wsUrl roomName=$roomName');
 
       // 2. Создаём Room
+      currentStep = 'room_create';
+      debugPrint('[LIVEKIT_STEP] step=5 room_create_start');
+      debugPrint('[LIVEKIT] LIVEKIT room create start');
       _room?.dispose();
       _room = Room(
         roomOptions: const RoomOptions(
@@ -104,33 +128,61 @@ class LiveKitService {
           ),
         ),
       );
+      debugPrint('[LIVEKIT_STEP] step=6 room_created roomNull=${_room == null}');
 
       // 3. Подписываемся на события комнаты
       _setupRoomListeners();
 
       // 4. Подключаемся
-      debugPrint('[LIVEKIT] LIVEKIT room connect start');
-      await _room!.connect(wsUrl, token);
+      currentStep = 'room_connect';
+      debugPrint('[LIVEKIT_STEP] step=7 room_connect_start wsUrl=$wsUrl roomName=$roomName');
+      debugPrint('[LIVEKIT] LIVEKIT room connect start wsUrl=$wsUrl roomName=$roomName');
+      try {
+        await _room!.connect(wsUrl, token);
+      } catch (e) {
+        debugPrint('[LIVEKIT] LIVEKIT room connect failed error=$e');
+        connectionState.value = LiveKitConnectionState.error;
+        rethrow;
+      }
+      debugPrint('[LIVEKIT_STEP] step=8 room_connected actualRoomName=${_room?.name}');
       debugPrint('[LIVEKIT] LIVEKIT room connected name=${_room!.name}');
 
-      // 5. Включаем микрофон и камеру
-      if (_room!.localParticipant != null) {
+      // 5. Проверяем localParticipant
+      final hasLocalParticipant = _room!.localParticipant != null;
+      debugPrint('[LIVEKIT_STEP] step=9 local_participant_exists=${_room?.localParticipant != null}');
+      debugPrint('[LIVEKIT] LIVEKIT localParticipant exists=$hasLocalParticipant');
+
+      // 6. Включаем микрофон и камеру
+      if (hasLocalParticipant) {
+        currentStep = 'mic_enable';
         debugPrint('[LIVEKIT] LIVEKIT local mic enable start');
-        await _room!.localParticipant!.setMicrophoneEnabled(true);
-        debugPrint('[LIVEKIT] LIVEKIT local mic enable done');
+        try {
+          await _room!.localParticipant!.setMicrophoneEnabled(true);
+          debugPrint('[LIVEKIT] LIVEKIT local mic enable done');
+        } catch (e) {
+          debugPrint('[LIVEKIT] LIVEKIT local mic enable failed error=$e');
+        }
+        currentStep = 'camera_enable';
+        debugPrint('[LIVEKIT_STEP] step=10 camera_enable_start');
         debugPrint('[LIVEKIT] LIVEKIT local camera enable start');
-        await _room!.localParticipant!.setCameraEnabled(true);
-        debugPrint('[LIVEKIT] LIVEKIT local camera enable done');
+        try {
+          await _room!.localParticipant!.setCameraEnabled(true);
+          debugPrint('[LIVEKIT] LIVEKIT local camera enable done');
+        } catch (e) {
+          debugPrint('[LIVEKIT] LIVEKIT local camera enable failed error=$e');
+        }
       } else {
         debugPrint('[LIVEKIT] ⚠️ LIVEKIT localParticipant is null after connect');
       }
 
-      // 6. Обновляем состояние
+      // 7. Обновляем состояние
       isMicEnabled.value = true;
       isCameraEnabled.value = true;
 
-      // 7. Получаем локальный видео-трек
+      // 8. Получаем локальный видео-трек
+      currentStep = 'local_track_refresh';
       _updateLocalVideoTrack();
+      debugPrint('[LIVEKIT_STEP] step=11 local_track_present=${localVideoTrack.value != null}');
       if (localVideoTrack.value != null) {
         debugPrint('[LIVEKIT] LIVEKIT local video track found');
       } else {
@@ -138,11 +190,13 @@ class LiveKitService {
       }
 
       connectionState.value = LiveKitConnectionState.connected;
+      debugPrint('[LIVEKIT_STEP] step=12 success connectionState=${connectionState.value}');
       debugPrint('[LIVEKIT] LIVEKIT ✅ Connected successfully');
     } catch (e, stack) {
-      debugPrint('[LIVEKIT] ❌ LIVEKIT error: $e');
-      debugPrint('[LIVEKIT] StackTrace: $stack');
+      debugPrint('[LIVEKIT_FATAL] step=$currentStep error=$e');
+      debugPrint('[LIVEKIT_FATAL] stack=$stack');
       connectionState.value = LiveKitConnectionState.error;
+      rethrow;
     } finally {
       _isConnecting = false;
     }

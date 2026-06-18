@@ -73,12 +73,15 @@ export class LiveKitService {
       callId,
       user.id,
     );
+    this.logger.log(
+      `[LIVEKIT_SERVICE] findCallForParticipant result=${JSON.stringify(call ? { id: call.id, status: call.status, callerId: call.callerId, calleeId: call.calleeId } : null)}`,
+    );
 
     if (!call) {
       this.logger.warn(
-        `[LIVEKIT_SERVICE] createTokenForCall call not found userId=${user.id} callId=${callId}`,
+        `[LIVEKIT_SERVICE] call not found for participant userId=${user.id} callId=${callId}`,
       );
-      throw new NotFoundException('Звонок не найден');
+      throw new NotFoundException('Call not found for participant');
     }
 
     this.logger.log(
@@ -90,7 +93,7 @@ export class LiveKitService {
       this.logger.warn(
         `[LIVEKIT_SERVICE] createTokenForCall forbidden userId=${user.id} not participant of callId=${callId}`,
       );
-      throw new ForbiddenException('Вы не являетесь участником этого звонка');
+      throw new ForbiddenException('User is not participant of this call');
     }
 
     // 3. Проверяем, что звонок не завершён
@@ -116,22 +119,44 @@ export class LiveKitService {
     }
 
     // 4. Проверяем, что статус допускает подключение
+    const allowedStatuses = ['PENDING', 'ACCEPTED'];
+    this.logger.log(
+      `[LIVEKIT_SERVICE] call status check status=${call.status} allowed=${allowedStatuses.includes(call.status)}`,
+    );
     if (
       call.status !== CallStatus.PENDING &&
       call.status !== CallStatus.ACCEPTED
     ) {
       this.logger.warn(
-        `[LIVEKIT_SERVICE] createTokenForCall invalid status userId=${user.id} callId=${callId} status=${call.status}`,
+        `[LIVEKIT_SERVICE] invalid call status userId=${user.id} callId=${callId} status=${call.status}`,
       );
       throw new ForbiddenException(
-        'Статус звонка не допускает подключение',
+        `Call status ACCEPTED/PENDING expected, got ${call.status}`,
       );
     }
 
-    // 5. Создаём LiveKit AccessToken
+    // 5. Проверяем env переменные
+    this.logger.log(
+      `[LIVEKIT_SERVICE] env check LIVEKIT_URL=${this.wsUrl ? 'set' : 'MISSING'} LIVEKIT_API_KEY=${this.apiKey ? 'set' : 'MISSING'} LIVEKIT_API_SECRET=${this.apiSecret ? 'set' : 'MISSING'}`,
+    );
+
+    if (!this.wsUrl) {
+      this.logger.error(`[LIVEKIT_SERVICE] LIVEKIT_URL is not configured`);
+      throw new Error('LIVEKIT_URL is not configured');
+    }
+    if (!this.apiKey) {
+      this.logger.error(`[LIVEKIT_SERVICE] LIVEKIT_API_KEY is not configured`);
+      throw new Error('LIVEKIT_API_KEY is not configured');
+    }
+    if (!this.apiSecret) {
+      this.logger.error(`[LIVEKIT_SERVICE] LIVEKIT_API_SECRET is not configured`);
+      throw new Error('LIVEKIT_API_SECRET is not configured');
+    }
+
+    // 6. Создаём LiveKit AccessToken
     const roomName = this.buildRoomName(callId);
     this.logger.log(
-      `[LIVEKIT_SERVICE] createTokenForCall roomName=${roomName} userId=${user.id} callId=${callId}`,
+      `[LIVEKIT_SERVICE] generating token userId=${user.id} callId=${callId} roomName=${roomName}`,
     );
 
     const at = new AccessToken(this.apiKey, this.apiSecret, {
@@ -149,7 +174,7 @@ export class LiveKitService {
     const token = await at.toJwt();
 
     this.logger.log(
-      `[LIVEKIT_SERVICE] LIVEKIT_TOKEN success userId=${user.id} callId=${callId} roomName=${roomName}`,
+      `[LIVEKIT_SERVICE] token generated userId=${user.id} callId=${callId} roomName=${roomName}`,
     );
 
     return {

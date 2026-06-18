@@ -280,7 +280,11 @@ class ApiService {
       debugPrint('[API] API getLiveKitToken success status=200 data=$response');
       return response as Map<String, dynamic>;
     } catch (e) {
-      debugPrint('[API] API getLiveKitToken error status=error body=$e');
+      if (e is DioException) {
+        debugPrint('[API] getLiveKitToken failed status=${e.response?.statusCode} data=${e.response?.data} error=$e');
+      } else {
+        debugPrint('[API] getLiveKitToken failed error=$e');
+      }
       rethrow;
     }
   }

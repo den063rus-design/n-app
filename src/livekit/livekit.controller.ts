@@ -5,6 +5,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -18,6 +19,8 @@ class GetTokenDto {
 @Controller('livekit')
 @UseGuards(JwtAuthGuard)
 export class LiveKitController {
+  private readonly logger = new Logger(LiveKitController.name);
+
   constructor(private readonly liveKitService: LiveKitService) {}
 
   /**
@@ -43,18 +46,18 @@ export class LiveKitController {
     @Body() dto: GetTokenDto,
     @CurrentUser() user: CurrentUserType,
   ) {
-    console.log(
-      `[LIVEKIT_CONTROLLER] LIVEKIT_TOKEN request userId=${user.id} callId=${dto.callId}`,
+    this.logger.log(
+      `[LIVEKIT_CONTROLLER] token request userId=${user.id} callId=${dto.callId} dto=${JSON.stringify(dto)}`,
     );
     try {
       const result = await this.liveKitService.createTokenForCall(dto.callId, user);
-      console.log(
-        `[LIVEKIT_CONTROLLER] LIVEKIT_TOKEN success userId=${user.id} callId=${dto.callId} roomName=${result.roomName}`,
+      this.logger.log(
+        `[LIVEKIT_CONTROLLER] token success userId=${user.id} callId=${dto.callId} roomName=${result.roomName}`,
       );
       return result;
     } catch (error) {
-      console.error(
-        `[LIVEKIT_CONTROLLER] LIVEKIT_TOKEN denied userId=${user.id} callId=${dto.callId} reason=${error instanceof Error ? error.message : String(error)}`,
+      this.logger.error(
+        `[LIVEKIT_CONTROLLER] token error userId=${user.id} callId=${dto.callId} name=${(error as Error).name} message=${(error as Error).message} stack=${(error as Error).stack}`,
       );
       throw error;
     }

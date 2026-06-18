@@ -485,7 +485,30 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     debugPrint('[APP] APP showIncomingCallDialog pushed route');
 
     // Показываем IncomingCallDialog как fullscreen route
-    Navigator.push<bool>(
+    // и ждём результат (accept/reject) синхронно через async/await.
+    _showIncomingCallDialogAsync(
+      callerId: callerId,
+      callerName: callerName,
+      callId: callId,
+      source: source,
+      callService: callService,
+    );
+  }
+
+  /// Асинхронная версия показа IncomingCallDialog.
+  ///
+  /// Отличается от синхронной _showIncomingCallDialog тем, что:
+  /// 1. acceptCall() выполняется await, а не fire-and-forget
+  /// 2. CallScreen открывается ТОЛЬКО после успешного acceptCall()
+  /// 3. Если acceptCall() упал — CallScreen не открывается
+  Future<void> _showIncomingCallDialogAsync({
+    required int callerId,
+    required String callerName,
+    required int callId,
+    required String source,
+    required CallService callService,
+  }) async {
+    final result = await Navigator.push<bool>(
       navigatorKey.currentContext!,
       MaterialPageRoute(
         fullscreenDialog: true,
@@ -496,40 +519,47 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
           callId: callId,
         ),
       ),
-    ).then((result) {
-      // Диалог закрыт — сбрасываем флаг
-      callService.markIncomingDialogClosed();
+    );
 
-      if (result == true) {
-        // Принято — вызываем acceptCall (fire-and-forget)
-        debugPrint('[APP] ✅ _showIncomingCallDialog accepted — calling acceptCall()');
-        unawaited(callService.acceptCall().catchError((e) {
-          debugPrint('[APP] 🔴 acceptCall() threw: $e');
-        }));
+    // Диалог закрыт — сбрасываем флаг
+    callService.markIncomingDialogClosed();
 
-        // Открываем CallScreen в addPostFrameCallback, чтобы дать Flutter
-        // завершить текущий фрейм (закрытие диалога) перед открытием нового экрана.
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          _openCallScreen(
-            userId: callerId,
-            userName: callerName,
-            isIncoming: true,
-            from: source,
-          );
-        });
-      } else {
-        // Отклонено или закрыто — вызываем rejectCall
-        // Защита от двойного reject: если звонок уже завершён (state != RINGING),
-        // не вызываем rejectCall повторно
-        if (callService.state == CallState.RINGING) {
-          debugPrint('[APP] ❌ _showIncomingCallDialog rejected/dismissed — calling rejectCall() (state=RINGING)');
-          callService.rejectCall();
-        } else {
-          debugPrint('[APP] ⏭️ _showIncomingCallDialog dismissed — state=${callService.state}, skipping rejectCall (already ended)');
+    if (result == true) {
+      // Принято — вызываем acceptCall и ждём результат
+      debugPrint('[APP] ✅ _showIncomingCallDialog accepted — calling acceptCall()');
+      try {
+        await callService.acceptCall();
+
+        // Жёсткая проверка: открываем CallScreen ТОЛЬКО если звонок реально перешёл в IN_CALL
+        if (callService.state != CallState.IN_CALL) {
+          debugPrint('[APP] ⚠️ acceptCall completed but state=${callService.state} — NOT opening CallScreen');
+          return;
         }
+
+        debugPrint('[APP] ✅ acceptCall() completed successfully — opening CallScreen');
+
+        if (!mounted) return;
+        _openCallScreen(
+          userId: callerId,
+          userName: callerName,
+          isIncoming: true,
+          from: source,
+        );
+      } catch (e) {
+        debugPrint('[APP] 🔴 acceptCall() failed: $e — NOT opening CallScreen');
+        // acceptCall() сам вызывает _endCall при ошибке, ничего не делаем
       }
-    });
+    } else {
+      // Отклонено или закрыто — вызываем rejectCall
+      // Защита от двойного reject: если звонок уже завершён (state != RINGING),
+      // не вызываем rejectCall повторно
+      if (callService.state == CallState.RINGING) {
+        debugPrint('[APP] ❌ _showIncomingCallDialog rejected/dismissed — calling rejectCall() (state=RINGING)');
+        callService.rejectCall();
+      } else {
+        debugPrint('[APP] ⏭️ _showIncomingCallDialog dismissed — state=${callService.state}, skipping rejectCall (already ended)');
+      }
+    }
   }
 
   /// Мониторинг подключения к интернету
@@ -678,5 +708,4 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       ),
     );
   }
-
 }

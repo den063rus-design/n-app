@@ -226,8 +226,9 @@ class _CallScreenState extends State<CallScreen> {
     final remoteTrack = _liveKitService.remoteVideoTrack.value;
     final connState = _liveKitService.connectionState.value;
     final hasRemoteParticipant = _liveKitService.remoteParticipant.value != null;
+    final callState = _callService.state;
 
-    _log('_buildRemoteVideo — remoteTrack=${remoteTrack != null}, connState=$connState, hasRemoteParticipant=$hasRemoteParticipant');
+    _log('_buildRemoteVideo — remoteTrack=${remoteTrack != null}, connState=$connState, hasRemoteParticipant=$hasRemoteParticipant, callState=$callState');
 
     if (remoteTrack != null) {
       _log('_buildRemoteVideo — RENDERING remote video track');
@@ -247,11 +248,15 @@ class _CallScreenState extends State<CallScreen> {
       statusText = 'Собеседник подключился, ожидание видео...';
     } else if (connState == LiveKitConnectionState.error) {
       statusText = 'Ошибка подключения';
+    } else if (connState == LiveKitConnectionState.disconnected) {
+      statusText = 'Нет подключения';
+    } else if (connState == LiveKitConnectionState.reconnecting) {
+      statusText = 'Переподключение...';
     } else {
       statusText = 'Ожидание собеседника...';
     }
 
-    _log('_buildRemoteVideo — FALLBACK: statusText="$statusText"');
+    _log('_buildRemoteVideo — FALLBACK: statusText="$statusText" connState=$connState hasRemoteParticipant=$hasRemoteParticipant remoteTrack=$remoteTrack');
 
     return Container(
       color: Colors.black87,
@@ -498,6 +503,17 @@ class _CallScreenState extends State<CallScreen> {
     return const SizedBox.shrink();
   }
 
+  /// UI входящего звонка внутри CallScreen.
+  ///
+  /// Используется ТОЛЬКО для caller-пути, когда CallScreen открыт
+  /// как исходящий (isIncoming=false), но пришёл call:incoming
+  /// (state=RINGING) — legacy случай, когда caller видит "Входящий звонок".
+  ///
+  /// Для callee-пути (accept из IncomingCallDialog) этот UI НЕ ИСПОЛЬЗУЕТСЯ,
+  /// т.к. CallScreen открывается уже после успешного acceptCall().
+  ///
+  /// Зелёная кнопка accept удалена — единственный accept-flow теперь
+  /// проходит через IncomingCallDialog → app.dart → callService.acceptCall().
   Widget _buildIncomingCallUI() {
     return Container(
       color: Colors.black54,
@@ -520,14 +536,8 @@ class _CallScreenState extends State<CallScreen> {
                   backgroundColor: Colors.red,
                   child: const Icon(Icons.call_end),
                 ),
-                FloatingActionButton(
-                  onPressed: () {
-                    _callService.acceptCall();
-                    setState(() {});
-                  },
-                  backgroundColor: Colors.green,
-                  child: const Icon(Icons.call),
-                ),
+                // Зелёная кнопка accept удалена — accept выполняется
+                // только через IncomingCallDialog → app.dart
               ],
             ),
           ],
