@@ -1,20 +1,15 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../app/app.dart';
 import 'socket_service.dart';
 import 'call_logger.dart';
 import 'call_ringtone_service.dart';
-import 'livekit_service.dart';
-import 'call_session.dart';
-import 'push_service.dart';
 
 enum CallState {
   IDLE,
   CALLING,
   RINGING,
-  /// Звонок принят (call:accept отправлен), но подключение к LiveKit ещё не завершено.
-  /// Промежуточное состояние между RINGING и IN_CALL.
-  /// Позволяет UI показать индикатор подключения вместо преждевременного IN_CALL.
   ACCEPTING,
   IN_CALL,
   ENDED,
@@ -27,16 +22,12 @@ class CallService {
 
   final SocketService _socketService = SocketService();
   final CallLogger _callLogger = CallLogger();
-  final LiveKitService _liveKitService = LiveKitService();
 
-  /// Текущая сессия звонка (LiveKit).
-  /// Создаётся в [connectToCall], уничтожается в [_endCall].
-  CallSession? _currentSession;
+  RTCPeerConnection? _peerConnection;
+  MediaStream? _localStream;
+  MediaStream? _remoteStream;
+  final List<RTCIceCandidate> _pendingRemoteCandidates = [];
 
-  /// Публичный геттер для UI (CallScreen, ActiveCallOverlay).
-  CallSession? get currentSession => _currentSession;
-
-  // Состояние
   CallState _state = CallState.IDLE;
   int? _currentCallId;
   int? _remoteUserId;
@@ -44,34 +35,33 @@ class CallService {
   bool _isCameraOn = true;
   bool _isMicOn = true;
   bool _isFrontCamera = true;
-
-  // Флаг: открыт ли экран звонка (для предотвращения дублей)
   bool _isCallScreenOpen = false;
-
-  // Флаг: открыт ли диалог входящего звонка (для предотвращения дублей)
   bool _isIncomingDialogOpen = false;
-
-  // Флаг: предотвращает повторный вызов acceptCall()
-  bool _isAcceptingCall = false;
-
-  // Флаг: свёрнут ли звонок в mini-call overlay
   bool _isMinimized = false;
-
-  // Таймер отложенного сброса после завершения звонка
+  bool _isAcceptingCall = false;
+  bool _isEndingCall = false;
   Timer? _resetTimer;
+  StreamSubscription<bool>? _connectionSubscription;
 
-  // StreamController для UI
   final _stateController = StreamController<CallState>.broadcast();
-
-  // Стрим для оповещения о входящем звонке (глобальная навигация)
-  final _incomingCallController = StreamController<Map<String, dynamic>>.broadcast();
-  Stream<Map<String, dynamic>> get incomingCallStream => _incomingCallController.stream;
-
-  // Стрим для оповещения о сворачивании/разворачивании звонка
+  final _localStreamController = StreamController<MediaStream?>.broadcast();
+  final _remoteStreamController = StreamController<MediaStream?>.broadcast();
+  final _incomingCallController =
+      StreamController<Map<String, dynamic>>.broadcast();
   final _minimizedController = StreamController<bool>.broadcast();
-  Stream<bool> get minimizedStream => _minimizedController.stream;
 
+  String? _lastEndReason;
+  int? _lastCallEndTimestamp;
+
+  Stream<Map<String, dynamic>> get incomingCallStream =>
+      _incomingCallController.stream;
+  Stream<bool> get minimizedStream => _minimizedController.stream;
   Stream<CallState> get stateStream => _stateController.stream;
+  Stream<MediaStream?> get localStream => _localStreamController.stream;
+  Stream<MediaStream?> get remoteStream => _remoteStreamController.stream;
+
+  MediaStream? get currentLocalStream => _localStream;
+  MediaStream? get currentRemoteStream => _remoteStream;
 
   CallState get state => _state;
   bool get isCameraOn => _isCameraOn;
@@ -81,248 +71,247 @@ class CallService {
   int? get currentCallId => _currentCallId;
   bool get isMinimized => _isMinimized;
   bool get isIncomingDialogOpen => _isIncomingDialogOpen;
-
-  String? _lastEndReason;
+  bool get isCallScreenOpen => _isCallScreenOpen;
   String? get lastEndReason => _lastEndReason;
-
-  /// Время завершения последнего звонка (millisecondsSinceEpoch).
-  /// Используется в PushService для stale push guard.
-  int? _lastCallEndTimestamp;
   int? get lastCallEndTimestamp => _lastCallEndTimestamp;
-
-  // Подписка на стрим изменения подключения socket
-  StreamSubscription<bool>? _connectionSubscription;
-
-  // Подписки на CallSession
-  VoidCallback? _sessionStateListener;
-  VoidCallback? _sessionRemoteVideoListener;
 
   Future<void> init() async {
     _log('🔧 init()');
     await _requestPermissions();
     _socketService.setOnConnectCallback(_setupSocketListeners);
-
-    // Принудительная регистрация listener-ов, если socket уже подключён
-    if (_socketService.socket != null && _socketService.socket!.connected) {
-      _log('[CallService] Socket already connected — registering listeners immediately');
-      _setupSocketListeners();
-    }
-
-    // Подписываемся на изменения состояния подключения socket.
-    _connectionSubscription = _socketService.onConnectionChanged.listen((connected) {
+    _connectionSubscription ??=
+        _socketService.onConnectionChanged.listen((connected) {
       if (connected) {
-        _log('🔌 Socket reconnected — re-registering listeners');
+        _log('🔌 socket reconnected — re-registering call listeners');
         _setupSocketListeners();
       }
     });
-  }
-
-  /// Отмечает, что экран звонка открыт (предотвращает дубли)
-  void markCallScreenOpen() => _isCallScreenOpen = true;
-
-  /// Отмечает, что экран звонка закрыт
-  void markCallScreenClosed() => _isCallScreenOpen = false;
-
-  /// Проверяет, открыт ли уже экран звонка
-  bool get isCallScreenOpen => _isCallScreenOpen;
-
-  /// Отмечает, что диалог входящего звонка открыт
-  void markIncomingDialogOpen() => _isIncomingDialogOpen = true;
-
-  /// Отмечает, что диалог входящего звонка закрыт
-  void markIncomingDialogClosed() => _isIncomingDialogOpen = false;
-
-  /// Сворачивает звонок в mini-call overlay
-  void minimizeCall() {
-    if (_state == CallState.CALLING ||
-        _state == CallState.RINGING ||
-        _state == CallState.IN_CALL) {
-      _isMinimized = true;
-      _minimizedController.add(_isMinimized);
-      _log('📱 minimizeCall() — call minimized, isMinimized=true');
-    } else {
-      _log('⚠️ minimizeCall() — cannot minimize in state=$_state');
+    if (_socketService.isConnected) {
+      _setupSocketListeners();
     }
   }
 
-  /// Разворачивает звонок из mini-call overlay в fullscreen
-  void expandCall() {
-    _isMinimized = false;
-    _minimizedController.add(_isMinimized);
-    _log('📱 expandCall() — call expanded, isMinimized=false');
+  void markCallScreenOpen() => _isCallScreenOpen = true;
+  void markCallScreenClosed() => _isCallScreenOpen = false;
+  void markIncomingDialogOpen() => _isIncomingDialogOpen = true;
+  void markIncomingDialogClosed() => _isIncomingDialogOpen = false;
+
+  void minimizeCall() {
+    if (_state == CallState.CALLING ||
+        _state == CallState.RINGING ||
+        _state == CallState.ACCEPTING ||
+        _state == CallState.IN_CALL) {
+      _isMinimized = true;
+      _minimizedController.add(true);
+      _log('📱 minimizeCall()');
+    }
   }
 
-  /// Восстанавливает состояние входящего звонка из push-уведомления.
+  void expandCall() {
+    _isMinimized = false;
+    _minimizedController.add(false);
+    _log('📱 expandCall()');
+  }
+
   void hydrateIncomingCallFromPush({
     required String callId,
     required String callerId,
     required String callerName,
   }) {
-    _log('📞 hydrateIncomingCallFromPush() — callId=$callId, callerId=$callerId, callerName=$callerName');
+    _log(
+      '📞 hydrateIncomingCallFromPush() — callId=$callId callerId=$callerId callerName=$callerName',
+    );
 
     final parsedCallId = int.tryParse(callId);
     final parsedCallerId = int.tryParse(callerId);
-
     if (parsedCallId == null || parsedCallerId == null) {
-      _log('⚠️ hydrateIncomingCallFromPush — failed to parse callId or callerId, ignoring');
+      _log('⚠️ hydrateIncomingCallFromPush() — invalid payload');
       return;
     }
 
     if (_state == CallState.CALLING ||
         _state == CallState.RINGING ||
+        _state == CallState.ACCEPTING ||
         _state == CallState.IN_CALL) {
-      _log('⚠️ hydrateIncomingCallFromPush — already in call, state=$_state, ignoring');
+      _log('⚠️ hydrateIncomingCallFromPush() — already in call, state=$_state');
       return;
     }
 
     _resetTimer?.cancel();
     _hardReset();
-
-    _state = CallState.RINGING;
     _currentCallId = parsedCallId;
     _remoteUserId = parsedCallerId;
     _remoteUserName = callerName;
-    _stateController.add(_state);
-    _log('✅ hydrateIncomingCallFromPush — state set to RINGING');
+    _lastEndReason = null;
+    _lastCallEndTimestamp = null;
+    _applyState(CallState.RINGING);
   }
 
-  Future<void> _requestPermissions() async {
-    // Разрешения запрашиваются централизованно в AppPermissionsService при старте.
-  }
+  Future<void> _requestPermissions() async {}
 
   void _setupSocketListeners() {
-    _log('🔌 _setupSocketListeners begin');
-
     final socket = _socketService.socket;
     if (socket == null) {
-      _log('🔌 _setupSocketListeners — socket is NULL');
+      _log('🔌 _setupSocketListeners() — socket is null');
       return;
     }
 
-    // Убираем guard _listenersAttached — socket.off() + socket.on() идемпотентны.
-    // После reconnect socket.io создаёт новый объект socket, и listener-ы
-    // на старом объекте не переносятся. Поэтому всегда перерегистрируем.
-    _log('🔌 _setupSocketListeners — registering listeners (idempotent)');
-
-    // Всегда отписываемся перед подпиской, чтобы избежать дублирования
-    socket.off('call:incoming');
-    socket.off('call:accepted');
-    socket.off('call:ended');
-    socket.off('call:rejected');
-
-    _log('🔌 _setupSocketListeners — registering: call:incoming');
+    for (final event in const [
+      'call:incoming',
+      'call:accepted',
+      'call:signal',
+      'call:ended',
+      'call:rejected',
+    ]) {
+      socket.off(event);
+    }
 
     _socketService.onCallEvent('call:incoming', (data) {
-      _log('📞 call:incoming RECEIVED — data: $data, state=$_state');
+      _log('📲 call:incoming — data=$data state=$_state');
 
-      // Единственный guard на транспортном уровне:
-      // если уже на звонке — игнорируем входящий
+      if (_isCallScreenOpen &&
+          (_state == CallState.IDLE || _state == CallState.ENDED)) {
+        markCallScreenClosed();
+      }
+      if (_isIncomingDialogOpen && _state != CallState.RINGING) {
+        markIncomingDialogClosed();
+      }
+
       if (_state == CallState.CALLING ||
           _state == CallState.RINGING ||
+          _state == CallState.ACCEPTING ||
           _state == CallState.IN_CALL) {
-        _log('📞 call:incoming ignored because state=$_state');
+        _log('⚠️ call:incoming ignored — active state=$_state');
+        return;
+      }
+      if (_isCallScreenOpen || _isIncomingDialogOpen) {
+        _log(
+          '⚠️ call:incoming ignored — screen/dialog already open '
+          '(screen=$_isCallScreenOpen dialog=$_isIncomingDialogOpen)',
+        );
         return;
       }
 
-      // Сбрасываем состояние и устанавливаем RINGING
       _resetTimer?.cancel();
       _hardReset();
-      _state = CallState.RINGING;
-      _currentCallId = data['callId'];
-      _remoteUserId = data['callerId'];
-      _remoteUserName = data['callerName'] ?? 'Пользователь';
-      _stateController.add(_state);
-      _log('✅ call:incoming processed — callId=$_currentCallId, callerId=$_remoteUserId');
+      _currentCallId = data['callId'] as int?;
+      _remoteUserId = data['callerId'] as int?;
+      _remoteUserName = data['callerName'] as String? ?? 'Пользователь';
+      _lastEndReason = null;
+      _lastCallEndTimestamp = null;
+      _applyState(CallState.RINGING);
 
-      // Доставляем событие в UI-слой (app.dart).
-      // UI-слой сам решает, показывать диалог или нет.
       _incomingCallController.add({
-        'callId': data['callId'],
-        'callerId': data['callerId'],
-        'callerName': data['callerName'] ?? 'Пользователь',
+        'callId': _currentCallId,
+        'callerId': _remoteUserId,
+        'callerName': _remoteUserName ?? 'Пользователь',
       });
     });
 
     _socketService.onCallEvent('call:accepted', (data) async {
-      final callerSw = Stopwatch()..start();
-      _log('📞 CALL_SERVICE call:accepted received callId=${data['callId']}, state=$_state');
-
+      _log('📲 call:accepted — data=$data state=$_state');
       await CallRingtoneService().stopAllCallSounds();
+      _resetTimer?.cancel();
 
-      if (_currentCallId == null && data['callId'] != null) {
-        _currentCallId = data['callId'];
+      final acceptedCallId = data['callId'] as int?;
+      if (_currentCallId == null && acceptedCallId != null) {
+        _currentCallId = acceptedCallId;
       }
 
-      _log('📞 CALL_SERVICE caller _currentCallId before connect=$_currentCallId');
+      _applyState(CallState.ACCEPTING);
 
-      // Подключаемся к LiveKit комнате
-      if (_currentCallId != null) {
-        _log('📞 CALL_SERVICE caller connecting to LiveKit callId=$_currentCallId');
-
-        _log('[CALLER_FLOW] connect start callId=$_currentCallId state=$_state elapsedMs=${callerSw.elapsedMilliseconds}');
-
-        try {
-          await connectToCall(_currentCallId!);
-          _log('[CALLER_FLOW] connect success callId=$_currentCallId sessionState=${_currentSession?.connectionState.value} elapsedMs=${callerSw.elapsedMilliseconds}');
-          _log('📞 CALL_SERVICE caller connectToCall finished');
-
-          // Проверка: LiveKit действительно подключился
-          if (_currentSession == null ||
-              _currentSession!.connectionState.value != LiveKitConnectionState.connected) {
-            _log('🔴 CALL_SERVICE caller LiveKit not connected after connect state=${_currentSession?.connectionState.value}');
-            throw StateError('LiveKit did not reach connected state for callId=$_currentCallId');
-          }
-          _log('[CALLER_FLOW] connected confirmed callId=$_currentCallId elapsedMs=${callerSw.elapsedMilliseconds}');
-
-          // Только после успешного connectToCall переходим в IN_CALL
-          _log('[CALLER_FLOW] setting IN_CALL callId=$_currentCallId');
-          _state = CallState.IN_CALL;
-          _stateController.add(_state);
-
-          _setupLiveKitListeners();
-          _log('[CALLER_FLOW] caller success callId=$_currentCallId finalState=$_state totalElapsedMs=${callerSw.elapsedMilliseconds}');
-        } catch (e) {
-          _log('[CALLER_FLOW] connect fail callId=$_currentCallId error=$e elapsedMs=${callerSw.elapsedMilliseconds}');
-          // Блок 3: StateError('already connecting') — не фатальная ошибка,
-          // это дублирующий вызов connectToCall. Не отправляем call:end.
-          if (e is StateError && e.message.contains('already connecting')) {
-            _log('[CALLER_FLOW] ⚠️ duplicate connect detected — not ending call callId=$_currentCallId');
-            return;
-          }
-          // Диагностика: проверяем, был ли отправлен HTTP-запрос на /livekit/token
-          if (_currentSession?.isLiveKitTokenRequested == true) {
-            _log('[CALL_END_BEFORE_TOKEN] 🔴 CALLER: call:end will be sent while HTTP token request is in flight! callId=$_currentCallId');
-          }
-          _log(' CALL_SERVICE caller sending call:end because connect failed callId=$_currentCallId');
-          // Уведомляем backend о завершении звонка, чтобы не блокировать последующие
-          if (_currentCallId != null) {
-            _socketService.sendCallEvent('call:end', {
-              'callId': _currentCallId,
-              'reason': 'connect_failed',
-            });
-          }
-          _log('END_SOURCE=caller_call_accepted_catch callId=$_currentCallId');
-          _endCall(reason: 'connection_failed');
+      try {
+        await _startPeerConnection(isCaller: true);
+      } catch (e) {
+        _log('🔴 call:accepted connect failed: $e');
+        if (_currentCallId != null) {
+          _socketService.sendCallEvent('call:end', {
+            'callId': _currentCallId,
+          });
         }
-      } else {
-        _log('⚠️ CALL_SERVICE call:accepted but _currentCallId is null');
+        await _endCall(reason: 'connection_failed');
       }
-      callerSw.stop();
     });
 
-    _socketService.onCallEvent('call:ended', (data) {
-      _log('📞 call:ended — data: $data, state=$_state');
+    _socketService.onCallEvent('call:signal', (data) async {
+      _log('📡 call:signal — type=${data['type']} state=$_state');
 
-      if (_state == CallState.IDLE || _state == CallState.ENDED) {
-        _log('📞 call:ended — already in state=$_state, skipping');
+      if (data['callId'] != null && data['callId'] != _currentCallId) {
+        _log('📡 call:signal ignored for another callId=${data['callId']}');
         return;
       }
 
-      CallRingtoneService().stopAllCallSounds();
+      final type = data['type'] as String?;
+      if (type == 'candidate') {
+        final candidate = RTCIceCandidate(
+          data['candidate'] as String?,
+          data['sdpMid'] as String?,
+          data['sdpMLineIndex'] as int?,
+        );
 
+        if (_peerConnection == null) {
+          _pendingRemoteCandidates.add(candidate);
+          _log('📡 candidate queued — peer not ready');
+          return;
+        }
+
+        try {
+          await _peerConnection!.addCandidate(candidate);
+        } catch (e) {
+          _pendingRemoteCandidates.add(candidate);
+          _log('⚠️ addCandidate failed, queued for retry: $e');
+        }
+        return;
+      }
+
+      if (type == 'offer') {
+        if (_peerConnection == null) {
+          await _startPeerConnection(isCaller: false);
+        }
+
+        await _peerConnection!.setRemoteDescription(
+          RTCSessionDescription(data['sdp'] as String?, 'offer'),
+        );
+        await _flushPendingRemoteCandidates();
+
+        final answer = await _peerConnection!.createAnswer();
+        await _peerConnection!.setLocalDescription(answer);
+        _socketService.sendCallSignal(_currentCallId!, {
+          'type': 'answer',
+          'sdp': answer.sdp,
+        });
+        _applyState(CallState.IN_CALL);
+        _log('✅ answer sent');
+        return;
+      }
+
+      if (type == 'answer') {
+        if (_peerConnection == null) {
+          _log('⚠️ answer received but peer connection is null');
+          return;
+        }
+
+        await _peerConnection!.setRemoteDescription(
+          RTCSessionDescription(data['sdp'] as String?, 'answer'),
+        );
+        await _flushPendingRemoteCandidates();
+        _applyState(CallState.IN_CALL);
+        _log('✅ answer applied');
+        return;
+      }
+
+      _log('⚠️ call:signal unknown type=$type');
+    });
+
+    _socketService.onCallEvent('call:ended', (data) async {
+      _log('📲 call:ended — data=$data state=$_state');
+      if (_state == CallState.IDLE || _state == CallState.ENDED) {
+        return;
+      }
+
+      await CallRingtoneService().stopAllCallSounds();
       final reason = data['reason'] as String?;
-      _log('END_SOURCE=socket_call_ended callId=$_currentCallId reason=$reason');
-      _endCall(reason: reason);
+      await _endCall(reason: reason);
       if (reason == 'rejected') {
         _showSnackbar('Звонок отклонён');
       } else if (reason == 'expired') {
@@ -330,256 +319,331 @@ class CallService {
       }
     });
 
-    _socketService.onCallEvent('call:rejected', (data) {
-      _log('📞 call:rejected — data: $data, state=$_state');
-      if (_state == CallState.CALLING || _state == CallState.RINGING) {
-        CallRingtoneService().stopAllCallSounds();
-        _endCall(reason: 'rejected');
-      } else {
-        _log('📞 call:rejected — ignored, state=$_state');
+    _socketService.onCallEvent('call:rejected', (data) async {
+      _log('📲 call:rejected — data=$data state=$_state');
+      if (_state == CallState.CALLING ||
+          _state == CallState.RINGING ||
+          _state == CallState.ACCEPTING) {
+        await CallRingtoneService().stopAllCallSounds();
+        await _endCall(reason: 'rejected');
       }
     });
 
-    _log('🔌 _setupSocketListeners() — ✅ listeners registered');
-  }
-
-  /// Подключается к LiveKit через [CallSession].
-  ///
-  /// Создаёт новый [CallSession] через [LiveKitService.createSession],
-  /// вызывает [CallSession.connect()] и сохраняет сессию в [_currentSession].
-  Future<void> connectToCall(int callId) async {
-    _log('📞 CALL_SERVICE connectToCall callId=$callId');
-
-    // Уничтожаем предыдущую сессию, если есть
-    if (_currentSession != null) {
-      _log('📞 CALL_SERVICE disposing previous session before new connect');
-      await _currentSession!.disconnect();
-      _currentSession!.dispose();
-      _currentSession = null;
-    }
-
-    final session = _liveKitService.createSession(callId);
-    _currentSession = session;
-
-    try {
-      await session.connect();
-    } catch (e) {
-      _log('🔴 CALL_SERVICE connectToCall failed callId=$callId error=$e');
-      // Если connect упал, session уже выставил connectionState=error
-      // Не чистим _currentSession здесь — _endCall сделает cleanup
-      rethrow;
-    }
-  }
-
-  /// Подписывается на изменения состояния [CallSession] для синхронизации с CallService.
-  void _setupLiveKitListeners() {
-    final session = _currentSession;
-    if (session == null) {
-      _log('⚠️ _setupLiveKitListeners — _currentSession is null');
-      return;
-    }
-
-    // Защита от дублирования: отписываемся от старых listener-ов перед подпиской
-    if (_sessionRemoteVideoListener != null) {
-      session.remoteVideoTrack.removeListener(_sessionRemoteVideoListener!);
-    }
-    if (_sessionStateListener != null) {
-      session.connectionState.removeListener(_sessionStateListener!);
-    }
-
-    // Слушаем изменения remote video track для обновления стримов
-    _sessionRemoteVideoListener = () {
-      final hasRemoteVideo = session.remoteVideoTrack.value != null;
-      _log('📹 LiveKit remote video track changed: ${hasRemoteVideo ? "PRESENT" : "null"}');
-    };
-    session.remoteVideoTrack.addListener(_sessionRemoteVideoListener!);
-
-    // Слушаем состояние подключения
-    _sessionStateListener = () {
-      final connState = session.connectionState.value;
-      _log('🔌 LiveKit connection state changed: $connState (call state=$_state)');
-      // Блок 3: disconnected срабатывает только при реальном активном разговоре (IN_CALL).
-      // ACCEPTING и CALLING — переходные состояния, disconnected в них может быть
-      // частью handshake (например, RoomDisconnectedEvent при переподключении).
-      if (connState == LiveKitConnectionState.disconnected &&
-          _state == CallState.IN_CALL) {
-        _log('🔴 LiveKit disconnected during active call');
-        _log('END_SOURCE=livekit_disconnected_listener callId=$_currentCallId state=$_state');
-        _endCall(reason: 'peer_disconnected');
-      }
-    };
-    session.connectionState.addListener(_sessionStateListener!);
+    _log('🔌 _setupSocketListeners() — listeners registered');
   }
 
   Future<void> startCall(int userId) async {
-    _log('📞 startCall() — userId=$userId, state=$_state');
-
+    _log('📞 startCall() — userId=$userId state=$_state');
     _resetTimer?.cancel();
     _lastEndReason = null;
     _lastCallEndTimestamp = null;
 
     if (_state != CallState.IDLE) {
-      _log('⚠️ startCall() — state=$_state, forcing hard reset');
       _hardReset();
     }
 
     _isMinimized = false;
     _minimizedController.add(false);
-
     await _callLogger.init();
 
-    _state = CallState.CALLING;
     _remoteUserId = userId;
-    _stateController.add(_state);
-
+    _applyState(CallState.CALLING);
     _socketService.sendCallEvent('call:start', {
       'calleeId': userId,
     });
-    _log('📞 call:start sent, waiting for call:accepted...');
-
     await CallRingtoneService().playOutgoingRingbackTone();
   }
 
   Future<void> acceptCall() async {
-    final acceptSw = Stopwatch()..start();
-    _log('[ACCEPT_FLOW] begin callId=$_currentCallId state=$_state');
+    _log('✅ acceptCall() — callId=$_currentCallId state=$_state');
 
-    // Защита от повторного вызова acceptCall()
     if (_isAcceptingCall) {
-      _log('⚠️ CALL_SERVICE acceptCall skipped — already accepting');
+      _log('⚠️ acceptCall() — already accepting');
       return;
     }
-    _isAcceptingCall = true;
 
+    _isAcceptingCall = true;
     try {
       await CallRingtoneService().stopAllCallSounds();
-      await PushService().cancelIncomingCallNotification();
       _resetTimer?.cancel();
 
-      if (_currentCallId == null) {
-        _log('⚠️ CALL_SERVICE acceptCall — _currentCallId is NULL');
+      final callId = _currentCallId;
+      if (callId == null) {
+        _log('⚠️ acceptCall() — callId is null');
         return;
       }
-
-      final callId = _currentCallId;
 
       _socketService.sendCallEvent('call:accept', {
         'callId': callId,
       });
-      _log('📞 CALL_SERVICE call:accept sent callId=$callId elapsedMs=${acceptSw.elapsedMilliseconds}');
-
-      // НЕ ставим IN_CALL до успешного подключения к LiveKit.
-      // Оставляем RINGING (или IDLE), чтобы UI не переключался преждевременно.
-      // Устанавливаем ACCEPTING — UI может показать индикатор подключения
-      _log('[ACCEPT_FLOW] setting ACCEPTING callId=$callId');
-      _state = CallState.ACCEPTING;
-      _stateController.add(_state);
-
-      _log('📞 CALL_SERVICE callee connecting to LiveKit callId=$callId');
-
-      _log('[ACCEPT_FLOW] connect start callId=$callId state=$_state elapsedMs=${acceptSw.elapsedMilliseconds}');
+      _applyState(CallState.ACCEPTING);
 
       try {
-        await connectToCall(callId!);
-        _log('[ACCEPT_FLOW] connect success callId=$callId sessionState=${_currentSession?.connectionState.value} elapsedMs=${acceptSw.elapsedMilliseconds}');
-        _log('📞 CALL_SERVICE callee connectToCall finished');
-
-        // Проверка: LiveKit действительно подключился
-        if (_currentSession == null ||
-            _currentSession!.connectionState.value != LiveKitConnectionState.connected) {
-          _log('🔴 CALL_SERVICE callee LiveKit not connected after connect state=${_currentSession?.connectionState.value}');
-          throw StateError('LiveKit did not reach connected state for callId=$callId');
-        }
-        _log('[ACCEPT_FLOW] connected confirmed callId=$callId elapsedMs=${acceptSw.elapsedMilliseconds}');
-
-        // Только после успешного connectToCall переходим в IN_CALL
-        _log('[ACCEPT_FLOW] setting IN_CALL callId=$callId');
-        _state = CallState.IN_CALL;
-        _stateController.add(_state);
-        _log('📞 CALL_SERVICE callee state set to IN_CALL');
-
-        _setupLiveKitListeners();
-        _log('[ACCEPT_FLOW] acceptCall success callId=$callId finalState=$_state totalElapsedMs=${acceptSw.elapsedMilliseconds}');
+        await _startPeerConnection(isCaller: false);
       } catch (e) {
-        _log('[ACCEPT_FLOW] connect fail callId=$callId error=$e elapsedMs=${acceptSw.elapsedMilliseconds}');
-        // Блок 3: StateError('already connecting') — не фатальная ошибка,
-        // это дублирующий вызов connectToCall. Не отправляем call:end.
-        if (e is StateError && e.message.contains('already connecting')) {
-          _log('[ACCEPT_FLOW] ⚠️ duplicate connect detected — not ending call callId=$callId');
-          return;
-        }
-        // Диагностика: проверяем, был ли отправлен HTTP-запрос на /livekit/token
-        if (_currentSession?.isLiveKitTokenRequested == true) {
-          _log('[CALL_END_BEFORE_TOKEN] 🔴 CALLEE: call:end will be sent while HTTP token request is in flight! callId=$callId');
-        }
-        _log(' CALL_SERVICE sending call:end because connect failed callId=$callId');
-        // Уведомляем backend о завершении звонка, чтобы не блокировать последующие
-        if (callId != null) {
-          _socketService.sendCallEvent('call:end', {
-            'callId': callId,
-            'reason': 'connect_failed',
-          });
-        }
-        _log('END_SOURCE=acceptCall_catch callId=$callId');
-        _endCall(reason: 'connection_failed');
-        // Пробрасываем исключение наверх, чтобы app.dart знал, что accept не удался
+        _log('🔴 acceptCall() connect failed: $e');
+        _socketService.sendCallEvent('call:end', {
+          'callId': callId,
+        });
+        await _endCall(reason: 'connection_failed');
         rethrow;
       }
     } finally {
       _isAcceptingCall = false;
-      acceptSw.stop();
     }
   }
 
   Future<void> rejectCall() async {
-    _log('❌ rejectCall() — callId=$_currentCallId, state=$_state');
-
+    _log('❌ rejectCall() — callId=$_currentCallId state=$_state');
     await CallRingtoneService().stopAllCallSounds();
-    await PushService().cancelIncomingCallNotification();
-
-    if (_currentCallId == null) {
-      _log('⚠️ rejectCall() — _currentCallId is NULL');
-    }
     _socketService.sendCallEvent('call:reject', {
       'callId': _currentCallId,
     });
-    _log('❌ call:reject sent');
-    _endCall(reason: 'rejected');
+    await _endCall(reason: 'rejected');
   }
 
   Future<void> endCall() async {
-    _log('🔴 endCall() — callId=$_currentCallId, state=$_state');
-
-    // Отключаемся от LiveKit через сессию
-    if (_currentSession != null) {
-      await _currentSession!.disconnect();
-    }
-
+    _log('🔴 endCall() — callId=$_currentCallId state=$_state');
     if (_currentCallId != null) {
       _socketService.sendCallEvent('call:end', {
         'callId': _currentCallId,
       });
-    } else {
-      _log('🔴 endCall() — no active call, skipping socket event');
+    }
+    await _endCall(reason: 'ended_by_caller');
+  }
+
+  Future<void> _startPeerConnection({required bool isCaller}) async {
+    if (_peerConnection != null) {
+      _log('🔧 _startPeerConnection() — reusing existing peer');
+      return;
     }
 
-    _log('END_SOURCE=manual_endCall callId=$_currentCallId');
-    _endCall();
+    final mediaConstraints = {
+      'audio': true,
+      'video': {
+        'facingMode': _isFrontCamera ? 'user' : 'environment',
+      },
+    };
+
+    try {
+      _localStream =
+          await navigator.mediaDevices.getUserMedia(mediaConstraints);
+      _localStreamController.add(_localStream);
+    } catch (e) {
+      _log('❌ getUserMedia failed: $e');
+      rethrow;
+    }
+
+    try {
+      _peerConnection = await createPeerConnection({
+        'iceServers': [
+          {'urls': 'stun:stun.l.google.com:19302'},
+        ],
+      });
+    } catch (e) {
+      _log('❌ createPeerConnection failed: $e');
+      rethrow;
+    }
+
+    for (final track in _localStream?.getTracks() ?? const <MediaStreamTrack>[]) {
+      await _peerConnection!.addTrack(track, _localStream!);
+    }
+
+    _peerConnection!.onIceCandidate = (candidate) {
+      final callId = _currentCallId;
+      if (callId == null || candidate.candidate == null) return;
+      _socketService.sendCallSignal(callId, {
+        'type': 'candidate',
+        'candidate': candidate.candidate,
+        'sdpMid': candidate.sdpMid,
+        'sdpMLineIndex': candidate.sdpMLineIndex,
+      });
+    };
+
+    _peerConnection!.onTrack = (event) {
+      if (event.streams.isEmpty) return;
+      _remoteStream = event.streams.first;
+      _remoteStreamController.add(_remoteStream);
+      _log('✅ remote stream received');
+    };
+
+    _peerConnection!.onConnectionState = (state) {
+      _log('🔗 PeerConnection state=$state');
+      if ((state ==
+                  RTCPeerConnectionState
+                      .RTCPeerConnectionStateDisconnected ||
+              state ==
+                  RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+              state ==
+                  RTCPeerConnectionState.RTCPeerConnectionStateClosed) &&
+          (_state == CallState.CALLING ||
+              _state == CallState.RINGING ||
+              _state == CallState.ACCEPTING ||
+              _state == CallState.IN_CALL)) {
+        unawaited(_endCall(reason: 'peer_disconnected'));
+      }
+    };
+
+    _peerConnection!.onIceConnectionState = (state) {
+      _log('🧊 ICE state=$state');
+      if ((state ==
+                  RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
+              state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
+              state == RTCIceConnectionState.RTCIceConnectionStateClosed) &&
+          (_state == CallState.CALLING ||
+              _state == CallState.RINGING ||
+              _state == CallState.ACCEPTING ||
+              _state == CallState.IN_CALL)) {
+        unawaited(_endCall(reason: 'peer_disconnected'));
+      }
+    };
+
+    if (isCaller) {
+      final offer = await _peerConnection!.createOffer();
+      await _peerConnection!.setLocalDescription(offer);
+      _socketService.sendCallSignal(_currentCallId!, {
+        'type': 'offer',
+        'sdp': offer.sdp,
+      });
+      _log('✅ offer sent');
+    }
+  }
+
+  Future<void> _flushPendingRemoteCandidates() async {
+    if (_peerConnection == null || _pendingRemoteCandidates.isEmpty) return;
+    final queued = List<RTCIceCandidate>.from(_pendingRemoteCandidates);
+    _pendingRemoteCandidates.clear();
+    for (final candidate in queued) {
+      try {
+        await _peerConnection!.addCandidate(candidate);
+      } catch (e) {
+        _log('⚠️ queued candidate still failed: $e');
+      }
+    }
   }
 
   void toggleCamera() {
     _isFrontCamera = !_isFrontCamera;
-    _currentSession?.switchCamera();
+    for (final track in _localStream?.getVideoTracks() ?? const <MediaStreamTrack>[]) {
+      track.switchCamera();
+    }
   }
 
   void toggleMic() {
     _isMicOn = !_isMicOn;
-    _currentSession?.setMicrophoneEnabled(_isMicOn);
+    for (final track in _localStream?.getAudioTracks() ?? const <MediaStreamTrack>[]) {
+      track.enabled = _isMicOn;
+    }
   }
 
   void toggleCameraVideo() {
     _isCameraOn = !_isCameraOn;
-    _currentSession?.setCameraEnabled(_isCameraOn);
+    for (final track in _localStream?.getVideoTracks() ?? const <MediaStreamTrack>[]) {
+      track.enabled = _isCameraOn;
+    }
+  }
+
+  void handleConnectionLost() {
+    if (_state == CallState.CALLING ||
+        _state == CallState.RINGING ||
+        _state == CallState.ACCEPTING ||
+        _state == CallState.IN_CALL) {
+      unawaited(_endCall(reason: 'peer_disconnected'));
+    }
+  }
+
+  Future<void> _endCall({String? reason}) async {
+    if (_state == CallState.ENDED || _state == CallState.IDLE) {
+      _log('🔴 _endCall() skipped — state=$_state');
+      return;
+    }
+    if (_isEndingCall) {
+      _log('🔴 _endCall() skipped — end already in progress');
+      return;
+    }
+
+    _isEndingCall = true;
+    _log('🔴 _endCall() — reason=$reason state=$_state');
+
+    _lastEndReason = reason;
+    _lastCallEndTimestamp = DateTime.now().millisecondsSinceEpoch;
+    _isAcceptingCall = false;
+
+    await CallRingtoneService().stopAllCallSounds();
+    _disposePeerResources();
+
+    _localStreamController.add(null);
+    _remoteStreamController.add(null);
+    _isMinimized = false;
+    _isCallScreenOpen = false;
+    _isIncomingDialogOpen = false;
+    _minimizedController.add(false);
+
+    _applyState(CallState.ENDED);
+    await _callLogger.close();
+
+    _resetTimer?.cancel();
+    _resetTimer = Timer(const Duration(seconds: 2), _hardReset);
+  }
+
+  void _disposePeerResources() {
+    try {
+      _peerConnection?.onIceCandidate = null;
+      _peerConnection?.onTrack = null;
+      _peerConnection?.onConnectionState = null;
+      _peerConnection?.onIceConnectionState = null;
+      _peerConnection?.close();
+    } catch (e) {
+      _log('⚠️ peer cleanup failed: $e');
+    }
+
+    try {
+      for (final track in _localStream?.getTracks() ?? const <MediaStreamTrack>[]) {
+        track.stop();
+      }
+    } catch (e) {
+      _log('⚠️ local stream cleanup failed: $e');
+    }
+
+    _peerConnection = null;
+    _localStream = null;
+    _remoteStream = null;
+    _pendingRemoteCandidates.clear();
+  }
+
+  void _hardReset() {
+    _log('🔄 _hardReset()');
+    _resetTimer?.cancel();
+    _resetTimer = null;
+    _disposePeerResources();
+    unawaited(CallRingtoneService().stopAllCallSounds());
+
+    _currentCallId = null;
+    _remoteUserId = null;
+    _remoteUserName = null;
+    _isCameraOn = true;
+    _isMicOn = true;
+    _isFrontCamera = true;
+    _isCallScreenOpen = false;
+    _isIncomingDialogOpen = false;
+    _isMinimized = false;
+    _isAcceptingCall = false;
+    _isEndingCall = false;
+    _lastEndReason = null;
+
+    _localStreamController.add(null);
+    _remoteStreamController.add(null);
+    _minimizedController.add(false);
+    _applyState(CallState.IDLE);
+  }
+
+  void hardReset() {
+    _hardReset();
+  }
+
+  void _applyState(CallState newState) {
+    _state = newState;
+    _stateController.add(newState);
   }
 
   void _showSnackbar(String message) {
@@ -591,141 +655,15 @@ class CallService {
     }
   }
 
-  void handleConnectionLost() {
-    if (_state == CallState.CALLING ||
-        _state == CallState.RINGING ||
-        _state == CallState.IN_CALL) {
-      _log('END_SOURCE=handleConnectionLost callId=$_currentCallId state=$_state');
-      _endCall(reason: 'peer_disconnected');
-    }
-  }
-
-  Future<void> _endCall({String? reason}) async {
-    _log('🔴 _endCall() ENTER reason=$reason state=$_state callId=$_currentCallId');
-    if (_state == CallState.ENDED || _state == CallState.IDLE) {
-      _log('🔴 _endCall() — already in state=$_state, skipping');
-      return;
-    }
-
-    // Защита от гонки: если HTTP-запрос на /livekit/token ещё в полёте,
-    // ждём до 2 секунд, чтобы он завершился, прежде чем отправлять call:end.
-    // Это предотвращает ситуацию, когда call:end (Socket.IO) приходит на backend
-    // раньше, чем POST /livekit/token (HTTP), и backend возвращает 400.
-    if (_currentSession?.isLiveKitTokenRequested == true) {
-      _log('[CALL_END_BEFORE_TOKEN] ⚠️ _endCall called while HTTP token request is in flight! reason=$reason');
-      _log('[CALL_END_BEFORE_TOKEN] ⚠️ Waiting up to 2s for token request to complete...');
-      try {
-        await Future.any([
-          // Ждём, пока isLiveKitTokenRequested станет false
-          (() async {
-            while (_currentSession?.isLiveKitTokenRequested == true) {
-              await Future.delayed(const Duration(milliseconds: 100));
-            }
-          })(),
-          // Или таймаут 2 секунды
-          Future.delayed(const Duration(seconds: 2)),
-        ]);
-        _log('[CALL_END_BEFORE_TOKEN] ✅ Token request completed (or timed out), proceeding with call:end');
-      } catch (e) {
-        _log('[CALL_END_BEFORE_TOKEN] ⚠️ Error while waiting for token: $e');
-      }
-    }
-
-    _log('🔴 _endCall() — reason=$reason, state=$_state');
-
-    // Отключаем LiveKit через сессию
-    if (_currentSession != null) {
-      await _currentSession!.disconnect();
-    }
-
-    // Отписываемся от CallSession listeners
-    final session = _currentSession;
-    if (session != null) {
-      if (_sessionRemoteVideoListener != null) {
-        session.remoteVideoTrack.removeListener(_sessionRemoteVideoListener!);
-        _sessionRemoteVideoListener = null;
-      }
-      if (_sessionStateListener != null) {
-        session.connectionState.removeListener(_sessionStateListener!);
-        _sessionStateListener = null;
-      }
-    }
-
-    // Уничтожаем сессию
-    _currentSession?.dispose();
-    _currentSession = null;
-
-    _lastEndReason = reason;
-    _lastCallEndTimestamp = DateTime.now().millisecondsSinceEpoch;
-
-    await CallRingtoneService().stopAllCallSounds();
-    await PushService().cancelIncomingCallNotification();
-
-    _state = CallState.ENDED;
-    _stateController.add(_state);
-    _isMinimized = false;
-    _isCallScreenOpen = false;
-    _isIncomingDialogOpen = false;
-    _log('✅ _endCall() — state=ENDED');
-    _callLogger.close();
-    _resetTimer?.cancel();
-    _resetTimer = Timer(const Duration(milliseconds: 2000), () {
-      _hardReset();
-    });
-  }
-
-  /// Полный сброс ВСЕГО состояния звонка.
-  void _hardReset() {
-    _log('🔄 _hardReset()');
-
-    CallRingtoneService().stopAllCallSounds();
-
-    // Блок 4: Очищаем сессию и её listeners
-    if (_currentSession != null) {
-      _log('🔄 _hardReset() — cleaning up session callId=$_currentCallId');
-      // Отписываемся от CallSession listeners
-      if (_sessionRemoteVideoListener != null) {
-        _currentSession!.remoteVideoTrack.removeListener(_sessionRemoteVideoListener!);
-        _sessionRemoteVideoListener = null;
-      }
-      if (_sessionStateListener != null) {
-        _currentSession!.connectionState.removeListener(_sessionStateListener!);
-        _sessionStateListener = null;
-      }
-      _currentSession!.dispose();
-      _currentSession = null;
-    }
-
-    _lastCallEndTimestamp = DateTime.now().millisecondsSinceEpoch;
-
-    _state = CallState.IDLE;
-    _currentCallId = null;
-    _remoteUserId = null;
-    _remoteUserName = null;
-    _isCameraOn = true;
-    _isMicOn = true;
-    _isFrontCamera = true;
-    _isIncomingDialogOpen = false;
-    _isCallScreenOpen = false;
-    _isMinimized = false;
-    _isAcceptingCall = false;
-    _lastEndReason = null;
-    _stateController.add(CallState.IDLE);
-  }
-
-  /// Публичный метод полного сброса состояния звонка.
-  void hardReset() {
-    _hardReset();
-  }
-
   void dispose() {
     _connectionSubscription?.cancel();
     _stateController.close();
+    _localStreamController.close();
+    _remoteStreamController.close();
     _incomingCallController.close();
     _minimizedController.close();
   }
 
-  /// Пишет лог одновременно в print (adb) и в файл (CallLogger)
   void _log(String message) {
     print('[CALL_SERVICE] $message');
     _callLogger.log('CallService', message);

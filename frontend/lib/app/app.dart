@@ -531,7 +531,8 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         await callService.acceptCall();
 
         // Жёсткая проверка: открываем CallScreen ТОЛЬКО если звонок реально перешёл в IN_CALL
-        if (callService.state != CallState.IN_CALL) {
+        if (callService.state != CallState.ACCEPTING &&
+            callService.state != CallState.IN_CALL) {
           debugPrint('[APP] ⚠️ acceptCall completed but state=${callService.state} — NOT opening CallScreen');
           return;
         }
