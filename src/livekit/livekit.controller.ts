@@ -7,12 +7,17 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { IsInt, Min } from 'class-validator';
+import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { LiveKitService } from './livekit.service';
 import type { CurrentUserType } from './livekit.service';
 
 class GetTokenDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
   callId!: number;
 }
 
