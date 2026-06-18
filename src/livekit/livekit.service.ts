@@ -65,7 +65,7 @@ export class LiveKitService {
     user: CurrentUserType,
   ): Promise<LiveKitTokenResponse> {
     this.logger.log(
-      `[LIVEKIT_SERVICE] createTokenForCall begin userId=${user.id} callId=${callId}`,
+      `[LIVEKIT_SERVICE] TOKEN_REQUEST begin userId=${user.id} callId=${callId}`,
     );
 
     // 1. Проверяем, что звонок существует и пользователь участвует
@@ -79,7 +79,7 @@ export class LiveKitService {
 
     if (!call) {
       this.logger.warn(
-        `[LIVEKIT_SERVICE] call not found for participant userId=${user.id} callId=${callId}`,
+        `[LIVEKIT_SERVICE] TOKEN_REQUEST fail userId=${user.id} callId=${callId} reason=call_not_found`,
       );
       throw new NotFoundException('Call not found for participant');
     }
@@ -91,7 +91,7 @@ export class LiveKitService {
     // 2. Проверяем, что пользователь — участник звонка
     if (call.callerId !== user.id && call.calleeId !== user.id) {
       this.logger.warn(
-        `[LIVEKIT_SERVICE] createTokenForCall forbidden userId=${user.id} not participant of callId=${callId}`,
+        `[LIVEKIT_SERVICE] TOKEN_REQUEST fail userId=${user.id} callId=${callId} reason=not_participant`,
       );
       throw new ForbiddenException('User is not participant of this call');
     }
@@ -99,21 +99,21 @@ export class LiveKitService {
     // 3. Проверяем, что звонок не завершён
     if (call.status === CallStatus.ENDED) {
       this.logger.warn(
-        `[LIVEKIT_SERVICE] createTokenForCall ended userId=${user.id} callId=${callId}`,
+        `[LIVEKIT_SERVICE] TOKEN_REQUEST fail userId=${user.id} callId=${callId} reason=ended`,
       );
       throw new GoneException('Звонок уже завершён');
     }
 
     if (call.status === CallStatus.REJECTED) {
       this.logger.warn(
-        `[LIVEKIT_SERVICE] createTokenForCall rejected userId=${user.id} callId=${callId}`,
+        `[LIVEKIT_SERVICE] TOKEN_REQUEST fail userId=${user.id} callId=${callId} reason=rejected`,
       );
       throw new GoneException('Звонок был отклонён');
     }
 
     if (call.status === CallStatus.MISSED) {
       this.logger.warn(
-        `[LIVEKIT_SERVICE] createTokenForCall missed userId=${user.id} callId=${callId}`,
+        `[LIVEKIT_SERVICE] TOKEN_REQUEST fail userId=${user.id} callId=${callId} reason=missed`,
       );
       throw new GoneException('Звонок был пропущен');
     }
@@ -128,7 +128,7 @@ export class LiveKitService {
       call.status !== CallStatus.ACCEPTED
     ) {
       this.logger.warn(
-        `[LIVEKIT_SERVICE] invalid call status userId=${user.id} callId=${callId} status=${call.status}`,
+        `[LIVEKIT_SERVICE] TOKEN_REQUEST fail userId=${user.id} callId=${callId} reason=invalid_status status=${call.status}`,
       );
       throw new ForbiddenException(
         `Call status ACCEPTED/PENDING expected, got ${call.status}`,
@@ -141,15 +141,15 @@ export class LiveKitService {
     );
 
     if (!this.wsUrl) {
-      this.logger.error(`[LIVEKIT_SERVICE] LIVEKIT_URL is not configured`);
+      this.logger.error(`[LIVEKIT_SERVICE] TOKEN_REQUEST fail userId=${user.id} callId=${callId} reason=LIVEKIT_URL_missing`);
       throw new Error('LIVEKIT_URL is not configured');
     }
     if (!this.apiKey) {
-      this.logger.error(`[LIVEKIT_SERVICE] LIVEKIT_API_KEY is not configured`);
+      this.logger.error(`[LIVEKIT_SERVICE] TOKEN_REQUEST fail userId=${user.id} callId=${callId} reason=LIVEKIT_API_KEY_missing`);
       throw new Error('LIVEKIT_API_KEY is not configured');
     }
     if (!this.apiSecret) {
-      this.logger.error(`[LIVEKIT_SERVICE] LIVEKIT_API_SECRET is not configured`);
+      this.logger.error(`[LIVEKIT_SERVICE] TOKEN_REQUEST fail userId=${user.id} callId=${callId} reason=LIVEKIT_API_SECRET_missing`);
       throw new Error('LIVEKIT_API_SECRET is not configured');
     }
 
@@ -174,7 +174,7 @@ export class LiveKitService {
     const token = await at.toJwt();
 
     this.logger.log(
-      `[LIVEKIT_SERVICE] token generated userId=${user.id} callId=${callId} roomName=${roomName}`,
+      `[LIVEKIT_SERVICE] TOKEN_REQUEST success userId=${user.id} callId=${callId} roomName=${roomName}`,
     );
 
     return {

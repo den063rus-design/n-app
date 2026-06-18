@@ -1,16 +1,20 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../app/app.dart';
 import 'socket_service.dart';
 import 'call_logger.dart';
 import 'call_ringtone_service.dart';
 import 'livekit_service.dart';
+import 'call_session.dart';
 
 enum CallState {
   IDLE,
   CALLING,
   RINGING,
+  /// Звонок принят (call:accept отправлен), но подключение к LiveKit ещё не завершено.
+  /// Промежуточное состояние между RINGING и IN_CALL.
+  /// Позволяет UI показать индикатор подключения вместо преждевременного IN_CALL.
+  ACCEPTING,
   IN_CALL,
   ENDED,
 }
@@ -24,11 +28,12 @@ class CallService {
   final CallLogger _callLogger = CallLogger();
   final LiveKitService _liveKitService = LiveKitService();
 
-  // WebRTC — оставляем поля для обратной совместимости,
-  // но в новом LiveKit flow они не используются
-  RTCPeerConnection? _peerConnection;
-  MediaStream? _localStream;
-  MediaStream? _remoteStream;
+  /// Текущая сессия звонка (LiveKit).
+  /// Создаётся в [connectToCall], уничтожается в [_endCall].
+  CallSession? _currentSession;
+
+  /// Публичный геттер для UI (CallScreen, ActiveCallOverlay).
+  CallSession? get currentSession => _currentSession;
 
   // Состояние
   CallState _state = CallState.IDLE;
@@ -56,8 +61,6 @@ class CallService {
 
   // StreamController для UI
   final _stateController = StreamController<CallState>.broadcast();
-  final _localStreamController = StreamController<MediaStream?>.broadcast();
-  final _remoteStreamController = StreamController<MediaStream?>.broadcast();
 
   // Стрим для оповещения о входящем звонке (глобальная навигация)
   final _incomingCallController = StreamController<Map<String, dynamic>>.broadcast();
@@ -68,16 +71,6 @@ class CallService {
   Stream<bool> get minimizedStream => _minimizedController.stream;
 
   Stream<CallState> get stateStream => _stateController.stream;
-  Stream<MediaStream?> get localStream => _localStreamController.stream;
-  Stream<MediaStream?> get remoteStream => _remoteStreamController.stream;
-
-  /// Текущий локальный MediaStream (может быть null, если звонок не начат).
-  /// Нужен для немедленного назначения в renderer без ожидания stream-события.
-  MediaStream? get currentLocalStream => _localStream;
-
-  /// Текущий удалённый MediaStream (может быть null, если remote peer не подключился).
-  /// Нужен для немедленного назначения в renderer без ожидания stream-события.
-  MediaStream? get currentRemoteStream => _remoteStream;
 
   CallState get state => _state;
   bool get isCameraOn => _isCameraOn;
@@ -99,9 +92,9 @@ class CallService {
   // Подписка на стрим изменения подключения socket
   StreamSubscription<bool>? _connectionSubscription;
 
-  // Подписки на LiveKitService
-  VoidCallback? _liveKitStateListener;
-  VoidCallback? _liveKitRemoteVideoListener;
+  // Подписки на CallSession
+  VoidCallback? _sessionStateListener;
+  VoidCallback? _sessionRemoteVideoListener;
 
   Future<void> init() async {
     _log('🔧 init()');
@@ -213,7 +206,6 @@ class CallService {
     // Всегда отписываемся перед подпиской, чтобы избежать дублирования
     socket.off('call:incoming');
     socket.off('call:accepted');
-    socket.off('call:signal');
     socket.off('call:ended');
     socket.off('call:rejected');
 
@@ -265,16 +257,17 @@ class CallService {
       if (_currentCallId != null) {
         _log('📞 CALL_SERVICE caller connecting to LiveKit callId=$_currentCallId');
 
-        _log('[CALLER_FLOW] before connectToCall callId=$_currentCallId state=$_state livekitState=${_liveKitService.connectionState.value}');
+        _log('[CALLER_FLOW] connect start callId=$_currentCallId state=$_state');
 
         try {
-          await _liveKitService.connectToCall(_currentCallId!);
-          _log('[CALLER_FLOW] after connectToCall callId=$_currentCallId livekitState=${_liveKitService.connectionState.value}');
+          await connectToCall(_currentCallId!);
+          _log('[CALLER_FLOW] connect success callId=$_currentCallId sessionState=${_currentSession?.connectionState.value}');
           _log('📞 CALL_SERVICE caller connectToCall finished');
 
           // Проверка: LiveKit действительно подключился
-          if (_liveKitService.connectionState.value != LiveKitConnectionState.connected) {
-            _log('🔴 CALL_SERVICE caller LiveKit not connected after connect state=${_liveKitService.connectionState.value}');
+          if (_currentSession == null ||
+              _currentSession!.connectionState.value != LiveKitConnectionState.connected) {
+            _log('🔴 CALL_SERVICE caller LiveKit not connected after connect state=${_currentSession?.connectionState.value}');
             throw StateError('LiveKit did not reach connected state for callId=$_currentCallId');
           }
           _log('[CALLER_FLOW] connected confirmed callId=$_currentCallId');
@@ -287,68 +280,30 @@ class CallService {
           _setupLiveKitListeners();
           _log('[CALLER_FLOW] caller success callId=$_currentCallId finalState=$_state');
         } catch (e) {
-          _log('🔴 CALL_SERVICE caller connect failure callId=$_currentCallId state=$_state error=$e');
-          _log('📤 CALL_SERVICE caller sending call:end because connect failed callId=$_currentCallId');
+          _log('[CALLER_FLOW] connect fail callId=$_currentCallId error=$e');
+          // Блок 3: StateError('already connecting') — не фатальная ошибка,
+          // это дублирующий вызов connectToCall. Не отправляем call:end.
+          if (e is StateError && e.message.contains('already connecting')) {
+            _log('[CALLER_FLOW] ⚠️ duplicate connect detected — not ending call callId=$_currentCallId');
+            return;
+          }
+          // Диагностика: проверяем, был ли отправлен HTTP-запрос на /livekit/token
+          if (_currentSession?.isLiveKitTokenRequested == true) {
+            _log('[CALL_END_BEFORE_TOKEN] 🔴 CALLER: call:end will be sent while HTTP token request is in flight! callId=$_currentCallId');
+          }
+          _log(' CALL_SERVICE caller sending call:end because connect failed callId=$_currentCallId');
           // Уведомляем backend о завершении звонка, чтобы не блокировать последующие
           if (_currentCallId != null) {
             _socketService.sendCallEvent('call:end', {
               'callId': _currentCallId,
+              'reason': 'connect_failed',
             });
           }
+          _log('END_SOURCE=caller_call_accepted_catch callId=$_currentCallId');
           _endCall(reason: 'connection_failed');
         }
       } else {
         _log('⚠️ CALL_SERVICE call:accepted but _currentCallId is null');
-      }
-    });
-
-    // call:signal — legacy обработчик старого WebRTC signaling.
-    // В новом LiveKit flow НЕ ИСПОЛЬЗУЕТСЯ.
-    // Оставлен только для обратной совместимости со старыми клиентами.
-    // Не запускает LiveKit, не меняет состояние нового звонка.
-    _socketService.onCallEvent('call:signal', (data) async {
-      _log('📡 call:signal — type=${data['type']}, state=$_state (IGNORED in LiveKit flow)');
-
-      if (data['callId'] != null && data['callId'] != _currentCallId) {
-        _log('📡 call:signal — ignoring signal for different call: ${data['callId']}');
-        return;
-      }
-
-      // В новом LiveKit flow offer/answer/candidate полностью игнорируются.
-      // Старый WebRTC-код оставлен только для legacy-клиентов.
-      if (data['type'] == 'candidate') {
-        if (_peerConnection != null) {
-          try {
-            await _peerConnection!.addCandidate(
-              RTCIceCandidate(
-                data['candidate'],
-                data['sdpMid'],
-                data['sdpMLineIndex'],
-              ),
-            );
-          } catch (e) {
-            _log('❌ ICE candidate add FAILED: $e');
-          }
-        } else {
-          _log('⚠️ ICE candidate received but _peerConnection is NULL');
-        }
-      } else if (data['type'] == 'offer') {
-        _log('📄 Offer received — IGNORED in LiveKit flow (legacy only)');
-      } else if (data['type'] == 'answer') {
-        _log('📄 Answer received — IGNORED in LiveKit flow (legacy only)');
-        if (_peerConnection != null) {
-          try {
-            await _peerConnection!.setRemoteDescription(
-              RTCSessionDescription(data['sdp'], data['type']),
-            );
-          } catch (e) {
-            _log('❌ setRemoteDescription(answer) FAILED: $e');
-          }
-        } else {
-          _log('⚠️ Answer received but _peerConnection is NULL');
-        }
-      } else {
-        _log('⚠️ call:signal — unknown type: ${data['type']}');
       }
     });
 
@@ -363,6 +318,7 @@ class CallService {
       CallRingtoneService().stopAllCallSounds();
 
       final reason = data['reason'] as String?;
+      _log('END_SOURCE=socket_call_ended callId=$_currentCallId reason=$reason');
       _endCall(reason: reason);
       if (reason == 'rejected') {
         _showSnackbar('Звонок отклонён');
@@ -384,34 +340,72 @@ class CallService {
     _log('🔌 _setupSocketListeners() — ✅ listeners registered');
   }
 
-  /// Подписывается на изменения состояния LiveKit для синхронизации с CallService.
-  void _setupLiveKitListeners() {
-    // Защита от дублирования: отписываемся от старых listener-ов перед подпиской
-    if (_liveKitRemoteVideoListener != null) {
-      _liveKitService.remoteVideoTrack.removeListener(_liveKitRemoteVideoListener!);
+  /// Подключается к LiveKit через [CallSession].
+  ///
+  /// Создаёт новый [CallSession] через [LiveKitService.createSession],
+  /// вызывает [CallSession.connect()] и сохраняет сессию в [_currentSession].
+  Future<void> connectToCall(int callId) async {
+    _log('📞 CALL_SERVICE connectToCall callId=$callId');
+
+    // Уничтожаем предыдущую сессию, если есть
+    if (_currentSession != null) {
+      _log('📞 CALL_SERVICE disposing previous session before new connect');
+      await _currentSession!.disconnect();
+      _currentSession!.dispose();
+      _currentSession = null;
     }
-    if (_liveKitStateListener != null) {
-      _liveKitService.connectionState.removeListener(_liveKitStateListener!);
+
+    final session = _liveKitService.createSession(callId);
+    _currentSession = session;
+
+    try {
+      await session.connect();
+    } catch (e) {
+      _log('🔴 CALL_SERVICE connectToCall failed callId=$callId error=$e');
+      // Если connect упал, session уже выставил connectionState=error
+      // Не чистим _currentSession здесь — _endCall сделает cleanup
+      rethrow;
+    }
+  }
+
+  /// Подписывается на изменения состояния [CallSession] для синхронизации с CallService.
+  void _setupLiveKitListeners() {
+    final session = _currentSession;
+    if (session == null) {
+      _log('⚠️ _setupLiveKitListeners — _currentSession is null');
+      return;
+    }
+
+    // Защита от дублирования: отписываемся от старых listener-ов перед подпиской
+    if (_sessionRemoteVideoListener != null) {
+      session.remoteVideoTrack.removeListener(_sessionRemoteVideoListener!);
+    }
+    if (_sessionStateListener != null) {
+      session.connectionState.removeListener(_sessionStateListener!);
     }
 
     // Слушаем изменения remote video track для обновления стримов
-    _liveKitRemoteVideoListener = () {
-      final hasRemoteVideo = _liveKitService.remoteVideoTrack.value != null;
+    _sessionRemoteVideoListener = () {
+      final hasRemoteVideo = session.remoteVideoTrack.value != null;
       _log('📹 LiveKit remote video track changed: ${hasRemoteVideo ? "PRESENT" : "null"}');
     };
-    _liveKitService.remoteVideoTrack.addListener(_liveKitRemoteVideoListener!);
+    session.remoteVideoTrack.addListener(_sessionRemoteVideoListener!);
 
     // Слушаем состояние подключения
-    _liveKitStateListener = () {
-      final connState = _liveKitService.connectionState.value;
+    _sessionStateListener = () {
+      final connState = session.connectionState.value;
       _log('🔌 LiveKit connection state changed: $connState (call state=$_state)');
+      // Блок 3: disconnected срабатывает только при реальном активном разговоре (IN_CALL).
+      // ACCEPTING и CALLING — переходные состояния, disconnected в них может быть
+      // частью handshake (например, RoomDisconnectedEvent при переподключении).
       if (connState == LiveKitConnectionState.disconnected &&
-          (_state == CallState.IN_CALL || _state == CallState.CALLING)) {
+          _state == CallState.IN_CALL) {
         _log('🔴 LiveKit disconnected during active call');
+        _log('END_SOURCE=livekit_disconnected_listener callId=$_currentCallId state=$_state');
         _endCall(reason: 'peer_disconnected');
       }
     };
-    _liveKitService.connectionState.addListener(_liveKitStateListener!);
+    session.connectionState.addListener(_sessionStateListener!);
   }
 
   Future<void> startCall(int userId) async {
@@ -444,7 +438,7 @@ class CallService {
   }
 
   Future<void> acceptCall() async {
-    _log('📞 CALL_SERVICE acceptCall begin currentCallId=$_currentCallId, state=$_state');
+    _log('[ACCEPT_FLOW] begin callId=$_currentCallId state=$_state');
 
     // Защита от повторного вызова acceptCall()
     if (_isAcceptingCall) {
@@ -471,18 +465,24 @@ class CallService {
 
       // НЕ ставим IN_CALL до успешного подключения к LiveKit.
       // Оставляем RINGING (или IDLE), чтобы UI не переключался преждевременно.
+      // Устанавливаем ACCEPTING — UI может показать индикатор подключения
+      _log('[ACCEPT_FLOW] setting ACCEPTING callId=$callId');
+      _state = CallState.ACCEPTING;
+      _stateController.add(_state);
+
       _log('📞 CALL_SERVICE callee connecting to LiveKit callId=$callId');
 
-      _log('[ACCEPT_FLOW] before connectToCall callId=$callId state=$_state livekitState=${_liveKitService.connectionState.value}');
+      _log('[ACCEPT_FLOW] connect start callId=$callId state=$_state');
 
       try {
-        await _liveKitService.connectToCall(callId!);
-        _log('[ACCEPT_FLOW] after connectToCall callId=$callId livekitState=${_liveKitService.connectionState.value}');
+        await connectToCall(callId!);
+        _log('[ACCEPT_FLOW] connect success callId=$callId sessionState=${_currentSession?.connectionState.value}');
         _log('📞 CALL_SERVICE callee connectToCall finished');
 
         // Проверка: LiveKit действительно подключился
-        if (_liveKitService.connectionState.value != LiveKitConnectionState.connected) {
-          _log('🔴 CALL_SERVICE callee LiveKit not connected after connect state=${_liveKitService.connectionState.value}');
+        if (_currentSession == null ||
+            _currentSession!.connectionState.value != LiveKitConnectionState.connected) {
+          _log('🔴 CALL_SERVICE callee LiveKit not connected after connect state=${_currentSession?.connectionState.value}');
           throw StateError('LiveKit did not reach connected state for callId=$callId');
         }
         _log('[ACCEPT_FLOW] connected confirmed callId=$callId');
@@ -496,14 +496,26 @@ class CallService {
         _setupLiveKitListeners();
         _log('[ACCEPT_FLOW] acceptCall success callId=$callId finalState=$_state');
       } catch (e) {
-        _log('🔴 CALL_SERVICE acceptCall connect failure callId=$callId state=$_state error=$e');
-        _log('📤 CALL_SERVICE sending call:end because connect failed callId=$callId');
+        _log('[ACCEPT_FLOW] connect fail callId=$callId error=$e');
+        // Блок 3: StateError('already connecting') — не фатальная ошибка,
+        // это дублирующий вызов connectToCall. Не отправляем call:end.
+        if (e is StateError && e.message.contains('already connecting')) {
+          _log('[ACCEPT_FLOW] ⚠️ duplicate connect detected — not ending call callId=$callId');
+          return;
+        }
+        // Диагностика: проверяем, был ли отправлен HTTP-запрос на /livekit/token
+        if (_currentSession?.isLiveKitTokenRequested == true) {
+          _log('[CALL_END_BEFORE_TOKEN] 🔴 CALLEE: call:end will be sent while HTTP token request is in flight! callId=$callId');
+        }
+        _log(' CALL_SERVICE sending call:end because connect failed callId=$callId');
         // Уведомляем backend о завершении звонка, чтобы не блокировать последующие
         if (callId != null) {
           _socketService.sendCallEvent('call:end', {
             'callId': callId,
+            'reason': 'connect_failed',
           });
         }
+        _log('END_SOURCE=acceptCall_catch callId=$callId');
         _endCall(reason: 'connection_failed');
         // Пробрасываем исключение наверх, чтобы app.dart знал, что accept не удался
         rethrow;
@@ -531,8 +543,10 @@ class CallService {
   Future<void> endCall() async {
     _log('🔴 endCall() — callId=$_currentCallId, state=$_state');
 
-    // Отключаемся от LiveKit
-    await _liveKitService.disconnect();
+    // Отключаемся от LiveKit через сессию
+    if (_currentSession != null) {
+      await _currentSession!.disconnect();
+    }
 
     if (_currentCallId != null) {
       _socketService.sendCallEvent('call:end', {
@@ -542,22 +556,23 @@ class CallService {
       _log('🔴 endCall() — no active call, skipping socket event');
     }
 
+    _log('END_SOURCE=manual_endCall callId=$_currentCallId');
     _endCall();
   }
 
   void toggleCamera() {
     _isFrontCamera = !_isFrontCamera;
-    _liveKitService.switchCamera();
+    _currentSession?.switchCamera();
   }
 
   void toggleMic() {
     _isMicOn = !_isMicOn;
-    _liveKitService.setMicrophoneEnabled(_isMicOn);
+    _currentSession?.setMicrophoneEnabled(_isMicOn);
   }
 
   void toggleCameraVideo() {
     _isCameraOn = !_isCameraOn;
-    _liveKitService.setCameraEnabled(_isCameraOn);
+    _currentSession?.setCameraEnabled(_isCameraOn);
   }
 
   void _showSnackbar(String message) {
@@ -569,66 +584,75 @@ class CallService {
     }
   }
 
-  void _disposePeerResources() {
-    try {
-      _peerConnection?.onIceCandidate = null;
-      _peerConnection?.onTrack = null;
-      _peerConnection?.onConnectionState = null;
-      _peerConnection?.onIceConnectionState = null;
-      _peerConnection?.close();
-    } catch (e) {
-      _log('peer cleanup failed: $e');
-    }
-
-    _peerConnection = null;
-
-    try {
-      _localStream?.getTracks().forEach((track) => track.stop());
-    } catch (e) {
-      _log('local stream cleanup failed: $e');
-    }
-
-    _localStream = null;
-    _remoteStream = null;
-  }
-
   void handleConnectionLost() {
     if (_state == CallState.CALLING ||
         _state == CallState.RINGING ||
         _state == CallState.IN_CALL) {
+      _log('END_SOURCE=handleConnectionLost callId=$_currentCallId state=$_state');
       _endCall(reason: 'peer_disconnected');
     }
   }
 
   Future<void> _endCall({String? reason}) async {
+    _log('🔴 _endCall() ENTER reason=$reason state=$_state callId=$_currentCallId');
     if (_state == CallState.ENDED || _state == CallState.IDLE) {
       _log('🔴 _endCall() — already in state=$_state, skipping');
       return;
     }
 
+    // Защита от гонки: если HTTP-запрос на /livekit/token ещё в полёте,
+    // ждём до 2 секунд, чтобы он завершился, прежде чем отправлять call:end.
+    // Это предотвращает ситуацию, когда call:end (Socket.IO) приходит на backend
+    // раньше, чем POST /livekit/token (HTTP), и backend возвращает 400.
+    if (_currentSession?.isLiveKitTokenRequested == true) {
+      _log('[CALL_END_BEFORE_TOKEN] ⚠️ _endCall called while HTTP token request is in flight! reason=$reason');
+      _log('[CALL_END_BEFORE_TOKEN] ⚠️ Waiting up to 2s for token request to complete...');
+      try {
+        await Future.any([
+          // Ждём, пока isLiveKitTokenRequested станет false
+          (() async {
+            while (_currentSession?.isLiveKitTokenRequested == true) {
+              await Future.delayed(const Duration(milliseconds: 100));
+            }
+          })(),
+          // Или таймаут 2 секунды
+          Future.delayed(const Duration(seconds: 2)),
+        ]);
+        _log('[CALL_END_BEFORE_TOKEN] ✅ Token request completed (or timed out), proceeding with call:end');
+      } catch (e) {
+        _log('[CALL_END_BEFORE_TOKEN] ⚠️ Error while waiting for token: $e');
+      }
+    }
+
     _log('🔴 _endCall() — reason=$reason, state=$_state');
 
-    // Отключаем LiveKit
-    await _liveKitService.disconnect();
+    // Отключаем LiveKit через сессию
+    if (_currentSession != null) {
+      await _currentSession!.disconnect();
+    }
 
-    // Отписываемся от LiveKit listeners
-    if (_liveKitRemoteVideoListener != null) {
-      _liveKitService.remoteVideoTrack.removeListener(_liveKitRemoteVideoListener!);
-      _liveKitRemoteVideoListener = null;
+    // Отписываемся от CallSession listeners
+    final session = _currentSession;
+    if (session != null) {
+      if (_sessionRemoteVideoListener != null) {
+        session.remoteVideoTrack.removeListener(_sessionRemoteVideoListener!);
+        _sessionRemoteVideoListener = null;
+      }
+      if (_sessionStateListener != null) {
+        session.connectionState.removeListener(_sessionStateListener!);
+        _sessionStateListener = null;
+      }
     }
-    if (_liveKitStateListener != null) {
-      _liveKitService.connectionState.removeListener(_liveKitStateListener!);
-      _liveKitStateListener = null;
-    }
+
+    // Уничтожаем сессию
+    _currentSession?.dispose();
+    _currentSession = null;
 
     _lastEndReason = reason;
     _lastCallEndTimestamp = DateTime.now().millisecondsSinceEpoch;
 
     await CallRingtoneService().stopAllCallSounds();
-    _disposePeerResources();
 
-    _localStreamController.add(null);
-    _remoteStreamController.add(null);
     _state = CallState.ENDED;
     _stateController.add(_state);
     _isMinimized = false;
@@ -648,6 +672,22 @@ class CallService {
 
     CallRingtoneService().stopAllCallSounds();
 
+    // Блок 4: Очищаем сессию и её listeners
+    if (_currentSession != null) {
+      _log('🔄 _hardReset() — cleaning up session callId=$_currentCallId');
+      // Отписываемся от CallSession listeners
+      if (_sessionRemoteVideoListener != null) {
+        _currentSession!.remoteVideoTrack.removeListener(_sessionRemoteVideoListener!);
+        _sessionRemoteVideoListener = null;
+      }
+      if (_sessionStateListener != null) {
+        _currentSession!.connectionState.removeListener(_sessionStateListener!);
+        _sessionStateListener = null;
+      }
+      _currentSession!.dispose();
+      _currentSession = null;
+    }
+
     _lastCallEndTimestamp = DateTime.now().millisecondsSinceEpoch;
 
     _state = CallState.IDLE;
@@ -657,10 +697,10 @@ class CallService {
     _isCameraOn = true;
     _isMicOn = true;
     _isFrontCamera = true;
-    _disposePeerResources();
     _isIncomingDialogOpen = false;
     _isCallScreenOpen = false;
     _isMinimized = false;
+    _isAcceptingCall = false;
     _lastEndReason = null;
     _stateController.add(CallState.IDLE);
   }
@@ -673,8 +713,6 @@ class CallService {
   void dispose() {
     _connectionSubscription?.cancel();
     _stateController.close();
-    _localStreamController.close();
-    _remoteStreamController.close();
     _incomingCallController.close();
     _minimizedController.close();
   }

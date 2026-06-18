@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
 import '../services/call_service.dart';
 import '../services/call_logger.dart';
-import '../services/livekit_service.dart';
+import '../services/call_session.dart';
 
 class CallScreen extends StatefulWidget {
   final int userId;
@@ -26,7 +26,6 @@ class CallScreen extends StatefulWidget {
 class _CallScreenState extends State<CallScreen> {
   final CallService _callService = CallService();
   final CallLogger _callLogger = CallLogger();
-  final LiveKitService _liveKitService = LiveKitService();
   Offset _pipOffset = const Offset(20, 80);
   bool _hasNavigatedAway = false;
 
@@ -36,7 +35,7 @@ class _CallScreenState extends State<CallScreen> {
   // Флаг: было ли уже запланировано закрытие экрана после ENDED
   bool _closeScheduled = false;
 
-  // Подписки на LiveKit
+  // Подписки на CallSession
   VoidCallback? _localVideoListener;
   VoidCallback? _remoteVideoListener;
   VoidCallback? _connectionStateListener;
@@ -63,25 +62,29 @@ class _CallScreenState extends State<CallScreen> {
       }
     }
 
-    // Подписываемся на изменения видео-треков LiveKit
+    // Подписываемся на изменения видео-треков из CallSession
     _setupLiveKitListeners();
   }
 
   void _setupLiveKitListeners() {
+    final session = _callService.currentSession;
+
     _localVideoListener = () {
       if (mounted) setState(() {});
     };
-    _liveKitService.localVideoTrack.addListener(_localVideoListener!);
-
-    _remoteVideoListener = () {
-      if (mounted) setState(() {});
-    };
-    _liveKitService.remoteVideoTrack.addListener(_remoteVideoListener!);
-
     _connectionStateListener = () {
       if (mounted) setState(() {});
     };
-    _liveKitService.connectionState.addListener(_connectionStateListener!);
+    _remoteVideoListener = () {
+      if (mounted) setState(() {});
+    };
+
+    // Если сессия уже существует — подписываемся сразу
+    if (session != null) {
+      session.localVideoTrack.addListener(_localVideoListener!);
+      session.remoteVideoTrack.addListener(_remoteVideoListener!);
+      session.connectionState.addListener(_connectionStateListener!);
+    }
   }
 
   /// Единый метод закрытия экрана звонка.
@@ -122,15 +125,18 @@ class _CallScreenState extends State<CallScreen> {
     _closeCallScreenTimer?.cancel();
     _closeCallScreenTimer = null;
 
-    // Отписываемся от LiveKit
-    if (_localVideoListener != null) {
-      _liveKitService.localVideoTrack.removeListener(_localVideoListener!);
-    }
-    if (_remoteVideoListener != null) {
-      _liveKitService.remoteVideoTrack.removeListener(_remoteVideoListener!);
-    }
-    if (_connectionStateListener != null) {
-      _liveKitService.connectionState.removeListener(_connectionStateListener!);
+    // Отписываемся от CallSession
+    final session = _callService.currentSession;
+    if (session != null) {
+      if (_localVideoListener != null) {
+        session.localVideoTrack.removeListener(_localVideoListener!);
+      }
+      if (_remoteVideoListener != null) {
+        session.remoteVideoTrack.removeListener(_remoteVideoListener!);
+      }
+      if (_connectionStateListener != null) {
+        session.connectionState.removeListener(_connectionStateListener!);
+      }
     }
 
     _callService.markCallScreenClosed();
@@ -158,6 +164,7 @@ class _CallScreenState extends State<CallScreen> {
         final state = currentState;
         if (state == CallState.CALLING ||
             state == CallState.RINGING ||
+            state == CallState.ACCEPTING ||
             state == CallState.IN_CALL) {
           _log('PopScope — minimizing call (state=$state)');
           _callService.minimizeCall();
@@ -191,25 +198,27 @@ class _CallScreenState extends State<CallScreen> {
                 // Remote video (full screen)
                 if (state == CallState.CALLING ||
                     state == CallState.RINGING ||
+                    state == CallState.ACCEPTING ||
                     state == CallState.IN_CALL)
                   _buildRemoteVideo(),
                 // Local video (PiP)
                 if (state == CallState.CALLING ||
                     state == CallState.RINGING ||
+                    state == CallState.ACCEPTING ||
                     state == CallState.IN_CALL)
                   _buildLocalVideo(),
                 // ENDED UI
                 if (state == CallState.ENDED) _buildEndedUI(state),
                 // Controls
-                if (state == CallState.CALLING || state == CallState.IN_CALL)
+                if (state == CallState.CALLING ||
+                    state == CallState.ACCEPTING ||
+                    state == CallState.IN_CALL)
                   Positioned(
                     bottom: 50,
                     left: 0,
                     right: 0,
                     child: _buildControls(state),
                   ),
-                // Incoming call UI
-                if (state == CallState.RINGING) _buildIncomingCallUI(),
                 // Fallback UI
                 if (state == CallState.IDLE && effectiveIncoming)
                   _buildIdleFallback(),
@@ -223,9 +232,10 @@ class _CallScreenState extends State<CallScreen> {
 
   /// Remote video через LiveKit VideoTrackRenderer
   Widget _buildRemoteVideo() {
-    final remoteTrack = _liveKitService.remoteVideoTrack.value;
-    final connState = _liveKitService.connectionState.value;
-    final hasRemoteParticipant = _liveKitService.remoteParticipant.value != null;
+    final session = _callService.currentSession;
+    final remoteTrack = session?.remoteVideoTrack.value;
+    final connState = session?.connectionState.value ?? LiveKitConnectionState.disconnected;
+    final hasRemoteParticipant = session?.remoteParticipant.value != null;
     final callState = _callService.state;
 
     _log('_buildRemoteVideo — remoteTrack=${remoteTrack != null}, connState=$connState, hasRemoteParticipant=$hasRemoteParticipant, callState=$callState');
@@ -283,7 +293,8 @@ class _CallScreenState extends State<CallScreen> {
 
   /// Local video (PiP) через LiveKit VideoViewWidget
   Widget _buildLocalVideo() {
-    final localTrack = _liveKitService.localVideoTrack.value;
+    final session = _callService.currentSession;
+    final localTrack = session?.localVideoTrack.value;
     return Positioned(
       left: _pipOffset.dx,
       top: _pipOffset.dy,
@@ -501,49 +512,6 @@ class _CallScreenState extends State<CallScreen> {
     }
 
     return const SizedBox.shrink();
-  }
-
-  /// UI входящего звонка внутри CallScreen.
-  ///
-  /// Используется ТОЛЬКО для caller-пути, когда CallScreen открыт
-  /// как исходящий (isIncoming=false), но пришёл call:incoming
-  /// (state=RINGING) — legacy случай, когда caller видит "Входящий звонок".
-  ///
-  /// Для callee-пути (accept из IncomingCallDialog) этот UI НЕ ИСПОЛЬЗУЕТСЯ,
-  /// т.к. CallScreen открывается уже после успешного acceptCall().
-  ///
-  /// Зелёная кнопка accept удалена — единственный accept-flow теперь
-  /// проходит через IncomingCallDialog → app.dart → callService.acceptCall().
-  Widget _buildIncomingCallUI() {
-    return Container(
-      color: Colors.black54,
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              'Входящий звонок от ${_callService.remoteUserName ?? widget.userName}',
-              style: const TextStyle(color: Colors.white, fontSize: 24),
-            ),
-            const SizedBox(height: 40),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                FloatingActionButton(
-                  onPressed: () {
-                    _callService.rejectCall();
-                  },
-                  backgroundColor: Colors.red,
-                  child: const Icon(Icons.call_end),
-                ),
-                // Зелёная кнопка accept удалена — accept выполняется
-                // только через IncomingCallDialog → app.dart
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   Widget _buildIdleFallback() {

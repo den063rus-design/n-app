@@ -449,8 +449,8 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('call:end')
-  async handleCallEnd(client: Socket, payload: { callId: number }) {
-    this.logger.log(`[CALL_GATEWAY] CALL_END clientId=${client.id} callId=${payload.callId}`);
+  async handleCallEnd(client: Socket, payload: { callId: number; reason?: string }) {
+    this.logger.log(`[CALL_GATEWAY] CALL_END clientId=${client.id} callId=${payload.callId} reason=${payload.reason || 'none'}`);
 
     try {
       if (payload.callId == null) {
@@ -460,12 +460,20 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.clearCallTimeout(payload.callId);
 
       const call = await this.callService.getCallById(payload.callId);
+      this.logger.log(`[CALL_GATEWAY] CALL_END received callId=${payload.callId} userId=${this.getUserIdFromToken(client)} reason=${payload.reason || 'none'} statusBefore=${call?.status || 'unknown'}`);
       const now = new Date();
       const duration = call.startedAt
         ? Math.floor((now.getTime() - call.startedAt.getTime()) / 1000)
         : 0;
 
       await this.callService.updateCallStatus(payload.callId, CallStatus.ENDED, undefined, now);
+
+      // Если причина connect_failed — другой участник всё ещё на звонке,
+      // не отправляем ему call:ended, чтобы не сбросить его состояние.
+      if (payload.reason === 'connect_failed') {
+        this.logger.log(`[CALL_GATEWAY] CALL_END reason=connect_failed — NOT sending call:ended to other participant callId=${payload.callId}`);
+        return { success: true };
+      }
 
       this.sendToBoth(call.callerId, call.calleeId, 'call:ended', {
         callId: call.id,

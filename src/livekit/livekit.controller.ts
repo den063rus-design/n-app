@@ -47,17 +47,17 @@ export class LiveKitController {
     @CurrentUser() user: CurrentUserType,
   ) {
     this.logger.log(
-      `[LIVEKIT_CONTROLLER] token request userId=${user.id} callId=${dto.callId} dto=${JSON.stringify(dto)}`,
+      `[LIVEKIT_CONTROLLER] TOKEN_REQUEST begin userId=${user.id} callId=${dto.callId}`,
     );
     try {
       const result = await this.liveKitService.createTokenForCall(dto.callId, user);
       this.logger.log(
-        `[LIVEKIT_CONTROLLER] token success userId=${user.id} callId=${dto.callId} roomName=${result.roomName}`,
+        `[LIVEKIT_CONTROLLER] TOKEN_REQUEST success userId=${user.id} callId=${dto.callId} roomName=${result.roomName}`,
       );
       return result;
     } catch (error) {
       this.logger.error(
-        `[LIVEKIT_CONTROLLER] token error userId=${user.id} callId=${dto.callId} name=${(error as Error).name} message=${(error as Error).message} stack=${(error as Error).stack}`,
+        `[LIVEKIT_CONTROLLER] TOKEN_REQUEST fail userId=${user.id} callId=${dto.callId} name=${(error as Error).name} message=${(error as Error).message}`,
       );
       throw error;
     }

@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
 import '../services/call_service.dart';
 import '../services/call_logger.dart';
-import '../services/livekit_service.dart';
 
 /// Маленькое плавающее окно активного звонка поверх приложения.
 ///
@@ -28,7 +27,6 @@ class ActiveCallOverlay extends StatefulWidget {
 class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
   final CallService _callService = CallService();
   final CallLogger _callLogger = CallLogger();
-  final LiveKitService _liveKitService = LiveKitService();
 
   StreamSubscription<CallState>? _stateSub;
   StreamSubscription<bool>? _minimizedSub;
@@ -36,7 +34,7 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
   Offset _position = const Offset(16, 100);
   bool _visible = false;
 
-  // Подписки на LiveKit
+  // Подписки на CallSession
   VoidCallback? _remoteVideoListener;
 
   bool _shouldShowOverlay(CallState state, bool isMinimized) {
@@ -66,11 +64,14 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
     super.initState();
     _subscribe();
 
-    // Подписываемся на remote video
+    // Подписываемся на remote video из CallSession
     _remoteVideoListener = () {
       if (mounted) setState(() {});
     };
-    _liveKitService.remoteVideoTrack.addListener(_remoteVideoListener!);
+    final session = _callService.currentSession;
+    if (session != null) {
+      session.remoteVideoTrack.addListener(_remoteVideoListener!);
+    }
   }
 
   void _subscribe() {
@@ -93,7 +94,10 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
     _stateSub?.cancel();
     _minimizedSub?.cancel();
     if (_remoteVideoListener != null) {
-      _liveKitService.remoteVideoTrack.removeListener(_remoteVideoListener!);
+      final session = _callService.currentSession;
+      if (session != null) {
+        session.remoteVideoTrack.removeListener(_remoteVideoListener!);
+      }
     }
     super.dispose();
   }
@@ -109,6 +113,9 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
 
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
+
+    final session = _callService.currentSession;
+    final remoteTrack = session?.remoteVideoTrack.value;
 
     return Positioned(
       left: _position.dx,
@@ -154,9 +161,9 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
               child: Stack(
                 children: [
                   // Remote video через LiveKit
-                  if (_liveKitService.remoteVideoTrack.value != null)
+                  if (remoteTrack != null)
                     VideoTrackRenderer(
-                      _liveKitService.remoteVideoTrack.value!,
+                      remoteTrack,
                       fit: VideoViewFit.cover,
                     )
                   else

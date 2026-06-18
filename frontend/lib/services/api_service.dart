@@ -272,18 +272,18 @@ class ApiService {
   /// Тело: { "callId": 123 }
   /// Ответ: { "wsUrl": "...", "roomName": "...", "token": "..." }
   Future<Map<String, dynamic>> getLiveKitToken(int callId) async {
-    debugPrint('[API] API getLiveKitToken request callId=$callId');
+    debugPrint('[API] getLiveKitToken request callId=$callId');
     try {
       final response = await post('/livekit/token', data: {
         'callId': callId,
       });
-      debugPrint('[API] API getLiveKitToken success status=200 data=$response');
+      debugPrint('[API] getLiveKitToken ok callId=$callId');
       return response as Map<String, dynamic>;
     } catch (e) {
       if (e is DioException) {
-        debugPrint('[API] getLiveKitToken failed status=${e.response?.statusCode} data=${e.response?.data} error=$e');
+        debugPrint('[API] getLiveKitToken fail callId=$callId status=${e.response?.statusCode} data=${e.response?.data} error=$e');
       } else {
-        debugPrint('[API] getLiveKitToken failed error=$e');
+        debugPrint('[API] getLiveKitToken fail callId=$callId error=$e');
       }
       rethrow;
     }
