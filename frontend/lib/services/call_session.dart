@@ -3,6 +3,12 @@ import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'api_service.dart';
 
+/// Вспомогательная функция для timestamp-логов.
+String _ts() {
+  final now = DateTime.now();
+  return '${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}.${now.millisecond.toString().padLeft(3, '0')}';
+}
+
 /// Состояние подключения к LiveKit комнате.
 enum LiveKitConnectionState {
   disconnected,
@@ -125,6 +131,9 @@ class CallSession {
       String currentStep = 'start';
       debugPrint('[CALL_SESSION_STEP] step=1 begin callId=$callId attemptId=$attemptId');
 
+      // Stopwatch для замера времени каждого шага
+      final sw = Stopwatch()..start();
+
       // Cleanup stale room before reconnecting
       if (_room != null) {
         debugPrint('[CALL_SESSION] cleaning up stale room before connect callId=$callId attemptId=$attemptId');
@@ -142,54 +151,47 @@ class CallSession {
 
       try {
         connectionState.value = LiveKitConnectionState.connecting;
-        debugPrint('[CALL_SESSION] connectionState=connecting callId=$callId attemptId=$attemptId');
-        debugPrint('[CALL_SESSION] connect begin callId=$callId attemptId=$attemptId');
+        debugPrint('[CALL_SESSION] [${_ts()}] connectionState=connecting callId=$callId attemptId=$attemptId');
+        debugPrint('[CALL_SESSION] [${_ts()}] connect begin callId=$callId attemptId=$attemptId');
 
         // 1. Получаем токен
         currentStep = 'token_request';
-        debugPrint('[CALL_SESSION_STEP] step=3 token_request_start callId=$callId attemptId=$attemptId');
-        debugPrint('[CALL_SESSION] token request start callId=$callId attemptId=$attemptId');
+        debugPrint('[CALL_SESSION] [${_ts()}] token request start callId=$callId attemptId=$attemptId');
 
         isLiveKitTokenRequested = true;
-        debugPrint('[CALL_SESSION_TOKEN_REQUESTED] isLiveKitTokenRequested=true callId=$callId attemptId=$attemptId');
+        debugPrint('[CALL_SESSION] [${_ts()}] isLiveKitTokenRequested=true callId=$callId attemptId=$attemptId');
 
         Map<String, dynamic> tokenData;
         try {
-          debugPrint('[CALL_SESSION] ⏳ before _apiService.getLiveKitToken callId=$callId attemptId=$attemptId');
+          debugPrint('[CALL_SESSION] [${_ts()}] ⏳ before _apiService.getLiveKitToken callId=$callId attemptId=$attemptId');
           tokenData = await _apiService.getLiveKitToken(callId);
-          debugPrint('[CALL_SESSION] ✅ after _apiService.getLiveKitToken success callId=$callId attemptId=$attemptId');
-          debugPrint('[CALL_SESSION] token ok callId=$callId attemptId=$attemptId');
+          debugPrint('[CALL_SESSION] [${_ts()}] ✅ token request success callId=$callId attemptId=$attemptId elapsedMs=${sw.elapsedMilliseconds}');
         } catch (e) {
-          debugPrint('[CALL_SESSION] ❌ token fail callId=$callId errorType=${e.runtimeType} error=$e attemptId=$attemptId');
+          debugPrint('[CALL_SESSION] [${_ts()}] ❌ token request fail callId=$callId errorType=${e.runtimeType} error=$e attemptId=$attemptId elapsedMs=${sw.elapsedMilliseconds}');
           isLiveKitTokenRequested = false;
-          debugPrint('[CALL_SESSION_TOKEN_REQUESTED] isLiveKitTokenRequested=false (after error) callId=$callId attemptId=$attemptId');
           // Если это не последняя попытка — делаем retry
           if (attempt < maxRetries) {
-            debugPrint('[CALL_SESSION] retrying after token failure in ${retryDelay.inMilliseconds}ms attemptId=$attemptId');
+            debugPrint('[CALL_SESSION] [${_ts()}] retrying after token failure in ${retryDelay.inMilliseconds}ms attemptId=$attemptId');
             connectionState.value = LiveKitConnectionState.connecting;
-            debugPrint('[CALL_SESSION] connectionState=connecting (retry after token fail) callId=$callId attemptId=$attemptId');
             await Future.delayed(retryDelay);
             continue;
           }
           connectionState.value = LiveKitConnectionState.error;
-          debugPrint('[CALL_SESSION] connectionState=error (token fail, no retries left) callId=$callId attemptId=$attemptId');
+          debugPrint('[CALL_SESSION] [${_ts()}] connectionState=error (token fail, no retries left) callId=$callId attemptId=$attemptId');
           rethrow;
         }
 
         isLiveKitTokenRequested = false;
-        debugPrint('[CALL_SESSION_TOKEN_REQUESTED] isLiveKitTokenRequested=false (success) callId=$callId attemptId=$attemptId');
 
         final token = tokenData['token'] as String;
         final wsUrl = tokenData['wsUrl'] as String;
         final roomName = tokenData['roomName'] as String? ?? 'unknown';
 
-        debugPrint('[CALL_SESSION_STEP] step=4 token_received wsUrl=$wsUrl roomName=$roomName tokenLength=${token.length} attemptId=$attemptId');
-        debugPrint('[CALL_SESSION] token received wsUrl=$wsUrl roomName=$roomName attemptId=$attemptId');
+        debugPrint('[CALL_SESSION] [${_ts()}] token received wsUrl=$wsUrl roomName=$roomName tokenLength=${token.length} attemptId=$attemptId elapsedMs=${sw.elapsedMilliseconds}');
 
         // 2. Создаём Room
         currentStep = 'room_create';
-        debugPrint('[CALL_SESSION_STEP] step=5 room_create_start attemptId=$attemptId');
-        debugPrint('[CALL_SESSION] room create start attemptId=$attemptId');
+        debugPrint('[CALL_SESSION] [${_ts()}] room create start attemptId=$attemptId');
         _room?.dispose();
         _room = Room(
           roomOptions: const RoomOptions(
@@ -198,63 +200,54 @@ class CallSession {
             ),
           ),
         );
-        debugPrint('[CALL_SESSION_STEP] step=6 room_created roomNull=${_room == null} attemptId=$attemptId');
 
         // 3. Подписываемся на события комнаты
         _setupRoomListeners();
 
         // 4. Подключаемся
         currentStep = 'room_connect';
-        debugPrint('[CALL_SESSION_STEP] step=7 room_connect_start wsUrl=$wsUrl roomName=$roomName attemptId=$attemptId');
-        debugPrint('[CALL_SESSION] room connect start wsUrl=$wsUrl roomName=$roomName attemptId=$attemptId');
+        debugPrint('[CALL_SESSION] [${_ts()}] ⏳ before _room!.connect wsUrl=$wsUrl roomName=$roomName attemptId=$attemptId');
         try {
-          debugPrint('[CALL_SESSION] ⏳ before _room!.connect wsUrl=$wsUrl roomName=$roomName attemptId=$attemptId');
           await _room!.connect(wsUrl, token);
-          debugPrint('[CALL_SESSION] ✅ after _room!.connect success callId=$callId attemptId=$attemptId');
-          debugPrint('[CALL_SESSION] room connect ok callId=$callId attemptId=$attemptId');
+          debugPrint('[CALL_SESSION] [${_ts()}] ✅ room connect success callId=$callId attemptId=$attemptId elapsedMs=${sw.elapsedMilliseconds}');
         } catch (e) {
-          debugPrint('[CALL_SESSION] ❌ room connect fail callId=$callId errorType=${e.runtimeType} error=$e attemptId=$attemptId');
-          // Если это не последняя попытка — делаем retry
+          debugPrint('[CALL_SESSION] [${_ts()}] ❌ room connect fail callId=$callId errorType=${e.runtimeType} error=$e attemptId=$attemptId elapsedMs=${sw.elapsedMilliseconds}');
           if (attempt < maxRetries) {
-            debugPrint('[CALL_SESSION] retrying after room connect failure in ${retryDelay.inMilliseconds}ms attemptId=$attemptId');
+            debugPrint('[CALL_SESSION] [${_ts()}] retrying after room connect failure in ${retryDelay.inMilliseconds}ms attemptId=$attemptId');
             connectionState.value = LiveKitConnectionState.connecting;
-            debugPrint('[CALL_SESSION] connectionState=connecting (retry after room fail) callId=$callId attemptId=$attemptId');
             await Future.delayed(retryDelay);
             continue;
           }
           connectionState.value = LiveKitConnectionState.error;
-          debugPrint('[CALL_SESSION] connectionState=error (room fail, no retries left) callId=$callId attemptId=$attemptId');
+          debugPrint('[CALL_SESSION] [${_ts()}] connectionState=error (room fail, no retries left) callId=$callId attemptId=$attemptId');
           rethrow;
         }
-        debugPrint('[CALL_SESSION_STEP] step=8 room_connected actualRoomName=${_room?.name} attemptId=$attemptId');
-        debugPrint('[CALL_SESSION] room connected name=${_room!.name} attemptId=$attemptId');
+        debugPrint('[CALL_SESSION] [${_ts()}] room connected name=${_room!.name} attemptId=$attemptId elapsedMs=${sw.elapsedMilliseconds}');
 
         // 5. Проверяем localParticipant
         final hasLocalParticipant = _room!.localParticipant != null;
-        debugPrint('[CALL_SESSION_STEP] step=9 local_participant_exists=${_room?.localParticipant != null} attemptId=$attemptId');
-        debugPrint('[CALL_SESSION] localParticipant exists=$hasLocalParticipant attemptId=$attemptId');
+        debugPrint('[CALL_SESSION] [${_ts()}] localParticipant exists=$hasLocalParticipant attemptId=$attemptId');
 
         // 6. Включаем микрофон и камеру
         if (hasLocalParticipant) {
           currentStep = 'mic_enable';
-          debugPrint('[CALL_SESSION] local mic enable start attemptId=$attemptId');
+          debugPrint('[CALL_SESSION] [${_ts()}] local mic enable start attemptId=$attemptId');
           try {
             await _room!.localParticipant!.setMicrophoneEnabled(true);
-            debugPrint('[CALL_SESSION] local mic enable done attemptId=$attemptId');
+            debugPrint('[CALL_SESSION] [${_ts()}] local mic enabled attemptId=$attemptId');
           } catch (e) {
-            debugPrint('[CALL_SESSION] local mic enable failed error=$e attemptId=$attemptId');
+            debugPrint('[CALL_SESSION] [${_ts()}] local mic enable failed error=$e attemptId=$attemptId');
           }
           currentStep = 'camera_enable';
-          debugPrint('[CALL_SESSION_STEP] step=10 camera_enable_start attemptId=$attemptId');
-          debugPrint('[CALL_SESSION] local camera enable start attemptId=$attemptId');
+          debugPrint('[CALL_SESSION] [${_ts()}] local camera enable start attemptId=$attemptId');
           try {
             await _room!.localParticipant!.setCameraEnabled(true);
-            debugPrint('[CALL_SESSION] local camera enable done attemptId=$attemptId');
+            debugPrint('[CALL_SESSION] [${_ts()}] local camera enabled attemptId=$attemptId');
           } catch (e) {
-            debugPrint('[CALL_SESSION] local camera enable failed error=$e attemptId=$attemptId');
+            debugPrint('[CALL_SESSION] [${_ts()}] local camera enable failed error=$e attemptId=$attemptId');
           }
         } else {
-          debugPrint('[CALL_SESSION] ⚠️ localParticipant is null after connect attemptId=$attemptId');
+          debugPrint('[CALL_SESSION] [${_ts()}] ⚠️ localParticipant is null after connect attemptId=$attemptId');
         }
 
         // 7. Обновляем состояние
@@ -264,23 +257,23 @@ class CallSession {
         // 8. Получаем локальный видео-трек
         currentStep = 'local_track_refresh';
         _updateLocalVideoTrack();
-        debugPrint('[CALL_SESSION] ✅ after _updateLocalVideoTrack track=${localVideoTrack.value != null} attemptId=$attemptId');
-        debugPrint('[CALL_SESSION_STEP] step=11 local_track_present=${localVideoTrack.value != null} attemptId=$attemptId');
+        debugPrint('[CALL_SESSION] [${_ts()}] ✅ after _updateLocalVideoTrack track=${localVideoTrack.value != null} attemptId=$attemptId');
         if (localVideoTrack.value != null) {
-          debugPrint('[CALL_SESSION] local video track found attemptId=$attemptId');
+          debugPrint('[CALL_SESSION] [${_ts()}] local video track found attemptId=$attemptId');
         } else {
-          debugPrint('[CALL_SESSION] local video track missing (may appear after camera warmup) attemptId=$attemptId');
+          debugPrint('[CALL_SESSION] [${_ts()}] local video track missing (may appear after camera warmup) attemptId=$attemptId');
         }
 
         connectionState.value = LiveKitConnectionState.connected;
-        debugPrint('[CALL_SESSION] connectionState=connected callId=$callId attemptId=$attemptId');
-        debugPrint('[CALL_SESSION_STEP] step=12 success connectionState=${connectionState.value} attemptId=$attemptId');
-        debugPrint('[CALL_SESSION] ✅ Connected successfully attemptId=$attemptId');
+        debugPrint('[CALL_SESSION] [${_ts()}] connectionState=connected callId=$callId attemptId=$attemptId');
+        debugPrint('[CALL_SESSION] [${_ts()}] ✅ Connected successfully attemptId=$attemptId totalElapsedMs=${sw.elapsedMilliseconds}');
+
+        sw.stop();
 
         // Успех — выходим из retry-цикла
         return;
       } catch (e, stack) {
-        debugPrint('[CALL_SESSION_FATAL] step=$currentStep errorType=${e.runtimeType} error=$e attemptId=$attemptId');
+        debugPrint('[CALL_SESSION_FATAL] step=$currentStep errorType=${e.runtimeType} error=$e attemptId=$attemptId elapsedMs=${sw.elapsedMilliseconds}');
         debugPrint('[CALL_SESSION_FATAL] stack=$stack');
         // Если это не последняя попытка — делаем retry
         if (attempt < maxRetries) {

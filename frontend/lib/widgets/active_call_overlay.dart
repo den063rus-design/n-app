@@ -191,6 +191,15 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
                               maxLines: 1,
                             ),
                           ),
+                          const SizedBox(height: 6),
+                          const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              color: Colors.white54,
+                              strokeWidth: 2,
+                            ),
+                          ),
                         ],
                       ),
                     ),

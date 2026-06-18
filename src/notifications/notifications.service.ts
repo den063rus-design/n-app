@@ -69,8 +69,13 @@ export class NotificationsService {
       });
 
       if (!user?.fcmToken) {
+        const callId = data.data?.callId;
+        const callerId = data.data?.callerId;
+        const callerName = data.data?.callerName;
+        const senderId = data.data?.senderId;
+        const senderName = data.data?.senderName;
         this.logger.warn(
-          `[NOTIFICATIONS] SEND_FCM missing token userId=${userId} — skipping FCM push`,
+          `[NOTIFICATIONS] SEND_FCM missing token userId=${userId} type=${data.type}${data.type === 'CALL' ? ` callId=${callId} callerId=${callerId} callerName=${callerName}` : ''}${data.type === 'MESSAGE' ? ` senderId=${senderId} senderName=${senderName}` : ''} — skipping FCM push`,
         );
         return;
       }

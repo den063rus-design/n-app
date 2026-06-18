@@ -601,7 +601,12 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         } else {
           debugPrint('[APP_SHELL] _checkAuth() — authenticated as user: ${auth.currentUser?.id}, isAdmin=${auth.isAdmin}');
           // После успешной аутентификации отправляем FCM token на backend
-          unawaited(PushService().sendTokenToBackend());
+          debugPrint('[APP] token sync after auth begin');
+          unawaited(PushService().syncTokenToBackend().then((_) {
+            debugPrint('[APP] token sync after auth success');
+          }).catchError((e) {
+            debugPrint('[APP] token sync after auth fail: $e');
+          }));
 
           // Рендерим нужный экран прямо здесь, без pushReplacement
           _currentScreen = auth.isAdmin

@@ -66,7 +66,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         NotificationDetails(android: androidDetails);
 
     await localNotifications.show(
-      message.hashCode,
+      PushService.incomingCallNotificationId,
       message.data['callerName'] ?? 'Входящий звонок',
       'Входящий звонок...',
       details,
@@ -120,8 +120,17 @@ class PushService {
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
 
+  /// Фиксированный ID для call-уведомления (чтобы не залипало).
+  static const int incomingCallNotificationId = 777001;
+
   String? _fcmToken;
   String? get fcmToken => _fcmToken;
+
+  /// Последний успешно отправленный на backend токен.
+  String? _lastSentToken;
+
+  /// Флаг: идёт ли отправка токена (защита от дублей).
+  bool _isSendingToken = false;
 
   final _notificationTapStream =
       StreamController<Map<String, String?>>.broadcast();
@@ -213,10 +222,13 @@ class PushService {
     await _requestPermission();
     await _refreshToken();
 
+    // После init() — синхронизируем токен с backend
+    await syncTokenToBackend();
+
     _fcm.onTokenRefresh.listen((newToken) {
-      debugPrint('[FCM] Token обновлён: $newToken');
+      debugPrint('[FCM] Token refreshed: $newToken');
       _fcmToken = newToken;
-      _sendTokenToBackend(newToken);
+      syncTokenToBackend();
     });
 
     FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
@@ -245,6 +257,59 @@ class PushService {
 
     _initialized = true;
     debugPrint('[PUSH] init() — END. Token: $_fcmToken');
+  }
+
+  /// Единый метод синхронизации FCM токена с backend.
+  ///
+  /// 1. Если _isSendingToken == true → return (защита от дублей)
+  /// 2. Если _fcmToken == null → _refreshToken()
+  /// 3. Если после refresh token всё ещё null → лог и return
+  /// 4. Если _lastSentToken == _fcmToken → лог и return (уже отправлен)
+  /// 5. Иначе отправить token на backend
+  /// 6. После успеха: _lastSentToken = _fcmToken
+  Future<void> syncTokenToBackend() async {
+    if (_isSendingToken) {
+      debugPrint('[FCM] token sync skipped — already sending');
+      return;
+    }
+
+    // Если токена нет — пробуем получить
+    if (_fcmToken == null) {
+      debugPrint('[FCM] token sync begin — _fcmToken is null, refreshing...');
+      await _refreshToken();
+    }
+
+    if (_fcmToken == null) {
+      debugPrint('[FCM] token sync skipped — _fcmToken still null after refresh');
+      return;
+    }
+
+    // Если токен уже отправлен — пропускаем
+    if (_lastSentToken == _fcmToken) {
+      debugPrint('[FCM] token sync skipped — same token already sent');
+      return;
+    }
+
+    _isSendingToken = true;
+    debugPrint('[FCM] token sync begin — sending token to backend');
+
+    try {
+      await ApiService().patch('/users/me/fcm-token', data: {
+        'fcmToken': _fcmToken,
+      });
+      _lastSentToken = _fcmToken;
+      debugPrint('[FCM] token sync success');
+    } catch (e) {
+      debugPrint('[FCM] token sync failed: $e');
+    } finally {
+      _isSendingToken = false;
+    }
+  }
+
+  /// Отменяет call-уведомление (снимает залипшее уведомление из статус-бара).
+  Future<void> cancelIncomingCallNotification() async {
+    await _localNotifications.cancel(incomingCallNotificationId);
+    debugPrint('[PUSH] call notification cancelled (id=$incomingCallNotificationId)');
   }
 
   /// Возвращает `true`, если входящий call push нужно проигнорировать.
@@ -290,33 +355,9 @@ class PushService {
   Future<void> _refreshToken() async {
     try {
       _fcmToken = await _fcm.getToken();
-      debugPrint('[FCM] Token получен: $_fcmToken');
+      debugPrint('[FCM] Token refreshed: $_fcmToken');
     } catch (e) {
-      debugPrint('[FCM] Ошибка получения token: $e');
-    }
-  }
-
-  /// Отправляет FCM token на backend.
-  Future<void> _sendTokenToBackend(String token) async {
-    try {
-      await ApiService().patch('/users/me/fcm-token', data: {
-        'fcmToken': token,
-      });
-      debugPrint('[FCM] Token отправлен на backend');
-    } catch (e) {
-      debugPrint('[FCM] Ошибка отправки token на backend: $e');
-    }
-  }
-
-  /// Публичный метод для отправки token после логина.
-  Future<void> sendTokenToBackend() async {
-    if (_fcmToken != null) {
-      await _sendTokenToBackend(_fcmToken!);
-    } else {
-      await _refreshToken();
-      if (_fcmToken != null) {
-        await _sendTokenToBackend(_fcmToken!);
-      }
+      debugPrint('[FCM] Token refresh failed: $e');
     }
   }
 
@@ -415,7 +456,7 @@ class PushService {
     final payloadJson = jsonEncode(payloadMap);
 
     _localNotifications.show(
-      DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      PushService.incomingCallNotificationId,
       data['callerName'] as String? ?? 'Входящий звонок',
       'Входящий звонок...',
       details,

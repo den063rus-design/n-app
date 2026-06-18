@@ -250,23 +250,32 @@ class _CallScreenState extends State<CallScreen> {
 
     // Fallback — показываем имя собеседника, пока нет видео
     String statusText;
-    if (connState == LiveKitConnectionState.connecting) {
+    bool showSpinner = false;
+    if (callState == CallState.ACCEPTING) {
+      statusText = 'Подключение к звонку...';
+      showSpinner = true;
+    } else if (connState == LiveKitConnectionState.connecting) {
       statusText = 'Подключение...';
+      showSpinner = true;
     } else if (connState == LiveKitConnectionState.connected && !hasRemoteParticipant) {
       statusText = 'Ожидание собеседника...';
+      showSpinner = true;
     } else if (connState == LiveKitConnectionState.connected && hasRemoteParticipant) {
-      statusText = 'Собеседник подключился, ожидание видео...';
+      statusText = 'Ожидание видео собеседника...';
+      showSpinner = true;
     } else if (connState == LiveKitConnectionState.error) {
       statusText = 'Ошибка подключения';
     } else if (connState == LiveKitConnectionState.disconnected) {
       statusText = 'Нет подключения';
     } else if (connState == LiveKitConnectionState.reconnecting) {
       statusText = 'Переподключение...';
+      showSpinner = true;
     } else {
       statusText = 'Ожидание собеседника...';
+      showSpinner = true;
     }
 
-    _log('_buildRemoteVideo — FALLBACK: statusText="$statusText" connState=$connState hasRemoteParticipant=$hasRemoteParticipant remoteTrack=$remoteTrack');
+    _log('_buildRemoteVideo — FALLBACK: statusText="$statusText" connState=$connState hasRemoteParticipant=$hasRemoteParticipant remoteTrack=$remoteTrack showSpinner=$showSpinner');
 
     return Container(
       color: Colors.black87,
@@ -285,6 +294,17 @@ class _CallScreenState extends State<CallScreen> {
               statusText,
               style: const TextStyle(color: Colors.white54, fontSize: 14),
             ),
+            if (showSpinner) ...[
+              const SizedBox(height: 16),
+              const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2,
+                ),
+              ),
+            ],
           ],
         ),
       ),

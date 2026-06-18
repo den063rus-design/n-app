@@ -71,7 +71,7 @@ class AuthProvider extends ChangeNotifier {
       // Heartbeat запускается автоматически в onConnect внутри SocketService
 
       // Отправляем FCM token на backend после успешного входа
-      unawaited(PushService().sendTokenToBackend());
+      unawaited(PushService().syncTokenToBackend());
 
       _isLoading = false;
       notifyListeners();
