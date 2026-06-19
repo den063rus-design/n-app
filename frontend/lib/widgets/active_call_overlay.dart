@@ -28,6 +28,7 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
   final CallService _callService = CallService();
   final CallLogger _callLogger = CallLogger();
   final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
+  bool _remoteRendererInitialized = false;
 
   StreamSubscription<MediaStream?>? _remoteStreamSub;
   StreamSubscription<CallState>? _stateSub;
@@ -81,6 +82,7 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
   Future<void> _initRenderer() async {
     try {
       await _remoteRenderer.initialize();
+      _remoteRendererInitialized = true;
 
       final currentRemote = _callService.currentRemoteStream;
       if (currentRemote != null) {
@@ -126,8 +128,20 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
     _remoteStreamSub?.cancel();
     _stateSub?.cancel();
     _minimizedSub?.cancel();
-    _remoteRenderer.srcObject = null;
-    _remoteRenderer.dispose();
+    try {
+      if (_remoteRendererInitialized) {
+        _remoteRenderer.srcObject = null;
+      }
+    } catch (e) {
+      _log('overlay dispose srcObject clear failed: $e');
+    }
+    try {
+      if (_remoteRendererInitialized) {
+        _remoteRenderer.dispose();
+      }
+    } catch (e) {
+      _log('overlay dispose renderer failed: $e');
+    }
     super.dispose();
   }
 

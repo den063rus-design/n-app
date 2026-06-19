@@ -426,6 +426,24 @@ class PushService {
   }
 
   /// Показывает call-style локальное уведомление в foreground.
+  Future<void> showIncomingCallNotificationFromSocket({
+    required String callId,
+    required String callerId,
+    required String callerName,
+  }) async {
+    debugPrint('[PUSH] showIncomingCallNotificationFromSocket ? callId=$callId callerId=$callerId callerName=$callerName');
+    _showCallNotification({
+      'type': 'call',
+      'callId': callId,
+      'callerId': callerId,
+      'callerName': callerName,
+    });
+
+    if (!CallRingtoneService().isIncomingPlaying) {
+      await CallRingtoneService().playIncomingRingtone();
+    }
+  }
+
   void _showCallNotification(Map<String, dynamic> data) {
     const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(

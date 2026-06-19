@@ -234,11 +234,11 @@ void showIncomingCallDialogFromService({
       return;
     }
 
-    if (callService.state == CallState.RINGING) {
-      debugPrint('[APP] вќЊ GLOBAL incoming dialog rejected/dismissed вЂ” calling rejectCall()');
+    if (result == false && callService.state == CallState.RINGING) {
+      debugPrint('[APP] вќЊ GLOBAL incoming dialog rejected вЂ” calling rejectCall()');
       await callService.rejectCall();
     } else {
-      debugPrint('[APP] вЏ­пёЏ GLOBAL incoming dialog dismissed вЂ” state=${callService.state}, skipping rejectCall');
+      debugPrint('[APP] вЏ­пёЏ GLOBAL incoming dialog dismissed/closed unexpectedly вЂ” result=$result state=${callService.state}, skipping rejectCall');
     }
   });
 }
@@ -301,6 +301,7 @@ class _AppShell extends StatefulWidget {
 class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   bool _isChecking = true;
   bool _isOffline = false;
+  AppLifecycleState _lastLifecycleState = AppLifecycleState.resumed;
 
   // РҐСЂР°РЅРёРј, РєР°РєРѕР№ СЌРєСЂР°РЅ РїРѕРєР°Р·С‹РІР°С‚СЊ (СЂРµРЅРґРµСЂРёС‚СЃСЏ РІ build, Р° РЅРµ С‡РµСЂРµР· pushReplacement)
   Widget? _currentScreen;
@@ -365,11 +366,15 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _lastLifecycleState = state;
+
     if (state == AppLifecycleState.resumed) {
       _enableStandardSystemUi();
+      _checkPendingIncomingCallFromService();
+      _checkPendingIncomingCallFromPush();
     }
 
-    // РўР— 1: Р—Р°РІРµСЂС€Р°С‚СЊ Р·РІРѕРЅРѕРє, РµСЃР»Рё РїСЂРёР»РѕР¶РµРЅРёРµ СѓР±РёС‚Рѕ/РІС‹РіСЂСѓР¶РµРЅРѕ РёР· РїР°РјСЏС‚Рё
+    // ?? 1: ????????? ??????, ???? ?????????? ?????/????????? ?? ??????
     if (state == AppLifecycleState.detached) {
       _handleAppKilled();
     }
@@ -484,9 +489,22 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
         debugPrint('[APP] рџ“ћ APP incoming socket event (backup path) вЂ” callerId=$callerId, callerName=$callerName, callId=$callId');
 
-        // Р•РґРёРЅР°СЏ С‚РѕС‡РєР° РїРѕРєР°Р·Р° РІС…РѕРґСЏС‰РµРіРѕ РґРёР°Р»РѕРіР°.
-        // Р’СЃРµ guard'С‹ (СѓР¶Рµ РЅР° Р·РІРѕРЅРєРµ, СѓР¶Рµ РѕС‚РєСЂС‹С‚ РґРёР°Р»РѕРі Рё С‚.Рґ.)
-        // РїСЂРѕРІРµСЂСЏСЋС‚СЃСЏ РІРЅСѓС‚СЂРё _showIncomingCallDialog.
+        final isForeground = _lastLifecycleState == AppLifecycleState.resumed ||
+            _lastLifecycleState == AppLifecycleState.inactive;
+
+        if (!isForeground) {
+          debugPrint('[APP] incoming socket event while app is backgrounded ? showing local call notification instead of dialog');
+          unawaited(PushService().showIncomingCallNotificationFromSocket(
+            callId: callId.toString(),
+            callerId: callerId.toString(),
+            callerName: callerName,
+          ));
+          return;
+        }
+
+        // ?????? ????? ?????? ????????? ???????.
+        // ??? guard'? (??? ?? ??????, ??? ?????? ?????? ? ?.?.)
+        // ??????????? ?????? _showIncomingCallDialog.
         showIncomingCallDialogFromService(
           callerId: callerId,
           callerName: callerName,

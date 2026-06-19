@@ -23,6 +23,8 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   server!: Namespace;
 
   private callTimeouts: Map<number, NodeJS.Timeout> = new Map();
+  private callDeliveryTimeouts: Map<number, NodeJS.Timeout> = new Map();
+  private deliveredIncomingCalls: Set<number> = new Set();
 
   constructor(
     private readonly jwtService: JwtService,
@@ -81,6 +83,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       const { call, otherUserId } = activeCall;
       this.clearCallTimeout(call.id);
+      this.clearCallDeliveryTimeout(call.id);
       await this.callService.endCall(call.id);
 
       this.logger.warn(
@@ -151,6 +154,34 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }, 30000);
 
     this.callTimeouts.set(callId, timeout);
+  }
+
+  private setupCallDeliveryTimeout(callId: number) {
+    const timeout = setTimeout(async () => {
+      try {
+        if (this.deliveredIncomingCalls.has(callId)) {
+          this.logger.log(`[CALL_GATEWAY] CALL_DELIVERY_TIMEOUT skipped callId=${callId} reason=already_delivered`);
+          return;
+        }
+
+        const currentCall = await this.callService.findCallById(callId);
+        if (currentCall && currentCall.status === CallStatus.PENDING) {
+          this.logger.warn(`[CALL_GATEWAY] CALL_DELIVERY_TIMEOUT fired callId=${callId}`);
+          await this.callService.endCall(callId);
+          this.sendToUser(currentCall.callerId, 'call:ended', {
+            callId,
+            reason: 'no_answer',
+          });
+        }
+      } catch (error) {
+        this.logger.error(`[CALL_GATEWAY] CALL_DELIVERY_TIMEOUT failed callId=${callId} error=${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        this.callDeliveryTimeouts.delete(callId);
+        this.deliveredIncomingCalls.delete(callId);
+      }
+    }, 8000);
+
+    this.callDeliveryTimeouts.set(callId, timeout);
   }
 
   /** Проверяет, является ли PENDING звонок stale (старше STALE_CALL_TIMEOUT_MS).
@@ -322,6 +353,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
         // Переустанавливаем таймаут (старый мог быть потерян при перезапуске backend)
         this.setupCallTimeout(existingPendingBetween.id);
+        this.setupCallDeliveryTimeout(existingPendingBetween.id);
 
         this.logger.log(
           `[CALL_GATEWAY] CALL_START done success callId=${existingPendingBetween.id} reused=true`,
@@ -347,6 +379,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       await this.notifyIncomingCall(call);
       this.setupCallTimeout(call.id);
+      this.setupCallDeliveryTimeout(call.id);
 
       this.logger.log(
         `[CALL_GATEWAY] CALL_START done success callId=${call.id}`,
@@ -388,6 +421,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       this.clearCallTimeout(payload.callId);
+      this.clearCallDeliveryTimeout(payload.callId);
 
       const call = await this.callService.updateCallStatus(
         payload.callId,
@@ -421,6 +455,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     try {
       this.clearCallTimeout(payload.callId);
+      this.clearCallDeliveryTimeout(payload.callId);
 
       const call = await this.callService.updateCallStatus(
         payload.callId,
@@ -458,6 +493,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       this.clearCallTimeout(payload.callId);
+      this.clearCallDeliveryTimeout(payload.callId);
 
       const call = await this.callService.getCallById(payload.callId);
       this.logger.log(`[CALL_GATEWAY] CALL_END received callId=${payload.callId} userId=${this.getUserIdFromToken(client)} reason=${payload.reason || 'none'} statusBefore=${call?.status || 'unknown'}`);
@@ -487,6 +523,25 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         `[CALL_GATEWAY] CALL_END failed clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`,
       );
       return { success: false, error: 'Не удалось завершить звонок' };
+    }
+  }
+
+  @SubscribeMessage('call:incoming_received')
+  async handleIncomingReceived(client: Socket, payload: { callId: number }) {
+    const userId = this.getUserIdFromToken(client);
+    this.logger.log(`[CALL_GATEWAY] CALL_DELIVERY_ACK clientId=${client.id} userId=${userId} callId=${payload.callId}`);
+
+    try {
+      if (!payload.callId) {
+        return { success: false, error: 'callId is required' };
+      }
+
+      this.deliveredIncomingCalls.add(payload.callId);
+      this.clearCallDeliveryTimeout(payload.callId);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`[CALL_GATEWAY] CALL_DELIVERY_ACK failed clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`);
+      return { success: false, error: 'delivery ack failed' };
     }
   }
 
@@ -559,6 +614,15 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     clearTimeout(timeout);
     this.callTimeouts.delete(callId);
+  }
+
+  private clearCallDeliveryTimeout(callId: number) {
+    const timeout = this.callDeliveryTimeouts.get(callId);
+    if (timeout) {
+      clearTimeout(timeout);
+      this.callDeliveryTimeouts.delete(callId);
+    }
+    this.deliveredIncomingCalls.delete(callId);
   }
 
   private getUserRoomName(userId: number) {

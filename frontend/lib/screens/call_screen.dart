@@ -27,6 +27,8 @@ class _CallScreenState extends State<CallScreen> {
   final CallLogger _callLogger = CallLogger();
   final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
   final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
+  bool _localRendererInitialized = false;
+  bool _remoteRendererInitialized = false;
   Offset _pipOffset = const Offset(20, 80);
   bool _hasNavigatedAway = false;
   int _remoteViewVersion = 0;
@@ -47,6 +49,11 @@ class _CallScreenState extends State<CallScreen> {
     super.initState();
     _log('initState() — userId=${widget.userId}, isIncoming=${widget.isIncoming}, state=${_callService.state}');
     _callService.markCallScreenOpen();
+
+    if (!widget.isIncoming && _callService.state == CallState.ENDED) {
+      _log('initState() ? stale ENDED detected before outgoing call, hard resetting');
+      _callService.hardReset();
+    }
 
     if (_callService.isMinimized) {
       _callService.expandCall();
@@ -71,7 +78,9 @@ class _CallScreenState extends State<CallScreen> {
   Future<void> _initRenderers() async {
     try {
       await _localRenderer.initialize();
+      _localRendererInitialized = true;
       await _remoteRenderer.initialize();
+      _remoteRendererInitialized = true;
     } catch (e) {
       _log('_initRenderers() — renderer init FAILED: $e');
     }
@@ -211,10 +220,34 @@ class _CallScreenState extends State<CallScreen> {
     _closeCallScreenTimer = null;
 
     _callService.markCallScreenClosed();
-    _localRenderer.srcObject = null;
-    _remoteRenderer.srcObject = null;
-    _localRenderer.dispose();
-    _remoteRenderer.dispose();
+    try {
+      if (_localRendererInitialized) {
+        _localRenderer.srcObject = null;
+      }
+    } catch (e) {
+      _log('dispose() ? local srcObject clear failed: $e');
+    }
+    try {
+      if (_remoteRendererInitialized) {
+        _remoteRenderer.srcObject = null;
+      }
+    } catch (e) {
+      _log('dispose() ? remote srcObject clear failed: $e');
+    }
+    try {
+      if (_localRendererInitialized) {
+        _localRenderer.dispose();
+      }
+    } catch (e) {
+      _log('dispose() ? local renderer dispose failed: $e');
+    }
+    try {
+      if (_remoteRendererInitialized) {
+        _remoteRenderer.dispose();
+      }
+    } catch (e) {
+      _log('dispose() ? remote renderer dispose failed: $e');
+    }
     super.dispose();
   }
 

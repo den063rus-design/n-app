@@ -259,12 +259,12 @@ class CallService {
       };
       _pendingIncomingCall = Map<String, dynamic>.from(incomingData);
       _incomingCallController.add(incomingData);
-      showIncomingCallDialogFromService(
-        callerId: _remoteUserId!,
-        callerName: _remoteUserName ?? 'Incoming call',
-        callId: _currentCallId ?? 0,
-        source: 'service',
-      );
+      if (_currentCallId != null) {
+        _log('?? call:incoming_received ? callId=$_currentCallId');
+        _socketService.sendCallEvent('call:incoming_received', {
+          'callId': _currentCallId,
+        });
+      }
     });
 
     _socketService.onCallEvent('call:accepted', (data) async {
