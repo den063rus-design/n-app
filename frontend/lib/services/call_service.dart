@@ -5,6 +5,7 @@ import '../app/app.dart';
 import 'socket_service.dart';
 import 'call_logger.dart';
 import 'call_ringtone_service.dart';
+import 'push_service.dart';
 
 enum CallState {
   IDLE,
@@ -216,6 +217,7 @@ class CallService {
 
     for (final event in const [
       'call:incoming',
+      'call:started',
       'call:accepted',
       'call:signal',
       'call:ended',
@@ -267,8 +269,28 @@ class CallService {
       }
     });
 
+    _socketService.onCallEvent('call:started', (data) {
+      _log('рџ“І call:started вЂ” data=$data state=$_state');
+
+      if (_state != CallState.CALLING) {
+        _log('вљ пёЏ call:started ignored вЂ” state=$_state');
+        return;
+      }
+
+      final startedCallId = data['callId'] as int?;
+      if (startedCallId != null) {
+        _currentCallId = startedCallId;
+        _log('вњ… call:started applied вЂ” callId=$_currentCallId');
+      }
+    });
+
     _socketService.onCallEvent('call:accepted', (data) async {
       _log('рџ“І call:accepted вЂ” data=$data state=$_state');
+      if (_state != CallState.CALLING) {
+        _log('вљ пёЏ call:accepted ignored вЂ” state=$_state');
+        return;
+      }
+
       await CallRingtoneService().stopAllCallSounds();
       _resetTimer?.cancel();
 
@@ -479,6 +501,12 @@ class CallService {
 
   Future<void> endCall() async {
     _log('рџ”ґ endCall() вЂ” callId=$_currentCallId state=$_state');
+    if (_currentCallId == null && _state == CallState.CALLING) {
+      _log('вљ пёЏ endCall() вЂ” waiting briefly for call:started');
+      await Future.delayed(const Duration(milliseconds: 400));
+      _log('вљ пёЏ endCall() вЂ” after wait callId=$_currentCallId state=$_state');
+    }
+
     if (_currentCallId != null) {
       _socketService.sendCallEvent('call:end', {
         'callId': _currentCallId,
@@ -685,10 +713,7 @@ class CallService {
     _lastEndReason = reason;
     _lastCallEndTimestamp = DateTime.now().millisecondsSinceEpoch;
     _isAcceptingCall = false;
-
-    await CallRingtoneService().stopAllCallSounds();
     _cancelPeerDisconnectTimer();
-    _disposePeerResources();
 
     _localStreamController.add(null);
     _remoteStreamController.add(null);
@@ -698,10 +723,32 @@ class CallService {
     _minimizedController.add(false);
 
     _applyState(CallState.ENDED);
-    await _callLogger.close();
+    unawaited(_finishEndCallCleanup());
 
     _resetTimer?.cancel();
     _resetTimer = Timer(const Duration(seconds: 2), _hardReset);
+  }
+
+  Future<void> _finishEndCallCleanup() async {
+    try {
+      await CallRingtoneService().stopAllCallSounds();
+    } catch (e) {
+      _log('вљ пёЏ stopAllCallSounds cleanup failed: $e');
+    }
+
+    try {
+      await PushService().cancelIncomingCallNotification();
+    } catch (e) {
+      _log('вљ пёЏ cancelIncomingCallNotification cleanup failed: $e');
+    }
+
+    _disposePeerResources();
+
+    try {
+      await _callLogger.close();
+    } catch (e) {
+      _log('вљ пёЏ call logger close failed: $e');
+    }
   }
 
   void _disposePeerResources() {

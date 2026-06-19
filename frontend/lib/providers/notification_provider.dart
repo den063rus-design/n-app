@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/notification.dart' as models;
 import '../services/api_service.dart';
+import '../services/push_service.dart';
 import '../services/socket_service.dart';
 
 class NotificationProvider extends ChangeNotifier {
@@ -27,6 +28,9 @@ class NotificationProvider extends ChangeNotifier {
   void _setupSocketListeners() {
     _socketService.onNotification((notification) {
       try {
+        if (notification is Map<String, dynamic>) {
+          _showLocalFallbackIfNeeded(notification);
+        }
         final appNotification = models.AppNotification.fromJson(notification);
         _notifications.insert(0, appNotification);
         _unreadCount++;
@@ -106,6 +110,44 @@ class NotificationProvider extends ChangeNotifier {
     } catch (e) {
       // ignore
     }
+  }
+
+  void _showLocalFallbackIfNeeded(Map<String, dynamic> notification) {
+    final lifecycleState = WidgetsBinding.instance.lifecycleState;
+    final isBackgrounded = lifecycleState == AppLifecycleState.paused ||
+        lifecycleState == AppLifecycleState.detached ||
+        lifecycleState == AppLifecycleState.hidden;
+
+    if (!isBackgrounded) {
+      return;
+    }
+
+    final type = (notification['type'] as String? ?? '').toUpperCase();
+    if (type != 'MESSAGE') {
+      return;
+    }
+
+    if (PushService().fcmToken != null) {
+      return;
+    }
+
+    final rawData = notification['data'];
+    final data = rawData is Map ? Map<String, dynamic>.from(rawData) : const <String, dynamic>{};
+    final senderId = data['senderId']?.toString();
+    final senderName = data['senderName']?.toString();
+    final messageId = data['messageId']?.toString();
+    final title = notification['title'] as String? ?? 'Новое сообщение';
+    final body = notification['body'] as String? ?? '';
+
+    unawaited(
+      PushService().showMessageNotificationFromSocket(
+        title: title,
+        body: body,
+        senderId: senderId,
+        senderName: senderName,
+        messageId: messageId,
+      ),
+    );
   }
 
   @override

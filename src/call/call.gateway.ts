@@ -344,6 +344,10 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.logger.log(
           `[CALL_GATEWAY] CALL_START reused pending callId=${existingPendingBetween.id} callerId=${callerId} calleeId=${payload.calleeId}`,
         );
+        this.sendToUser(callerId, 'call:started', {
+          callId: existingPendingBetween.id,
+          calleeId: payload.calleeId,
+        });
 
         // Очищаем старый таймаут, если он ещё висит (in-memory timeout мог сохраниться)
         this.clearCallTimeout(existingPendingBetween.id);
@@ -372,6 +376,11 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.log(
         `[CALL_GATEWAY] CALL_START created callId=${call.id} callerId=${callerId} calleeId=${payload.calleeId}`,
       );
+
+      this.sendToUser(callerId, 'call:started', {
+        callId: call.id,
+        calleeId: payload.calleeId,
+      });
 
       this.logger.log(
         `[CALL_GATEWAY] CALL_START notifyIncomingCall callId=${call.id} calleeId=${payload.calleeId}`,

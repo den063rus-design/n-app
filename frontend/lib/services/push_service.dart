@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../services/api_service.dart';
 import '../services/call_ringtone_service.dart';
@@ -119,6 +120,8 @@ class PushService {
   final FirebaseMessaging _fcm = FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
+  static const MethodChannel _notificationsChannel =
+      MethodChannel('com.napp.app/notifications');
 
   /// Фиксированный ID для call-уведомления (чтобы не залипало).
   static const int incomingCallNotificationId = 777001;
@@ -308,8 +311,25 @@ class PushService {
 
   /// Отменяет call-уведомление (снимает залипшее уведомление из статус-бара).
   Future<void> cancelIncomingCallNotification() async {
-    await _localNotifications.cancel(incomingCallNotificationId);
-    debugPrint('[PUSH] call notification cancelled (id=$incomingCallNotificationId)');
+    try {
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        await _notificationsChannel.invokeMethod<void>(
+          'cancelNotificationById',
+          {'id': incomingCallNotificationId},
+        ).timeout(const Duration(seconds: 1));
+      } else {
+        await _localNotifications
+            .cancel(incomingCallNotificationId)
+            .timeout(const Duration(seconds: 1));
+      }
+      debugPrint(
+        '[PUSH] call notification cancelled (id=$incomingCallNotificationId)',
+      );
+    } on TimeoutException {
+      debugPrint('[PUSH] cancelIncomingCallNotification timeout');
+    } catch (e) {
+      debugPrint('[PUSH] cancelIncomingCallNotification failed: $e');
+    }
   }
 
   /// Возвращает `true`, если входящий call push нужно проигнорировать.
@@ -442,6 +462,21 @@ class PushService {
     if (!CallRingtoneService().isIncomingPlaying) {
       await CallRingtoneService().playIncomingRingtone();
     }
+  }
+
+  Future<void> showMessageNotificationFromSocket({
+    required String title,
+    required String body,
+    String? senderId,
+    String? senderName,
+    String? messageId,
+  }) async {
+    _showLocalNotification(title, body, {
+      'type': 'message',
+      'senderId': senderId,
+      'senderName': senderName,
+      'messageId': messageId,
+    });
   }
 
   void _showCallNotification(Map<String, dynamic> data) {
