@@ -89,9 +89,8 @@ class _AdminScreenState extends State<AdminScreen> {
           IconButton(
             icon: const Icon(Icons.exit_to_app),
             tooltip: 'Выйти',
-            onPressed: () {
-              context.read<AuthProvider>().logout();
-              Navigator.pushReplacementNamed(context, '/login');
+            onPressed: () async {
+              await context.read<AuthProvider>().logout();
             },
           ),
         ],

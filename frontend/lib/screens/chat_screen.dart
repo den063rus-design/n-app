@@ -564,9 +564,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           if (!widget.isAdmin)
             IconButton(
               icon: const Icon(Icons.exit_to_app),
-              onPressed: () {
-                context.read<AuthProvider>().logout();
-                Navigator.pushReplacementNamed(context, '/login');
+              onPressed: () async {
+                await context.read<AuthProvider>().logout();
               },
             ),
         ],

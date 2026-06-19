@@ -82,11 +82,7 @@ class _LoginScreenState extends State<LoginScreen> {
         await _clearSavedCredentials();
       }
 
-      final isAdmin = authProvider.isAdmin;
-      Navigator.pushReplacementNamed(
-        context,
-        isAdmin ? '/admin' : '/user',
-      );
+      return;
     }
   }
 

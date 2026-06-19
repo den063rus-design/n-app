@@ -302,6 +302,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   bool _isChecking = true;
   bool _isOffline = false;
   AppLifecycleState _lastLifecycleState = AppLifecycleState.resumed;
+  AuthProvider? _authProvider;
 
   // РҐСЂР°РЅРёРј, РєР°РєРѕР№ СЌРєСЂР°РЅ РїРѕРєР°Р·С‹РІР°С‚СЊ (СЂРµРЅРґРµСЂРёС‚СЃСЏ РІ build, Р° РЅРµ С‡РµСЂРµР· pushReplacement)
   Widget? _currentScreen;
@@ -337,6 +338,20 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     debugPrint('[APP_SHELL] ===== _AppShell.initState() END ====');
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    final auth = context.read<AuthProvider>();
+    if (identical(_authProvider, auth)) {
+      return;
+    }
+
+    _authProvider?.removeListener(_handleAuthStateChanged);
+    _authProvider = auth;
+    _authProvider?.addListener(_handleAuthStateChanged);
+  }
+
   /// РРЅРёС†РёР°Р»РёР·РёСЂСѓРµС‚ РіР»РѕР±Р°Р»СЊРЅС‹Рµ СЃРµСЂРІРёСЃС‹ (CallService).
   Future<void> _initServices() async {
     debugPrint('[APP_SHELL] _initServices() вЂ” BEGIN');
@@ -358,10 +373,35 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _authProvider?.removeListener(_handleAuthStateChanged);
     _incomingCallSubscription?.cancel();
     _pushTapSubscription?.cancel();
     _callStateSubscription?.cancel();
     super.dispose();
+  }
+
+  void _handleAuthStateChanged() {
+    if (!mounted || _isChecking) {
+      return;
+    }
+
+    final auth = _authProvider;
+    if (auth == null) {
+      return;
+    }
+
+    final Widget nextScreen = auth.isAuthenticated
+        ? (auth.isAdmin ? const AdminScreen() : const UserScreen())
+        : const LoginScreen();
+
+    setState(() {
+      _currentScreen = nextScreen;
+    });
+
+    debugPrint(
+      '[APP_SHELL] auth state changed -> currentScreen=${nextScreen.runtimeType} '
+      'authenticated=${auth.isAuthenticated} isAdmin=${auth.isAdmin}',
+    );
   }
 
   @override

@@ -625,9 +625,8 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
           ),
           IconButton(
             icon: const Icon(Icons.exit_to_app),
-            onPressed: () {
-              context.read<AuthProvider>().logout();
-              Navigator.pushReplacementNamed(context, '/login');
+            onPressed: () async {
+              await context.read<AuthProvider>().logout();
             },
           ),
         ],
