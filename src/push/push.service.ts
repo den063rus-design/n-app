@@ -52,20 +52,18 @@ export class PushService implements OnModuleInit {
       const message: Message = {
         token: payload.token,
         data: payload.data ?? {},
-        android: {
-          priority: 'high',
-          notification: {
-            channelId: isCall ? 'incoming_call_channel' : 'default_notification_channel',
-            defaultSound: true,
-            defaultVibrateTimings: true,
-            ...(isCall
-              ? {
-                  visibility: 'public',
-                  ticker: payload.title,
-                }
-              : {}),
-          },
-        },
+        android: isCall
+          ? {
+              priority: 'high',
+            }
+          : {
+              priority: 'high',
+              notification: {
+                channelId: 'default_notification_channel',
+                defaultSound: true,
+                defaultVibrateTimings: true,
+              },
+            },
         ...(isCall
           ? {}
           : {
