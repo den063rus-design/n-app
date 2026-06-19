@@ -29,6 +29,7 @@ class _CallScreenState extends State<CallScreen> {
   final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
   Offset _pipOffset = const Offset(20, 80);
   bool _hasNavigatedAway = false;
+  int _remoteViewVersion = 0;
 
   // Stream-подписки для корректной отмены в dispose()
   StreamSubscription<MediaStream?>? _localStreamSub;
@@ -47,11 +48,11 @@ class _CallScreenState extends State<CallScreen> {
     _log('initState() — userId=${widget.userId}, isIncoming=${widget.isIncoming}, state=${_callService.state}');
     _callService.markCallScreenOpen();
 
-    _initRenderers();
-
     if (_callService.isMinimized) {
       _callService.expandCall();
     }
+
+    _initRenderers();
 
     if (!widget.isIncoming) {
       if (_callService.state == CallState.RINGING) {
@@ -88,7 +89,9 @@ class _CallScreenState extends State<CallScreen> {
 
     final currentRemote = _callService.currentRemoteStream;
     if (currentRemote != null) {
+      _remoteRenderer.srcObject = null;
       _remoteRenderer.srcObject = currentRemote;
+      _remoteViewVersion++;
       if (mounted) setState(() {});
     }
 
@@ -101,7 +104,11 @@ class _CallScreenState extends State<CallScreen> {
     });
 
     _remoteStreamSub = _callService.remoteStream.listen((stream) {
+      if (stream != null && identical(_remoteRenderer.srcObject, stream)) {
+        _remoteRenderer.srcObject = null;
+      }
       _remoteRenderer.srcObject = stream;
+      _remoteViewVersion++;
       if (mounted) setState(() {});
     });
   }
@@ -137,6 +144,58 @@ class _CallScreenState extends State<CallScreen> {
         _closeCallScreenTimer = null;
       });
     }
+  }
+
+  Widget _buildRemoteStage() {
+    if (_remoteRenderer.srcObject != null) {
+      return RTCVideoView(
+        _remoteRenderer,
+        key: ValueKey('remote-video-$_remoteViewVersion'),
+        objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+      );
+    }
+
+    return Container(
+      color: Colors.black,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.person,
+              color: Colors.white54,
+              size: 72,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _callService.remoteUserName ?? widget.userName,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(
+                color: Colors.white70,
+                strokeWidth: 2.5,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Подключаем видео...',
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 15,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -236,11 +295,7 @@ class _CallScreenState extends State<CallScreen> {
                     state == CallState.RINGING ||
                     state == CallState.ACCEPTING ||
                     state == CallState.IN_CALL)
-                  RTCVideoView(
-                    _remoteRenderer,
-                    objectFit:
-                        RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-                  ),
+                  _buildRemoteStage(),
                 // Local video (PiP) — показываем только в активных состояниях
                 if (state == CallState.CALLING ||
                     state == CallState.RINGING ||

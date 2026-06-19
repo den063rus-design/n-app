@@ -1,24 +1,9 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/call_service.dart';
 import '../services/call_logger.dart';
 import '../services/call_ringtone_service.dart';
 
-/// Модальное окно входящего звонка.
-///
-/// Показывается при получении входящего звонка (call:incoming).
-/// Содержит:
-/// - имя звонящего
-/// - зелёная кнопка "Принять"
-/// - красная кнопка "Отклонить"
-///
-/// Возвращает bool через Navigator.pop:
-/// - true — принято
-/// - false — отклонено
-///
-/// ВАЖНО: Диалог НЕ вызывает acceptCall/rejectCall сам.
-/// Он только возвращает результат. Вызов acceptCall/rejectCall
-/// делает тот, кто открыл диалог (app.dart).
 class IncomingCallDialog extends StatefulWidget {
   final int callerId;
   final String callerName;
@@ -41,36 +26,30 @@ class _IncomingCallDialogState extends State<IncomingCallDialog>
   final CallLogger _callLogger = CallLogger();
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
-
-  /// Guard от двойного вызова accept/reject.
   bool _isHandled = false;
-
-  /// Подписка на stateStream для автозакрытия при удалённом завершении звонка.
   StreamSubscription<CallState>? _stateSubscription;
 
   @override
   void initState() {
     super.initState();
 
-    // Проверяем текущее состояние: если звонок уже завершён — закрываемся без анимации
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    );
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.15).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
     final currentState = _callService.state;
     if (currentState == CallState.ENDED || currentState == CallState.IDLE) {
       _isHandled = true;
       _callService.markIncomingDialogClosed();
       CallRingtoneService().stopAllCallSounds();
-      // Не вызываем super.dispose() — initState только начался, dispose вызовется позже.
-      // Просто помечаем handled и не стартуем анимацию/звук.
-      _pulseController = AnimationController(
-        vsync: this,
-        duration: const Duration(milliseconds: 1200),
-      );
-      _pulseAnimation = Tween<double>(begin: 1.0, end: 1.15).animate(
-        CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
-      );
-      // Сразу закрываем диалог через микротаск, чтобы build() успел вернуть виджет
       Future.microtask(() {
-        if (mounted && !_isHandled) return; // дополнительная проверка
-        if (mounted) Navigator.of(context).pop(false);
+        if (mounted) {
+          Navigator.of(context).pop(false);
+        }
       });
       return;
     }
@@ -78,29 +57,21 @@ class _IncomingCallDialogState extends State<IncomingCallDialog>
     _callService.markIncomingDialogOpen();
     CallRingtoneService().playIncomingRingtone();
 
-    // Подписываемся на stateStream для автозакрытия при удалённом завершении звонка
     _stateSubscription = _callService.stateStream.listen((state) {
       if (_isHandled) return;
       if (state == CallState.ENDED || state == CallState.IDLE) {
-        _log('📞 remote end detected (state=$state), auto-closing');
+        _log('remote end detected (state=$state), auto-closing');
         _onReject();
       }
     });
 
-    // Анимация пульсации для кнопки "Принять"
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    )..repeat(reverse: true);
-    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.15).animate(
-      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
-    );
+    _pulseController.repeat(reverse: true);
   }
 
   @override
   void dispose() {
+    _log('dispose handled=$_isHandled');
     _stateSubscription?.cancel();
-    // Если _isHandled уже true — _onReject уже вызвал cleanup, не дублируем
     if (!_isHandled) {
       CallRingtoneService().stopAllCallSounds();
       _callService.markIncomingDialogClosed();
@@ -117,7 +88,7 @@ class _IncomingCallDialogState extends State<IncomingCallDialog>
   void _onAccept() {
     if (_isHandled) return;
     _isHandled = true;
-    _log('✅ accept');
+    _log('accept pressed');
     CallRingtoneService().stopAllCallSounds();
     if (mounted) Navigator.of(context).pop(true);
   }
@@ -125,7 +96,7 @@ class _IncomingCallDialogState extends State<IncomingCallDialog>
   void _onReject() {
     if (_isHandled) return;
     _isHandled = true;
-    _log('❌ reject');
+    _log('reject pressed');
     CallRingtoneService().stopAllCallSounds();
     _callService.markIncomingDialogClosed();
     if (mounted) Navigator.of(context).pop(false);
@@ -136,9 +107,7 @@ class _IncomingCallDialogState extends State<IncomingCallDialog>
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
-        // Системный Back заблокирован (canPop: false).
-        // Если didPop == false — пользователь нажал Back,
-        // обрабатываем как reject (только если ещё не обработано).
+        _log('onPopInvokedWithResult didPop=$didPop result=$result');
         if (!didPop && !_isHandled) {
           _onReject();
         }
@@ -150,7 +119,6 @@ class _IncomingCallDialogState extends State<IncomingCallDialog>
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // Аватар звонящего
                 Container(
                   width: 100,
                   height: 100,
@@ -169,7 +137,6 @@ class _IncomingCallDialogState extends State<IncomingCallDialog>
                   ),
                 ),
                 const SizedBox(height: 24),
-                // Имя звонящего
                 Text(
                   widget.callerName,
                   style: const TextStyle(
@@ -179,7 +146,6 @@ class _IncomingCallDialogState extends State<IncomingCallDialog>
                   ),
                 ),
                 const SizedBox(height: 8),
-                // Статус
                 const Text(
                   'Входящий звонок...',
                   style: TextStyle(
@@ -188,11 +154,9 @@ class _IncomingCallDialogState extends State<IncomingCallDialog>
                   ),
                 ),
                 const SizedBox(height: 60),
-                // Кнопки
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    // Отклонить
                     Column(
                       children: [
                         FloatingActionButton(
@@ -211,7 +175,6 @@ class _IncomingCallDialogState extends State<IncomingCallDialog>
                         ),
                       ],
                     ),
-                    // Принять (с пульсацией)
                     Column(
                       children: [
                         AnimatedBuilder(

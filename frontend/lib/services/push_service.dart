@@ -58,8 +58,8 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       enableVibration: true,
       fullScreenIntent: true,
       category: AndroidNotificationCategory.call,
-      ongoing: true,
-      autoCancel: false,
+      ongoing: false,
+      autoCancel: true,
     );
 
     const NotificationDetails details =
@@ -437,8 +437,8 @@ class PushService {
       playSound: true,
       enableVibration: true,
       category: AndroidNotificationCategory.call,
-      ongoing: true,
-      autoCancel: false,
+      ongoing: false,
+      autoCancel: true,
     );
 
     const NotificationDetails details =
@@ -510,6 +510,7 @@ class PushService {
     if (response.payload == null || response.payload!.isEmpty) return;
 
     try {
+      _localNotifications.cancel(incomingCallNotificationId);
       final Map<String, dynamic> parsed =
           jsonDecode(response.payload!) as Map<String, dynamic>;
       final data = parsed.map((key, value) => MapEntry(key, value as String?));
@@ -528,6 +529,7 @@ class PushService {
       '[FCM_TAP] push tapped — type=$type, callId=${data['callId']}, callerId=${data['callerId']}, callerName=${data['callerName']}',
     );
     if (type == null) return;
+    await cancelIncomingCallNotification();
 
     if (type == 'call') {
       if (_shouldIgnoreCallPush()) return;

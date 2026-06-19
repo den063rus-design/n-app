@@ -35,6 +35,7 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
 
   Offset _position = const Offset(16, 100);
   bool _visible = false;
+  int _remoteViewVersion = 0;
 
   bool _shouldShowOverlay(CallState state, bool isMinimized) {
     // Guard: не показываем overlay в терминальных состояниях
@@ -83,7 +84,9 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
 
       final currentRemote = _callService.currentRemoteStream;
       if (currentRemote != null) {
+        _remoteRenderer.srcObject = null;
         _remoteRenderer.srcObject = currentRemote;
+        _remoteViewVersion++;
         if (mounted) setState(() {});
       }
     } catch (e) {
@@ -94,7 +97,11 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
   void _subscribe() {
     _remoteStreamSub = _callService.remoteStream.listen((stream) {
       if (!mounted) return;
+      if (stream != null && identical(_remoteRenderer.srcObject, stream)) {
+        _remoteRenderer.srcObject = null;
+      }
       _remoteRenderer.srcObject = stream;
+      _remoteViewVersion++;
       setState(() {});
     });
 
@@ -153,6 +160,12 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
           });
         },
         onTap: () {
+          _remoteRenderer.srcObject = null;
+          if (_visible) {
+            setState(() {
+              _visible = false;
+            });
+          }
           _callService.expandCall();
           widget.onTap?.call();
         },
@@ -183,6 +196,7 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
                   if (_remoteRenderer.srcObject != null)
                     RTCVideoView(
                       _remoteRenderer,
+                      key: ValueKey('overlay-remote-video-$_remoteViewVersion'),
                       objectFit:
                           RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
                     )

@@ -1,8 +1,9 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
 import '../services/api_service.dart';
+import '../services/call_service.dart';
 import '../services/socket_service.dart';
 import '../services/push_service.dart';
 
@@ -21,22 +22,25 @@ class AuthProvider extends ChangeNotifier {
   bool get isAuthenticated => _currentUser != null;
   bool get isAdmin => _currentUser?.isAdmin ?? false;
 
-  /// Проверяет, есть ли сохранённый токен, и загружает профиль
+  /// РџСЂРѕРІРµСЂСЏРµС‚, РµСЃС‚СЊ Р»Рё СЃРѕС…СЂР°РЅС‘РЅРЅС‹Р№ С‚РѕРєРµРЅ, Рё Р·Р°РіСЂСѓР¶Р°РµС‚ РїСЂРѕС„РёР»СЊ
   Future<bool> checkAuth() async {
     final isLoggedIn = await _authService.isLoggedIn();
     if (isLoggedIn) {
       final token = await _authService.getToken();
       if (token != null) {
+        await CallService().init();
+        CallService().hardReset();
         _socketService.connect(token);
-        // Heartbeat запускается автоматически в onConnect внутри SocketService
-        // Загружаем полную информацию о пользователе
+        await _socketService.waitUntilConnected();
+        // Heartbeat Р·Р°РїСѓСЃРєР°РµС‚СЃСЏ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё РІ onConnect РІРЅСѓС‚СЂРё SocketService
+        // Р—Р°РіСЂСѓР¶Р°РµРј РїРѕР»РЅСѓСЋ РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ РїРѕР»СЊР·РѕРІР°С‚РµР»Рµ
         await getCurrentUser();
       }
     }
     return isLoggedIn;
   }
 
-  /// Загружает профиль текущего пользователя с сервера (GET /users/me)
+  /// Р—Р°РіСЂСѓР¶Р°РµС‚ РїСЂРѕС„РёР»СЊ С‚РµРєСѓС‰РµРіРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ СЃ СЃРµСЂРІРµСЂР° (GET /users/me)
   Future<void> getCurrentUser() async {
     try {
       final user = await _apiService.getCurrentUser();
@@ -47,7 +51,7 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Выполняет вход
+  /// Р’С‹РїРѕР»РЅСЏРµС‚ РІС…РѕРґ
   Future<bool> login(String login, String password) async {
     _isLoading = true;
     _error = null;
@@ -58,19 +62,25 @@ class AuthProvider extends ChangeNotifier {
 
       final userData = data['user'];
       if (userData is! Map<String, dynamic>) {
-        throw Exception('Сервер не вернул данные пользователя');
+        throw Exception('РЎРµСЂРІРµСЂ РЅРµ РІРµСЂРЅСѓР» РґР°РЅРЅС‹Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ');
       }
       _currentUser = User.fromJson(userData);
 
-      // Подключаем Socket.IO
+      // РџРѕРґРєР»СЋС‡Р°РµРј Socket.IO
       final token = data['accessToken'];
       if (token == null || token is! String) {
-        throw Exception('Сервер не вернул токен доступа');
+        throw Exception('РЎРµСЂРІРµСЂ РЅРµ РІРµСЂРЅСѓР» С‚РѕРєРµРЅ РґРѕСЃС‚СѓРїР°');
       }
+      await CallService().init();
+      CallService().hardReset();
       _socketService.connect(token);
-      // Heartbeat запускается автоматически в onConnect внутри SocketService
+      final connected = await _socketService.waitUntilConnected();
+      if (!connected) {
+        throw Exception('РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕРґРєР»СЋС‡РёС‚СЊСЃСЏ Рє СЃРµСЂРІРµСЂСѓ Р·РІРѕРЅРєРѕРІ');
+      }
+      // Heartbeat Р·Р°РїСѓСЃРєР°РµС‚СЃСЏ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё РІ onConnect РІРЅСѓС‚СЂРё SocketService
 
-      // Отправляем FCM token на backend после успешного входа
+      // РћС‚РїСЂР°РІР»СЏРµРј FCM token РЅР° backend РїРѕСЃР»Рµ СѓСЃРїРµС€РЅРѕРіРѕ РІС…РѕРґР°
       unawaited(PushService().syncTokenToBackend());
 
       _isLoading = false;
@@ -78,34 +88,37 @@ class AuthProvider extends ChangeNotifier {
       return true;
     } catch (e) {
       _isLoading = false;
-      // Показываем реальную ошибку от сервера или сети
+      // РџРѕРєР°Р·С‹РІР°РµРј СЂРµР°Р»СЊРЅСѓСЋ РѕС€РёР±РєСѓ РѕС‚ СЃРµСЂРІРµСЂР° РёР»Рё СЃРµС‚Рё
       final errorMsg = e.toString();
       if (errorMsg.contains('Unauthorized') || errorMsg.contains('401')) {
-        _error = 'Неверный логин или пароль';
+        _error = 'РќРµРІРµСЂРЅС‹Р№ Р»РѕРіРёРЅ РёР»Рё РїР°СЂРѕР»СЊ';
       } else if (errorMsg.contains('SocketException') || errorMsg.contains('Connection refused') || errorMsg.contains('connectTimeout')) {
-        _error = 'Нет соединения с сервером. Проверьте подключение к интернету.';
+        _error = 'РќРµС‚ СЃРѕРµРґРёРЅРµРЅРёСЏ СЃ СЃРµСЂРІРµСЂРѕРј. РџСЂРѕРІРµСЂСЊС‚Рµ РїРѕРґРєР»СЋС‡РµРЅРёРµ Рє РёРЅС‚РµСЂРЅРµС‚Сѓ.';
       } else if (errorMsg.contains('HandshakeException') || errorMsg.contains('XMLHttpRequest')) {
-        _error = 'Ошибка соединения. Возможно, сервер недоступен.';
+        _error = 'РћС€РёР±РєР° СЃРѕРµРґРёРЅРµРЅРёСЏ. Р’РѕР·РјРѕР¶РЅРѕ, СЃРµСЂРІРµСЂ РЅРµРґРѕСЃС‚СѓРїРµРЅ.';
       } else {
-        _error = 'Ошибка: ${errorMsg.length > 100 ? errorMsg.substring(0, 100) : errorMsg}';
+        _error = 'РћС€РёР±РєР°: ${errorMsg.length > 100 ? errorMsg.substring(0, 100) : errorMsg}';
       }
       notifyListeners();
       return false;
     }
   }
 
-  /// Выполняет выход
+  /// Р’С‹РїРѕР»РЅСЏРµС‚ РІС‹С…РѕРґ
   Future<void> logout() async {
-    _socketService.disconnect(); // stopHeartbeat вызывается внутри disconnect
+    CallService().hardReset();
+    await PushService().cancelIncomingCallNotification();
+    _socketService.disconnect(); // stopHeartbeat РІС‹Р·С‹РІР°РµС‚СЃСЏ РІРЅСѓС‚СЂРё disconnect
     await _authService.logout();
     _currentUser = null;
     _error = null;
     notifyListeners();
   }
 
-  /// Очищает ошибку
+  /// РћС‡РёС‰Р°РµС‚ РѕС€РёР±РєСѓ
   void clearError() {
     _error = null;
     notifyListeners();
   }
 }
+

@@ -11,6 +11,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:record/record.dart';
 import '../services/call_service.dart';
+import '../services/socket_service.dart';
 import 'call_screen.dart';
 import 'notifications_screen.dart';
 import 'chat_search_delegate.dart';
@@ -594,7 +595,17 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
           ),
           IconButton(
             icon: const Icon(Icons.videocam),
-            onPressed: () {
+            onPressed: () async {
+              final socketReady = await SocketService().waitUntilConnected();
+              if (!socketReady) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Подождите, подключаемся к серверу...'),
+                  ),
+                );
+                return;
+              }
               final callService = CallService();
               if (callService.isCallScreenOpen) return; // guard от двойного открытия
               callService.markCallScreenOpen();

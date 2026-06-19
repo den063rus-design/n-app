@@ -33,6 +33,27 @@ class SocketService {
   IO.Socket? get socket => _socket;
   bool get isConnected => _socket?.connected ?? false;
 
+  Future<bool> waitUntilConnected({
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    if (_socket != null && _socket!.connected) {
+      _log('[SOCKET_SERVICE] waitUntilConnected() — already connected');
+      return true;
+    }
+
+    _log('[SOCKET_SERVICE] waitUntilConnected() — waiting up to ${timeout.inSeconds}s');
+
+    try {
+      await onConnectionChanged.firstWhere((connected) => connected).timeout(timeout);
+      final connected = _socket != null && _socket!.connected;
+      _log('[SOCKET_SERVICE] waitUntilConnected() — result: $connected');
+      return connected;
+    } catch (e) {
+      _log('[SOCKET_SERVICE] waitUntilConnected() — timeout/error: $e');
+      return _socket != null && _socket!.connected;
+    }
+  }
+
   /// Устанавливает callback, который будет вызван при подключении socket.
   /// Callback вызывается ТОЛЬКО из onConnect (socket_service.dart:110),
   /// чтобы избежать дублирования регистрации listener-ов.
@@ -231,11 +252,13 @@ class SocketService {
 
   /// Отправляет событие звонка (call:start, call:accept, call:reject, call:end)
   void sendCallEvent(String event, Map<String, dynamic> data) {
-    final socketStatus = _socket != null ? 'connected (id: ${_socket!.id})' : 'NULL ⚠️';
+    final socketStatus = _socket != null
+        ? 'connected=${_socket!.connected} (id: ${_socket!.id})'
+        : 'NULL ⚠️';
     _log('[SOCKET_SERVICE] 📤 sendCallEvent — event="$event", data=$data');
     _log('[SOCKET_SERVICE] 📤 sendCallEvent — socket status: $socketStatus');
-    if (_socket == null) {
-      _log('[SOCKET_SERVICE] ⚠️⚠️⚠️ sendCallEvent: _socket is NULL — event "$event" will NOT be sent!');
+    if (_socket == null || !_socket!.connected) {
+      _log('[SOCKET_SERVICE] ⚠️⚠️⚠️ sendCallEvent: socket is not connected — event "$event" will NOT be sent!');
       return;
     }
     _socket!.emit(event, data);
@@ -244,12 +267,14 @@ class SocketService {
 
   /// Отправляет сигнал WebRTC (offer, answer, ICE candidate)
   void sendCallSignal(int callId, Map<String, dynamic> data) {
-    final socketStatus = _socket != null ? 'connected (id: ${_socket!.id})' : 'NULL ⚠️';
+    final socketStatus = _socket != null
+        ? 'connected=${_socket!.connected} (id: ${_socket!.id})'
+        : 'NULL ⚠️';
     _log('[SOCKET_SERVICE] 📤 sendCallSignal — callId=$callId, type=${data['type']}');
     _log('[SOCKET_SERVICE] 📤 sendCallSignal — full data: $data');
     _log('[SOCKET_SERVICE] 📤 sendCallSignal — socket status: $socketStatus');
-    if (_socket == null) {
-      _log('[SOCKET_SERVICE] ⚠️⚠️⚠️ sendCallSignal: _socket is NULL — signal will NOT be sent!');
+    if (_socket == null || !_socket!.connected) {
+      _log('[SOCKET_SERVICE] ⚠️⚠️⚠️ sendCallSignal: socket is not connected — signal will NOT be sent!');
       return;
     }
     _socket!.emit('call:signal', {'callId': callId, ...data});

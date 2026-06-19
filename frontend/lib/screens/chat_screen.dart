@@ -9,6 +9,7 @@ import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
 import '../models/message.dart';
 import '../services/call_service.dart';
+import '../services/socket_service.dart';
 import '../widgets/message_bubble.dart';
 import 'call_screen.dart';
 import 'chat_search_delegate.dart';
@@ -532,7 +533,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ),
           IconButton(
             icon: const Icon(Icons.videocam),
-            onPressed: () {
+            onPressed: () async {
+              final socketReady = await SocketService().waitUntilConnected();
+              if (!socketReady) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Подождите, подключаемся к серверу...'),
+                  ),
+                );
+                return;
+              }
               final callService = CallService();
               if (callService.isCallScreenOpen) return; // guard от двойного открытия
               callService.markCallScreenOpen();
