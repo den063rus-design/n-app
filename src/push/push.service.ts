@@ -51,10 +51,6 @@ export class PushService implements OnModuleInit {
 
       const message: Message = {
         token: payload.token,
-        notification: {
-          title: payload.title,
-          body: payload.body,
-        },
         data: payload.data ?? {},
         android: {
           priority: 'high',
@@ -70,6 +66,14 @@ export class PushService implements OnModuleInit {
               : {}),
           },
         },
+        ...(isCall
+          ? {}
+          : {
+              notification: {
+                title: payload.title,
+                body: payload.body,
+              },
+            }),
       };
 
       const response = await getMessaging().send(message);
