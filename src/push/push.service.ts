@@ -48,7 +48,6 @@ export class PushService implements OnModuleInit {
     try {
       // Determine notification type for Android channel selection
       const isCall = payload.data?.type === 'call';
-      const senderId = payload.data?.senderId;
 
       const message: Message = {
         token: payload.token,
@@ -59,7 +58,6 @@ export class PushService implements OnModuleInit {
             }
           : {
               priority: 'high',
-              collapseKey: senderId ? `message_sender_${senderId}` : 'message',
             },
       };
 

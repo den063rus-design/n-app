@@ -20,6 +20,151 @@ int _messageNotificationIdForSender({
       senderKey.hashCode.abs() % 99999;
 }
 
+String _messageNotificationSenderKey({
+  String? senderId,
+  String? title,
+}) {
+  return (senderId?.trim().isNotEmpty == true) ? senderId!.trim() : (title ?? '');
+}
+
+String _messageNotificationGroupKey({
+  String? senderId,
+  String? title,
+}) {
+  return 'messages_sender_${_messageNotificationSenderKey(senderId: senderId, title: title)}';
+}
+
+int _messageNotificationAlertId() {
+  return PushService.messageNotificationBaseId +
+      100000 +
+      (DateTime.now().microsecondsSinceEpoch % 899999);
+}
+
+Future<void> _cancelMessageNotificationGroup({
+  required FlutterLocalNotificationsPlugin notifications,
+  String? senderId,
+  String? title,
+}) async {
+  final summaryId = _messageNotificationIdForSender(
+    senderId: senderId,
+    title: title,
+  );
+  final groupKey = _messageNotificationGroupKey(
+    senderId: senderId,
+    title: title,
+  );
+
+  try {
+    final active = await notifications.getActiveNotifications();
+    for (final notification in active) {
+      final notificationId = notification.id;
+      if (notificationId == null) continue;
+      if (notificationId == summaryId || notification.groupKey == groupKey) {
+        await notifications.cancel(notificationId);
+      }
+    }
+  } catch (_) {
+    await notifications.cancel(summaryId);
+  }
+}
+
+Future<void> _showGroupedMessageNotification({
+  required FlutterLocalNotificationsPlugin notifications,
+  required Map<String, int> countsBySender,
+  required String title,
+  required String body,
+  required Map<String, dynamic> data,
+}) async {
+  final senderId = data['senderId'] as String?;
+  final senderKey = _messageNotificationSenderKey(
+    senderId: senderId,
+    title: title,
+  );
+  final groupKey = _messageNotificationGroupKey(
+    senderId: senderId,
+    title: title,
+  );
+  final summaryId = _messageNotificationIdForSender(
+    senderId: senderId,
+    title: title,
+  );
+  final alertId = _messageNotificationAlertId();
+  var existingCount = 0;
+  try {
+    final active = await notifications.getActiveNotifications();
+    existingCount = active
+        .where((notification) => notification.groupKey == groupKey)
+        .length;
+    if (existingCount > 0) {
+      existingCount -= 1;
+    }
+  } catch (_) {}
+  final count = ((countsBySender[senderKey] ?? existingCount) + 1);
+  countsBySender[senderKey] = count;
+  final summaryBody = count > 1 ? '$body (+$count)' : body;
+
+  final payloadJson = jsonEncode(<String, String?>{
+    'type': data['type'] as String?,
+    'senderId': data['senderId'] as String?,
+    'senderName': data['senderName'] as String?,
+    'messageId': data['messageId'] as String?,
+    'callId': data['callId'] as String?,
+    'callerId': data['callerId'] as String?,
+    'callerName': data['callerName'] as String?,
+  });
+
+  await _cancelMessageNotificationGroup(
+    notifications: notifications,
+    senderId: senderId,
+    title: title,
+  );
+
+  final childDetails = AndroidNotificationDetails(
+    'default_notification_channel',
+    'Основные уведомления',
+    channelDescription: 'Уведомления о новых сообщениях и звонках',
+    importance: Importance.high,
+    priority: Priority.high,
+    showWhen: true,
+    enableVibration: true,
+    playSound: true,
+    groupKey: groupKey,
+    groupAlertBehavior: GroupAlertBehavior.all,
+    tag: 'message_child_$senderKey',
+  );
+
+  final summaryDetails = AndroidNotificationDetails(
+    'default_notification_channel',
+    'Основные уведомления',
+    channelDescription: 'Уведомления о новых сообщениях и звонках',
+    importance: Importance.high,
+    priority: Priority.high,
+    showWhen: true,
+    enableVibration: false,
+    playSound: false,
+    groupKey: groupKey,
+    setAsGroupSummary: true,
+    groupAlertBehavior: GroupAlertBehavior.children,
+    tag: 'message_summary_$senderKey',
+  );
+
+  await notifications.show(
+    alertId,
+    title,
+    body,
+    NotificationDetails(android: childDetails),
+    payload: payloadJson,
+  );
+
+  await notifications.show(
+    summaryId,
+    title,
+    summaryBody,
+    NotificationDetails(android: summaryDetails),
+    payload: payloadJson,
+  );
+}
+
 /// Глобальный обработчик FCM-уведомлений в фоне
 /// (когда приложение свёрнуто или убито).
 ///
@@ -116,36 +261,24 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   final messageBody = resolvedBodySource.isNotEmpty
       ? resolvedBodySource
       : '????? ?????????';
-  final notificationId = _messageNotificationIdForSender(
-    senderId: message.data['senderId'],
-    title: messageTitle,
-  );
-
   debugPrint(
     "[FCM_BG] Showing local message notification - title=$messageTitle senderId=${message.data['senderId']}",
   );
 
-  const AndroidNotificationDetails androidDetails =
-      AndroidNotificationDetails(
-    'default_notification_channel',
-    '???????????????? ??????????????????????',
-    channelDescription: '?????????????????????? ?? ?????????? ???????????????????? ?? ??????????????',
-    importance: Importance.high,
-    priority: Priority.high,
-    showWhen: true,
-    enableVibration: true,
-    playSound: true,
-  );
-
-  const NotificationDetails details =
-      NotificationDetails(android: androidDetails);
-
-  await localNotifications.show(
-    notificationId,
-    messageTitle,
-    messageBody,
-    details,
-    payload: payloadJson,
+  await _showGroupedMessageNotification(
+    notifications: localNotifications,
+    countsBySender: <String, int>{},
+    title: messageTitle,
+    body: messageBody,
+    data: {
+      'type': type,
+      'senderId': message.data['senderId'],
+      'senderName': message.data['senderName'],
+      'messageId': message.data['messageId'],
+      'callId': message.data['callId'],
+      'callerId': message.data['callerId'],
+      'callerName': message.data['callerName'],
+    },
   );
 }
 
@@ -206,15 +339,17 @@ class PushService {
     String? senderId,
     String? title,
   }) async {
-    final notificationId = messageNotificationIdForSender(
+    final senderKey = _messageNotificationSenderKey(
       senderId: senderId,
       title: title,
     );
-    _messageNotificationCountsBySender.remove(senderId?.trim().isNotEmpty == true
-        ? senderId!.trim()
-        : title ?? '');
+    _messageNotificationCountsBySender.remove(senderKey);
     try {
-      await _localNotifications.cancel(notificationId);
+      await _cancelMessageNotificationGroup(
+        notifications: _localNotifications,
+        senderId: senderId,
+        title: title,
+      );
     } catch (_) {}
   }
 
@@ -665,6 +800,20 @@ class PushService {
     String body,
     Map<String, dynamic> data,
   ) {
+    final type = data['type'] as String?;
+    if (type == 'message') {
+      unawaited(
+        _showGroupedMessageNotification(
+          notifications: _localNotifications,
+          countsBySender: _messageNotificationCountsBySender,
+          title: title,
+          body: body,
+          data: data,
+        ),
+      );
+      return;
+    }
+
     const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
       'default_notification_channel',
@@ -690,32 +839,6 @@ class PushService {
       'callerName': data['callerName'] as String?,
     };
     final payloadJson = jsonEncode(payloadMap);
-
-    final type = data['type'] as String?;
-    final senderId = data['senderId'] as String?;
-
-    if (type == 'message') {
-      final senderKey =
-          (senderId?.trim().isNotEmpty == true) ? senderId!.trim() : title;
-      final notificationId = messageNotificationIdForSender(
-        senderId: senderId,
-        title: title,
-      );
-      final currentCount = (_messageNotificationCountsBySender[senderKey] ?? 0) + 1;
-      _messageNotificationCountsBySender[senderKey] = currentCount;
-      final effectiveBody = currentCount > 1 ? '$body (+$currentCount)' : body;
-
-      _localNotifications.cancel(notificationId).whenComplete(() {
-        _localNotifications.show(
-          notificationId,
-          title,
-          effectiveBody,
-          details,
-          payload: payloadJson,
-        );
-      });
-      return;
-    }
 
     final notificationId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     _localNotifications.show(
