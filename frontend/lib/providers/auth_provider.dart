@@ -22,6 +22,13 @@ class AuthProvider extends ChangeNotifier {
   bool get isAuthenticated => _currentUser != null;
   bool get isAdmin => _currentUser?.isAdmin ?? false;
 
+  bool _shouldPreserveCallState() {
+    final callService = CallService();
+    return callService.state == CallState.RINGING &&
+        (callService.currentCallId != null ||
+            callService.pendingIncomingCall != null);
+  }
+
   /// РџСЂРѕРІРµСЂСЏРµС‚, РµСЃС‚СЊ Р»Рё СЃРѕС…СЂР°РЅС‘РЅРЅС‹Р№ С‚РѕРєРµРЅ, Рё Р·Р°РіСЂСѓР¶Р°РµС‚ РїСЂРѕС„РёР»СЊ
   Future<bool> checkAuth() async {
     final isLoggedIn = await _authService.isLoggedIn();
@@ -29,7 +36,9 @@ class AuthProvider extends ChangeNotifier {
       final token = await _authService.getToken();
       if (token != null) {
         await CallService().init();
-        CallService().hardReset();
+        if (!_shouldPreserveCallState()) {
+          CallService().hardReset();
+        }
         _socketService.connect(token);
         await _socketService.waitUntilConnected();
         // Heartbeat Р·Р°РїСѓСЃРєР°РµС‚СЃСЏ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё РІ onConnect РІРЅСѓС‚СЂРё SocketService
@@ -62,21 +71,23 @@ class AuthProvider extends ChangeNotifier {
 
       final userData = data['user'];
       if (userData is! Map<String, dynamic>) {
-        throw Exception('РЎРµСЂРІРµСЂ РЅРµ РІРµСЂРЅСѓР» РґР°РЅРЅС‹Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ');
+        throw Exception('Сервер не вернул данные пользователя');
       }
       _currentUser = User.fromJson(userData);
 
       // РџРѕРґРєР»СЋС‡Р°РµРј Socket.IO
       final token = data['accessToken'];
       if (token == null || token is! String) {
-        throw Exception('РЎРµСЂРІРµСЂ РЅРµ РІРµСЂРЅСѓР» С‚РѕРєРµРЅ РґРѕСЃС‚СѓРїР°');
+        throw Exception('Сервер не вернул токен доступа');
       }
       await CallService().init();
-      CallService().hardReset();
+      if (!_shouldPreserveCallState()) {
+        CallService().hardReset();
+      }
       _socketService.connect(token);
       final connected = await _socketService.waitUntilConnected();
       if (!connected) {
-        throw Exception('РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕРґРєР»СЋС‡РёС‚СЊСЃСЏ Рє СЃРµСЂРІРµСЂСѓ Р·РІРѕРЅРєРѕРІ');
+        throw Exception('Не удалось подключиться к серверу звонков');
       }
       // Heartbeat Р·Р°РїСѓСЃРєР°РµС‚СЃСЏ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё РІ onConnect РІРЅСѓС‚СЂРё SocketService
 
@@ -91,13 +102,13 @@ class AuthProvider extends ChangeNotifier {
       // РџРѕРєР°Р·С‹РІР°РµРј СЂРµР°Р»СЊРЅСѓСЋ РѕС€РёР±РєСѓ РѕС‚ СЃРµСЂРІРµСЂР° РёР»Рё СЃРµС‚Рё
       final errorMsg = e.toString();
       if (errorMsg.contains('Unauthorized') || errorMsg.contains('401')) {
-        _error = 'РќРµРІРµСЂРЅС‹Р№ Р»РѕРіРёРЅ РёР»Рё РїР°СЂРѕР»СЊ';
+        _error = 'Неверный логин или пароль';
       } else if (errorMsg.contains('SocketException') || errorMsg.contains('Connection refused') || errorMsg.contains('connectTimeout')) {
-        _error = 'РќРµС‚ СЃРѕРµРґРёРЅРµРЅРёСЏ СЃ СЃРµСЂРІРµСЂРѕРј. РџСЂРѕРІРµСЂСЊС‚Рµ РїРѕРґРєР»СЋС‡РµРЅРёРµ Рє РёРЅС‚РµСЂРЅРµС‚Сѓ.';
+        _error = 'Нет соединения с сервером. Проверьте подключение к интернету.';
       } else if (errorMsg.contains('HandshakeException') || errorMsg.contains('XMLHttpRequest')) {
-        _error = 'РћС€РёР±РєР° СЃРѕРµРґРёРЅРµРЅРёСЏ. Р’РѕР·РјРѕР¶РЅРѕ, СЃРµСЂРІРµСЂ РЅРµРґРѕСЃС‚СѓРїРµРЅ.';
+        _error = 'Ошибка соединения. Возможно, сервер недоступен.';
       } else {
-        _error = 'РћС€РёР±РєР°: ${errorMsg.length > 100 ? errorMsg.substring(0, 100) : errorMsg}';
+        _error = 'Ошибка: ${errorMsg.length > 100 ? errorMsg.substring(0, 100) : errorMsg}';
       }
       notifyListeners();
       return false;

@@ -57,6 +57,7 @@ class CallService {
 
   String? _lastEndReason;
   int? _lastCallEndTimestamp;
+  int? _lastEndedCallId;
 
   Stream<Map<String, dynamic>> get incomingCallStream =>
       _incomingCallController.stream;
@@ -79,6 +80,7 @@ class CallService {
   bool get isCallScreenOpen => _isCallScreenOpen;
   String? get lastEndReason => _lastEndReason;
   int? get lastCallEndTimestamp => _lastCallEndTimestamp;
+  int? get lastEndedCallId => _lastEndedCallId;
   Map<String, dynamic>? get pendingIncomingCall => _pendingIncomingCall == null
       ? null
       : Map<String, dynamic>.from(_pendingIncomingCall!);
@@ -188,11 +190,12 @@ class CallService {
     _remoteUserName = callerName;
     _lastEndReason = null;
     _lastCallEndTimestamp = null;
+    _lastEndedCallId = null;
     _applyState(CallState.RINGING);
     _pendingIncomingCall = {
       'callId': _currentCallId,
       'callerId': _remoteUserId,
-      'callerName': _remoteUserName ?? 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ',
+      'callerName': _remoteUserName ?? 'Пользователь',
     };
   }
 
@@ -249,15 +252,16 @@ class CallService {
       _hardReset();
       _currentCallId = data['callId'] as int?;
       _remoteUserId = data['callerId'] as int?;
-      _remoteUserName = data['callerName'] as String? ?? 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ';
+      _remoteUserName = data['callerName'] as String? ?? 'Пользователь';
       _lastEndReason = null;
       _lastCallEndTimestamp = null;
+      _lastEndedCallId = null;
       _applyState(CallState.RINGING);
 
       final incomingData = {
         'callId': _currentCallId,
         'callerId': _remoteUserId,
-        'callerName': _remoteUserName ?? 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ',
+        'callerName': _remoteUserName ?? 'Пользователь',
       };
       _pendingIncomingCall = Map<String, dynamic>.from(incomingData);
       _incomingCallController.add(incomingData);
@@ -394,9 +398,9 @@ class CallService {
       final reason = data['reason'] as String?;
       await _endCall(reason: reason);
       if (reason == 'rejected') {
-        _showSnackbar('Р—РІРѕРЅРѕРє РѕС‚РєР»РѕРЅС‘РЅ');
+        _showSnackbar('Звонок отклонён');
       } else if (reason == 'expired') {
-        _showSnackbar('Р—РІРѕРЅРѕРє СѓР¶Рµ Р·Р°РІРµСЂС€С‘РЅ');
+        _showSnackbar('Звонок уже завершён');
       }
     });
 
@@ -419,6 +423,7 @@ class CallService {
     _resetTimer?.cancel();
     _lastEndReason = null;
     _lastCallEndTimestamp = null;
+    _lastEndedCallId = null;
 
     if (_state != CallState.IDLE) {
       _hardReset();
@@ -431,7 +436,7 @@ class CallService {
     final connected = await _socketService.waitUntilConnected();
     if (!connected) {
       _log('вљ пёЏ startCall() вЂ” socket not connected, aborting');
-      _showSnackbar('РџРѕРґРѕР¶РґРёС‚Рµ, РїРѕРґРєР»СЋС‡Р°РµРјСЃСЏ Рє СЃРµСЂРІРµСЂСѓ...');
+      _showSnackbar('Подождите, подключаемся к серверу...');
       return;
     }
 
@@ -466,7 +471,7 @@ class CallService {
       final connected = await _socketService.waitUntilConnected();
       if (!connected) {
         _log('вљ пёЏ acceptCall() вЂ” socket not connected, aborting');
-        _showSnackbar('РџРѕРґРѕР¶РґРёС‚Рµ, РїРѕРґРєР»СЋС‡Р°РµРјСЃСЏ Рє СЃРµСЂРІРµСЂСѓ...');
+        _showSnackbar('Подождите, подключаемся к серверу...');
         return;
       }
 
@@ -712,8 +717,10 @@ class CallService {
 
     _lastEndReason = reason;
     _lastCallEndTimestamp = DateTime.now().millisecondsSinceEpoch;
+    _lastEndedCallId = _currentCallId;
     _isAcceptingCall = false;
     _cancelPeerDisconnectTimer();
+    _pendingIncomingCall = null;
 
     _localStreamController.add(null);
     _remoteStreamController.add(null);

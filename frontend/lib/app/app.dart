@@ -96,7 +96,7 @@ void openCallScreenFromOverlay() {
       settings: const RouteSettings(name: 'call_screen'),
       builder: (context) => CallScreen(
         userId: remoteUserId,
-        userName: remoteUserName ?? 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ',
+        userName: remoteUserName ?? 'Пользователь',
         isIncoming: false,
         from: 'overlay',
       ),
@@ -484,7 +484,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
           if (!mounted) return;
           showIncomingCallDialogFromService(
             callerId: callerId,
-            callerName: callerName ?? 'Р’С…РѕРґСЏС‰РёР№ Р·РІРѕРЅРѕРє',
+            callerName: callerName ?? 'Входящий звонок',
             callId: callId,
             source: 'state_fallback',
           );
@@ -533,12 +533,17 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
             _lastLifecycleState == AppLifecycleState.inactive;
 
         if (!isForeground) {
-          debugPrint('[APP] incoming socket event while app is backgrounded ? showing local call notification instead of dialog');
-          unawaited(PushService().showIncomingCallNotificationFromSocket(
-            callId: callId.toString(),
-            callerId: callerId.toString(),
-            callerName: callerName,
-          ));
+          final pushService = PushService();
+          if (pushService.fcmToken == null) {
+            debugPrint('[APP] incoming socket event while app is backgrounded and FCM token is missing — showing local call notification');
+            unawaited(pushService.showIncomingCallNotificationFromSocket(
+              callId: callId.toString(),
+              callerId: callerId.toString(),
+              callerName: callerName,
+            ));
+          } else {
+            debugPrint('[APP] incoming socket event while app is backgrounded — relying on FCM call notification');
+          }
           return;
         }
 
@@ -576,7 +581,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         if (senderId != null) {
           final userId = int.tryParse(senderId);
           if (userId != null) {
-            final userName = data['senderName'] ?? 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ';
+            final userName = data['senderName'] ?? 'Пользователь';
             Navigator.push(
               navigatorKey.currentContext!,
               MaterialPageRoute(
@@ -635,7 +640,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
     showIncomingCallDialogFromService(
       callerId: remoteUserId,
-      callerName: remoteUserName ?? 'Р’С…РѕРґСЏС‰РёР№ Р·РІРѕРЅРѕРє',
+      callerName: remoteUserName ?? 'Входящий звонок',
       callId: currentCallId ?? 0,
       source: 'push',
     );
@@ -666,7 +671,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
     showIncomingCallDialogFromService(
       callerId: callerId,
-      callerName: callerName ?? 'Р’С…РѕРґСЏС‰РёР№ Р·РІРѕРЅРѕРє',
+      callerName: callerName ?? 'Входящий звонок',
       callId: callId,
       source: 'pending_service',
     );
@@ -680,7 +685,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   /// _showIncomingCallDialog().
   void _handleCallPushTap(Map<String, String?> data) {
     final callerIdStr = data['callerId'];
-    final callerName = data['callerName'] ?? 'Р’С…РѕРґСЏС‰РёР№ Р·РІРѕРЅРѕРє';
+    final callerName = data['callerName'] ?? 'Входящий звонок';
     final callIdStr = data['callId'];
 
     debugPrint('[APP] APP incoming push tap вЂ” callerId=$callerIdStr, callerName=$callerName, callId=$callIdStr');
@@ -699,6 +704,12 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     final callId = callIdStr != null ? int.tryParse(callIdStr) ?? 0 : 0;
 
     final callService = CallService();
+
+    if (callId != 0 && callService.lastEndedCallId == callId) {
+      debugPrint('[APP] ⚠️ ignoring stale call notification tap for ended callId=$callId');
+      unawaited(PushService().cancelIncomingCallNotification());
+      return;
+    }
 
     // Р•СЃР»Рё state СѓР¶Рµ RINGING вЂ” socket СѓР¶Рµ СѓСЃС‚Р°РЅРѕРІРёР» СЃРѕСЃС‚РѕСЏРЅРёРµ,
     // hydrate РЅРµ РЅСѓР¶РµРЅ. РџСЂРѕСЃС‚Рѕ РїРѕРєР°Р·С‹РІР°РµРј РґРёР°Р»РѕРі.
@@ -827,7 +838,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         else
           const Scaffold(
             body: Center(
-              child: Text('РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё РїСЂРёР»РѕР¶РµРЅРёСЏ'),
+              child: Text('Ошибка загрузки приложения'),
             ),
           ),
         // РџР»Р°С€РєР° "РќРµС‚ СЃРѕРµРґРёРЅРµРЅРёСЏ"
@@ -851,7 +862,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'РќРµС‚ СЃРѕРµРґРёРЅРµРЅРёСЏ СЃ СЃРµС‚СЊСЋ. РћР¶РёРґР°РЅРёРµ РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёСЏ...',
+                        'Нет соединения с сетью. Ожидание восстановления...',
                         style: TextStyle(color: Colors.white, fontSize: 13),
                       ),
                     ),

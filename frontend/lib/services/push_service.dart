@@ -17,8 +17,20 @@ import '../services/call_service.dart';
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
+  final type = message.data['type'];
+  final title = message.notification?.title ?? message.data['title'];
+  final body = message.notification?.body ?? message.data['body'];
+
+  if ((type == null || type.isEmpty) &&
+      (title == null || title.isEmpty) &&
+      (body == null || body.isEmpty) &&
+      message.data.isEmpty) {
+    debugPrint('[FCM_BG] Ignoring empty background remote message');
+    return;
+  }
+
   debugPrint(
-    '[FCM_BG] push received — messageId=${message.messageId}, type=${message.data['type']}, callId=${message.data['callId']}, callerId=${message.data['callerId']}, callerName=${message.data['callerName']}',
+    "[FCM_BG] push received - messageId=${message.messageId}, type=${message.data['type']}, callId=${message.data['callId']}, callerId=${message.data['callerId']}, callerName=${message.data['callerName']}",
   );
 
   final FlutterLocalNotificationsPlugin localNotifications =
@@ -42,75 +54,79 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     'callerName': message.data['callerName'],
   };
   final payloadJson = jsonEncode(payloadData);
+  if (type == 'call') {
+    Future<void> showCallNotification() async {
+      const AndroidNotificationDetails androidDetails =
+          AndroidNotificationDetails(
+        'incoming_call_channel',
+        'Входящие звонки',
+        channelDescription: 'Уведомления о входящих звонках',
+        importance: Importance.max,
+        priority: Priority.max,
+        playSound: true,
+        enableVibration: true,
+        fullScreenIntent: true,
+        category: AndroidNotificationCategory.call,
+        ongoing: false,
+        autoCancel: true,
+      );
 
-  if (message.data['type'] == 'call') {
+      const NotificationDetails details =
+          NotificationDetails(android: androidDetails);
+
+      await localNotifications.show(
+        PushService.incomingCallNotificationId,
+        message.data['callerName'] ?? 'Входящий звонок',
+        'Входящий звонок...',
+        details,
+        payload: payloadJson,
+      );
+    }
+
     debugPrint(
-      '[FCM_BG] Showing call notification — callerName=${message.data['callerName']}, callId=${message.data['callId']}',
+      "[FCM_BG] Showing call notification - callerName=${message.data['callerName']}, callId=${message.data['callId']}",
     );
 
-    const AndroidNotificationDetails androidDetails =
-        AndroidNotificationDetails(
-      'incoming_call_channel',
-      'Входящие звонки',
-      channelDescription: 'Уведомления о входящих звонках',
-      importance: Importance.max,
-      priority: Priority.max,
-      playSound: true,
-      enableVibration: true,
-      fullScreenIntent: true,
-      category: AndroidNotificationCategory.call,
-      ongoing: false,
-      autoCancel: true,
-    );
-
-    const NotificationDetails details =
-        NotificationDetails(android: androidDetails);
-
-    await localNotifications.show(
-      PushService.incomingCallNotificationId,
-      message.data['callerName'] ?? 'Входящий звонок',
-      'Входящий звонок...',
-      details,
-      payload: payloadJson,
-    );
-  } else {
-    debugPrint(
-      '[FCM_BG] Showing default notification — title=${message.notification?.title ?? message.data['title']}',
-    );
-
-    const AndroidNotificationDetails androidDetails =
-        AndroidNotificationDetails(
-      'default_notification_channel',
-      'Основные уведомления',
-      channelDescription: 'Уведомления о новых сообщениях и звонках',
-      importance: Importance.high,
-      priority: Priority.high,
-      showWhen: true,
-      enableVibration: true,
-      playSound: true,
-    );
-
-    const NotificationDetails details =
-        NotificationDetails(android: androidDetails);
-
-    await localNotifications.show(
-      message.hashCode,
-      message.notification?.title ?? message.data['title'] ?? 'Уведомление',
-      message.notification?.body ?? message.data['body'] ?? '',
-      details,
-      payload: payloadJson,
-    );
+    await showCallNotification();
+    await Future.delayed(const Duration(milliseconds: 400));
+    await localNotifications.cancelAll();
+    await showCallNotification();
+    return;
   }
+
+  if (message.notification != null) {
+    debugPrint(
+      '[FCM_BG] Skipping local message notification because system notification already exists',
+    );
+    return;
+  }
+
+  debugPrint("[FCM_BG] Showing default notification - title=$title");
+
+  const AndroidNotificationDetails androidDetails =
+      AndroidNotificationDetails(
+    'default_notification_channel',
+    'Основные уведомления',
+    channelDescription: 'Уведомления о новых сообщениях и звонках',
+    importance: Importance.high,
+    priority: Priority.high,
+    showWhen: true,
+    enableVibration: true,
+    playSound: true,
+  );
+
+  const NotificationDetails details =
+      NotificationDetails(android: androidDetails);
+
+  await localNotifications.show(
+    message.hashCode,
+    title ?? 'Уведомление',
+    body ?? '',
+    details,
+    payload: payloadJson,
+  );
 }
 
-/// Сервис для работы с FCM push-уведомлениями.
-///
-/// Отвечает за:
-/// - инициализацию FCM
-/// - запрос разрешения на уведомления
-/// - получение и обновление FCM token
-/// - показ локальных уведомлений в foreground
-/// - обработку нажатий на уведомления
 class PushService {
   static final PushService _instance = PushService._internal();
   factory PushService() => _instance;
@@ -209,11 +225,20 @@ class PushService {
         android: androidSettings,
         iOS: iosSettings,
       );
-
       await _localNotifications.initialize(
         initSettings,
         onDidReceiveNotificationResponse: _onNotificationTap,
       );
+
+      final notificationLaunchDetails =
+          await _localNotifications.getNotificationAppLaunchDetails();
+      final launchResponse = notificationLaunchDetails?.notificationResponse;
+      if (notificationLaunchDetails?.didNotificationLaunchApp == true &&
+          launchResponse?.payload != null &&
+          launchResponse!.payload!.isNotEmpty) {
+        debugPrint('[PUSH] App launched from local notification tap');
+        await _handleNotificationTap(launchResponse.payload!);
+      }
     } catch (e, stack) {
       debugPrint('[PUSH] 🔴 localNotifications.initialize() failed: $e');
       debugPrint('[PUSH] 🔴 StackTrace: $stack');
@@ -358,6 +383,43 @@ class PushService {
   }
 
   /// Запрашивает разрешение на уведомления.
+
+  bool _shouldIgnoreCallTapPayload({
+    required String? callId,
+    required String? callerId,
+    required String? callerName,
+  }) {
+    if (callId == null || callerId == null || callerName == null) {
+      debugPrint(
+        '[FCM_TAP] Ignoring call tap ? missing fields callId=$callId callerId=$callerId callerName=$callerName',
+      );
+      return true;
+    }
+
+    final parsedCallId = int.tryParse(callId);
+    if (parsedCallId == null) {
+      debugPrint('[FCM_TAP] Ignoring call tap ? invalid callId=$callId');
+      return true;
+    }
+
+    final callService = CallService();
+    if (callService.lastEndedCallId == parsedCallId) {
+      debugPrint(
+        '[FCM_TAP] Ignoring call tap ? callId=$parsedCallId already ended locally',
+      );
+      return true;
+    }
+
+    if (_shouldIgnoreCallPush()) {
+      debugPrint(
+        '[FCM_TAP] Ignoring call tap ? push guard rejected callId=$parsedCallId',
+      );
+      return true;
+    }
+
+    return false;
+  }
+
   Future<void> _requestPermission() async {
     final status = await _fcm.getNotificationSettings();
     if (status.authorizationStatus == AuthorizationStatus.notDetermined) {
@@ -434,6 +496,13 @@ class PushService {
         }
       });
     } else {
+      if (message.notification != null) {
+        debugPrint(
+          '[FCM_FG] Skipping local message notification because system notification already exists',
+        );
+        return;
+      }
+
       final String title = message.notification?.title ??
           message.data['title'] ??
           'Уведомление';
@@ -471,7 +540,14 @@ class PushService {
     String? senderName,
     String? messageId,
   }) async {
-    _showLocalNotification(title, body, {
+    final normalizedTitle = title.trim().isEmpty
+        ? (senderName?.trim().isNotEmpty == true
+            ? senderName!.trim()
+            : 'Новое сообщение')
+        : title.trim();
+    final normalizedBody = body.trim().isEmpty ? 'Новое сообщение' : body.trim();
+
+    _showLocalNotification(normalizedTitle, normalizedBody, {
       'type': 'message',
       'senderId': senderId,
       'senderName': senderName,
@@ -549,8 +625,16 @@ class PushService {
     };
     final payloadJson = jsonEncode(payloadMap);
 
+    final type = data['type'] as String?;
+    final messageId = data['messageId'] as String?;
+    final senderId = data['senderId'] as String?;
+    final notificationId = type == 'message'
+        ? int.tryParse(messageId ?? '') ??
+            900000 + (senderId ?? title).hashCode.abs() % 99999
+        : DateTime.now().millisecondsSinceEpoch ~/ 1000;
+
     _localNotifications.show(
-      DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      notificationId,
       title,
       body,
       details,
@@ -562,20 +646,21 @@ class PushService {
   void _onNotificationTap(NotificationResponse response) {
     if (response.payload == null || response.payload!.isEmpty) return;
 
+    unawaited(_handleNotificationTap(response.payload!));
+  }
+
+  Future<void> _handleNotificationTap(String payload) async {
     try {
-      _localNotifications.cancel(incomingCallNotificationId);
       final Map<String, dynamic> parsed =
-          jsonDecode(response.payload!) as Map<String, dynamic>;
-      final data = parsed.map((key, value) => MapEntry(key, value as String?));
-      debugPrint('[FCM_TAP] Notification tapped — type=${data['type']}');
-      _notificationTapStream.add(data);
+          jsonDecode(payload) as Map<String, dynamic>;
+      debugPrint('[FCM_TAP] Notification tapped ??? type=${parsed['type']}');
+      await _emitTapFromData(parsed);
     } catch (e) {
-      debugPrint('[FCM_TAP] Ошибка парсинга payload: $e');
-      _notificationTapStream.add({'type': response.payload});
+      debugPrint('[FCM_TAP] Failed to decode notification payload: $e');
+      _notificationTapStream.add({'type': payload});
     }
   }
 
-  /// Отправляет данные из FCM data в навигационный стрим.
   Future<void> _emitTapFromData(Map<String, dynamic> data) async {
     final type = data['type'] as String?;
     debugPrint(
@@ -585,27 +670,26 @@ class PushService {
     await cancelIncomingCallNotification();
 
     if (type == 'call') {
-      if (_shouldIgnoreCallPush()) return;
-
       final callId = data['callId'] as String?;
       final callerId = data['callerId'] as String?;
       final callerName = data['callerName'] as String?;
 
-      if (callId != null && callerId != null && callerName != null) {
-        debugPrint(
-          '[FCM_TAP] PUSH hydrate callId=$callId, callerId=$callerId, callerName=$callerName',
-        );
-        CallService().hydrateIncomingCallFromPush(
-          callId: callId,
-          callerId: callerId,
-          callerName: callerName,
-        );
-      } else {
-        debugPrint(
-          '[FCM_TAP] Missing fields for hydrate: callId=$callId, callerId=$callerId, callerName=$callerName',
-        );
+      if (_shouldIgnoreCallTapPayload(
+        callId: callId,
+        callerId: callerId,
+        callerName: callerName,
+      )) {
         return;
       }
+
+      debugPrint(
+        '[FCM_TAP] PUSH hydrate callId=$callId, callerId=$callerId, callerName=$callerName',
+      );
+      CallService().hydrateIncomingCallFromPush(
+        callId: callId!,
+        callerId: callerId!,
+        callerName: callerName!,
+      );
     }
 
     await Future.delayed(const Duration(milliseconds: 50));

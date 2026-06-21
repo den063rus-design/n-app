@@ -1,5 +1,7 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
+
 import '../models/notification.dart' as models;
 import '../services/api_service.dart';
 import '../services/push_service.dart';
@@ -9,7 +11,8 @@ class NotificationProvider extends ChangeNotifier {
   final ApiService _apiService;
   final SocketService _socketService;
 
-  List<models.AppNotification> _notifications = [];
+  final List<models.AppNotification> _notifications = [];
+  final Set<String> _shownSocketMessageNotificationIds = <String>{};
   int _unreadCount = 0;
   bool _isLoading = false;
 
@@ -17,9 +20,10 @@ class NotificationProvider extends ChangeNotifier {
   int get unreadCount => _unreadCount;
   bool get isLoading => _isLoading;
 
-  // Stream для показа SnackBar/Toast
-  final _notificationStream = StreamController<models.AppNotification>.broadcast();
-  Stream<models.AppNotification> get onNewNotification => _notificationStream.stream;
+  final _notificationStream =
+      StreamController<models.AppNotification>.broadcast();
+  Stream<models.AppNotification> get onNewNotification =>
+      _notificationStream.stream;
 
   NotificationProvider(this._apiService, this._socketService) {
     _setupSocketListeners();
@@ -31,30 +35,34 @@ class NotificationProvider extends ChangeNotifier {
         if (notification is Map<String, dynamic>) {
           _showLocalFallbackIfNeeded(notification);
         }
+
         final appNotification = models.AppNotification.fromJson(notification);
         _notifications.insert(0, appNotification);
         _unreadCount++;
         _notificationStream.add(appNotification);
         notifyListeners();
       } catch (e) {
-        print('[NOTIFICATION_PROVIDER] ❌ Error processing notification:new — $e');
+        print('[NOTIFICATION_PROVIDER] Error processing notification:new - $e');
       }
     });
 
     _socketService.onUnreadCount((data) {
       try {
-        print('[NOTIFICATION_PROVIDER] 📊 onUnreadCount received — data type: ${data.runtimeType}, value: $data');
-        // Backend может прислать как int, так и { count: number }
+        print(
+          '[NOTIFICATION_PROVIDER] onUnreadCount received - data type: ${data.runtimeType}, value: $data',
+        );
         if (data is int) {
           _unreadCount = data;
         } else if (data is Map) {
           _unreadCount = (data['count'] as num?)?.toInt() ?? 0;
         } else {
-          print('[NOTIFICATION_PROVIDER] ⚠️ onUnreadCount — unexpected type: ${data.runtimeType}');
+          print(
+            '[NOTIFICATION_PROVIDER] onUnreadCount - unexpected type: ${data.runtimeType}',
+          );
         }
         notifyListeners();
       } catch (e) {
-        print('[NOTIFICATION_PROVIDER] ❌ Error processing notification:unread_count — $e');
+        print('[NOTIFICATION_PROVIDER] Error processing notification:unread_count - $e');
       }
     });
   }
@@ -63,7 +71,10 @@ class NotificationProvider extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
     try {
-      _notifications = await _apiService.getNotifications(page: page, limit: limit);
+      _notifications.clear();
+      _notifications.addAll(
+        await _apiService.getNotifications(page: page, limit: limit),
+      );
     } catch (e) {
       // ignore
     }
@@ -122,22 +133,52 @@ class NotificationProvider extends ChangeNotifier {
       return;
     }
 
+    if (PushService().fcmToken != null) {
+      return;
+    }
+
     final type = (notification['type'] as String? ?? '').toUpperCase();
     if (type != 'MESSAGE') {
       return;
     }
 
-    if (PushService().fcmToken != null) {
+    final rawData = notification['data'];
+    final data = rawData is Map
+        ? Map<String, dynamic>.from(rawData)
+        : const <String, dynamic>{};
+
+    final messageId = data['messageId']?.toString();
+    final senderId = data['senderId']?.toString();
+    final senderName = data['senderName']?.toString().trim();
+    final rawTitle = notification['title']?.toString().trim() ?? '';
+    final rawBody = notification['body']?.toString().trim() ?? '';
+
+    final dedupeKey = messageId?.isNotEmpty == true
+        ? 'message:$messageId'
+        : senderId?.isNotEmpty == true
+            ? 'sender:$senderId:${rawBody.hashCode}'
+            : 'title:$rawTitle:${rawBody.hashCode}';
+
+    if (_shownSocketMessageNotificationIds.contains(dedupeKey)) {
       return;
     }
+    _shownSocketMessageNotificationIds.add(dedupeKey);
 
-    final rawData = notification['data'];
-    final data = rawData is Map ? Map<String, dynamic>.from(rawData) : const <String, dynamic>{};
-    final senderId = data['senderId']?.toString();
-    final senderName = data['senderName']?.toString();
-    final messageId = data['messageId']?.toString();
-    final title = notification['title'] as String? ?? 'Новое сообщение';
-    final body = notification['body'] as String? ?? '';
+    final title = senderName?.isNotEmpty == true
+        ? senderName!
+        : rawTitle.isNotEmpty
+            ? rawTitle
+            : 'Новое сообщение';
+
+    final body = rawBody.isNotEmpty
+        ? rawBody
+        : senderName?.isNotEmpty == true
+            ? 'Новое сообщение'
+            : '';
+
+    if (title.isEmpty || body.isEmpty) {
+      return;
+    }
 
     unawaited(
       PushService().showMessageNotificationFromSocket(
