@@ -59,21 +59,8 @@ export class PushService implements OnModuleInit {
             }
           : {
               priority: 'high',
-              notification: {
-                channelId: 'default_notification_channel',
-                defaultSound: true,
-                defaultVibrateTimings: true,
-                ...(senderId ? { tag: `message_sender_${senderId}` } : {}),
-              },
+              collapseKey: senderId ? `message_sender_${senderId}` : 'message',
             },
-        ...(isCall
-          ? {}
-          : {
-              notification: {
-                title: payload.title,
-                body: payload.body,
-              },
-            }),
       };
 
       const response = await getMessaging().send(message);

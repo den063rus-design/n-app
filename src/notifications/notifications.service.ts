@@ -85,6 +85,11 @@ export class NotificationsService {
         userId: String(userId),
       };
 
+      if (data.type === 'MESSAGE') {
+        pushData['title'] = data.title;
+        pushData['body'] = data.body ?? '';
+      }
+
       if (data.type === 'CALL') {
         const callId = data.data?.callId;
         const callerId = data.data?.callerId;

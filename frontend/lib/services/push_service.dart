@@ -10,6 +10,16 @@ import '../services/call_ringtone_service.dart';
 import '../services/call_service.dart';
 import '../services/chat_navigation_service.dart';
 
+int _messageNotificationIdForSender({
+  String? senderId,
+  String? title,
+}) {
+  final senderKey =
+      (senderId?.trim().isNotEmpty == true) ? senderId!.trim() : (title ?? '');
+  return PushService.messageNotificationBaseId +
+      senderKey.hashCode.abs() % 99999;
+}
+
 /// Глобальный обработчик FCM-уведомлений в фоне
 /// (когда приложение свёрнуто или убито).
 ///
@@ -95,20 +105,31 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     return;
   }
 
-  if (message.notification != null) {
-    debugPrint(
-      '[FCM_BG] Skipping local message notification because system notification already exists',
-    );
-    return;
-  }
+  final senderName = (message.data['senderName'] ?? '').trim();
+  final resolvedTitleSource = (message.data['title'] ?? title ?? '').trim();
+  final resolvedBodySource = (message.data['body'] ?? body ?? '').trim();
+  final messageTitle = senderName.isNotEmpty
+      ? senderName
+      : resolvedTitleSource.isNotEmpty
+          ? resolvedTitleSource
+          : '????? ?????????';
+  final messageBody = resolvedBodySource.isNotEmpty
+      ? resolvedBodySource
+      : '????? ?????????';
+  final notificationId = _messageNotificationIdForSender(
+    senderId: message.data['senderId'],
+    title: messageTitle,
+  );
 
-  debugPrint("[FCM_BG] Showing default notification - title=$title");
+  debugPrint(
+    "[FCM_BG] Showing local message notification - title=$messageTitle senderId=${message.data['senderId']}",
+  );
 
   const AndroidNotificationDetails androidDetails =
       AndroidNotificationDetails(
     'default_notification_channel',
-    'Основные уведомления',
-    channelDescription: 'Уведомления о новых сообщениях и звонках',
+    '???????????????? ??????????????????????',
+    channelDescription: '?????????????????????? ?? ?????????? ???????????????????? ?? ??????????????',
     importance: Importance.high,
     priority: Priority.high,
     showWhen: true,
@@ -120,9 +141,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       NotificationDetails(android: androidDetails);
 
   await localNotifications.show(
-    message.hashCode,
-    title ?? 'Уведомление',
-    body ?? '',
+    notificationId,
+    messageTitle,
+    messageBody,
     details,
     payload: payloadJson,
   );
@@ -142,7 +163,7 @@ class PushService {
 
   /// Фиксированный ID для call-уведомления (чтобы не залипало).
   static const int incomingCallNotificationId = 777001;
-  static const int _messageNotificationBaseId = 880000;
+  static const int messageNotificationBaseId = 880000;
 
   String? _fcmToken;
   String? get fcmToken => _fcmToken;
@@ -178,7 +199,7 @@ class PushService {
   }) {
     final senderKey =
         (senderId?.trim().isNotEmpty == true) ? senderId!.trim() : (title ?? '');
-    return _messageNotificationBaseId + senderKey.hashCode.abs() % 99999;
+    return messageNotificationBaseId + senderKey.hashCode.abs() % 99999;
   }
 
   Future<void> cancelMessageNotificationForSender({
