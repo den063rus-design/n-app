@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/notification.dart' as models;
 import '../services/api_service.dart';
+import '../services/chat_navigation_service.dart';
 import '../services/push_service.dart';
 import '../services/socket_service.dart';
 
@@ -150,8 +151,13 @@ class NotificationProvider extends ChangeNotifier {
     final messageId = data['messageId']?.toString();
     final senderId = data['senderId']?.toString();
     final senderName = data['senderName']?.toString().trim();
+    final activeChatUserId = int.tryParse(senderId ?? '');
     final rawTitle = notification['title']?.toString().trim() ?? '';
     final rawBody = notification['body']?.toString().trim() ?? '';
+
+    if (ChatNavigationService().isChatOpenWith(activeChatUserId)) {
+      return;
+    }
 
     final dedupeKey = messageId?.isNotEmpty == true
         ? 'message:$messageId'

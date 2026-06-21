@@ -8,6 +8,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../services/api_service.dart';
 import '../services/call_ringtone_service.dart';
 import '../services/call_service.dart';
+import '../services/chat_navigation_service.dart';
 
 /// Глобальный обработчик FCM-уведомлений в фоне
 /// (когда приложение свёрнуто или убито).
@@ -335,29 +336,7 @@ class PushService {
   }
 
   /// Отменяет call-уведомление (снимает залипшее уведомление из статус-бара).
-  Future<void> cancelIncomingCallNotification() async {
-    try {
-      if (defaultTargetPlatform == TargetPlatform.android) {
-        await _notificationsChannel.invokeMethod<void>(
-          'cancelNotificationById',
-          {'id': incomingCallNotificationId},
-        ).timeout(const Duration(seconds: 1));
-      } else {
-        await _localNotifications
-            .cancel(incomingCallNotificationId)
-            .timeout(const Duration(seconds: 1));
-      }
-      debugPrint(
-        '[PUSH] call notification cancelled (id=$incomingCallNotificationId)',
-      );
-    } on TimeoutException {
-      debugPrint('[PUSH] cancelIncomingCallNotification timeout');
-    } catch (e) {
-      debugPrint('[PUSH] cancelIncomingCallNotification failed: $e');
-    }
-  }
-
-  /// Возвращает `true`, если входящий call push нужно проигнорировать.
+  /// ?????????? `true`, ???? ???????? call push ????? ???????????????.
   bool _shouldIgnoreCallPush() {
     final callService = CallService();
     final state = callService.state;
@@ -382,8 +361,6 @@ class PushService {
     return false;
   }
 
-  /// Запрашивает разрешение на уведомления.
-
   bool _shouldIgnoreCallTapPayload({
     required String? callId,
     required String? callerId,
@@ -391,28 +368,28 @@ class PushService {
   }) {
     if (callId == null || callerId == null || callerName == null) {
       debugPrint(
-        '[FCM_TAP] Ignoring call tap ? missing fields callId=$callId callerId=$callerId callerName=$callerName',
+        '[FCM_TAP] Ignoring call tap - missing fields callId=$callId callerId=$callerId callerName=$callerName',
       );
       return true;
     }
 
     final parsedCallId = int.tryParse(callId);
     if (parsedCallId == null) {
-      debugPrint('[FCM_TAP] Ignoring call tap ? invalid callId=$callId');
+      debugPrint('[FCM_TAP] Ignoring call tap - invalid callId=$callId');
       return true;
     }
 
     final callService = CallService();
     if (callService.lastEndedCallId == parsedCallId) {
       debugPrint(
-        '[FCM_TAP] Ignoring call tap ? callId=$parsedCallId already ended locally',
+        '[FCM_TAP] Ignoring call tap - callId=$parsedCallId already ended locally',
       );
       return true;
     }
 
     if (_shouldIgnoreCallPush()) {
       debugPrint(
-        '[FCM_TAP] Ignoring call tap ? push guard rejected callId=$parsedCallId',
+        '[FCM_TAP] Ignoring call tap - push guard rejected callId=$parsedCallId',
       );
       return true;
     }
@@ -433,7 +410,6 @@ class PushService {
     }
   }
 
-  /// Получает текущий FCM token.
   Future<void> _refreshToken() async {
     try {
       _fcmToken = await _fcm.getToken();
@@ -443,11 +419,33 @@ class PushService {
     }
   }
 
+  Future<void> cancelIncomingCallNotification() async {
+    try {
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        await _notificationsChannel.invokeMethod<void>(
+          'cancelNotificationById',
+          {'id': incomingCallNotificationId},
+        ).timeout(const Duration(seconds: 1));
+      } else {
+        await _localNotifications
+            .cancel(incomingCallNotificationId)
+            .timeout(const Duration(seconds: 1));
+      }
+      debugPrint(
+        '[PUSH] call notification cancelled (id=$incomingCallNotificationId)',
+      );
+    } on TimeoutException {
+      debugPrint('[PUSH] cancelIncomingCallNotification timeout');
+    } catch (e) {
+      debugPrint('[PUSH] cancelIncomingCallNotification failed: $e');
+    }
+  }
+
   /// Обрабатывает foreground-сообщения.
   void _handleForegroundMessage(RemoteMessage message) {
     final type = message.data['type'];
     debugPrint(
-      '[FCM_FG] push received — type=$type, callId=${message.data['callId']}, callerId=${message.data['callerId']}, callerName=${message.data['callerName']}',
+      '[FCM_FG] push received - type=$type, callId=${message.data['callId']}, callerId=${message.data['callerId']}, callerName=${message.data['callerName']}',
     );
 
     if (type == 'call') {
@@ -487,31 +485,35 @@ class PushService {
         CallRingtoneService().playIncomingRingtone();
       }
 
-      // Fallback: если через 300ms экран входящего не открылся — показать call-уведомление
       Future.delayed(const Duration(milliseconds: 300), () {
         final cs = CallService();
         if (!cs.isIncomingDialogOpen && !cs.isCallScreenOpen && cs.state == CallState.RINGING) {
-          debugPrint('[FCM_FG] ⚠️ Fallback: incoming screen not opened, showing call notification');
+          debugPrint('[FCM_FG] Fallback: incoming screen not opened, showing call notification');
           _showCallNotification(message.data);
         }
       });
-    } else {
-      if (message.notification != null) {
-        debugPrint(
-          '[FCM_FG] Skipping local message notification because system notification already exists',
-        );
-        return;
-      }
-
-      final String title = message.notification?.title ??
-          message.data['title'] ??
-          'Уведомление';
-      final String body = message.notification?.body ??
-          message.data['body'] ??
-          '';
-
-      _showLocalNotification(title, body, message.data);
+      return;
     }
+
+    final senderId = int.tryParse(message.data['senderId'] ?? '');
+    if (ChatNavigationService().isChatOpenWith(senderId)) {
+      debugPrint(
+        '[FCM_FG] Skipping message notification because matching chat is already open',
+      );
+      return;
+    }
+
+    final senderName = (message.data['senderName'] ?? '').trim();
+    final rawTitle =
+        (message.notification?.title ?? message.data['title'] ?? '').trim();
+    final title = senderName.isNotEmpty
+        ? senderName
+        : rawTitle.isNotEmpty
+            ? rawTitle
+            : '\u041d\u043e\u0432\u043e\u0435 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435';
+    final body = message.notification?.body ?? message.data['body'] ?? '';
+
+    _showLocalNotification(title, body, message.data);
   }
 
   /// Показывает call-style локальное уведомление в foreground.
@@ -540,12 +542,17 @@ class PushService {
     String? senderName,
     String? messageId,
   }) async {
-    final normalizedTitle = title.trim().isEmpty
-        ? (senderName?.trim().isNotEmpty == true
-            ? senderName!.trim()
-            : 'Новое сообщение')
-        : title.trim();
-    final normalizedBody = body.trim().isEmpty ? 'Новое сообщение' : body.trim();
+    final normalizedSenderName = senderName?.trim() ?? '';
+    final rawTitle = title.trim();
+    final normalizedTitle = normalizedSenderName.isNotEmpty
+        ? normalizedSenderName
+        : rawTitle.isNotEmpty
+            ? rawTitle
+            : '\u041d\u043e\u0432\u043e\u0435 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435';
+    final normalizedBody =
+        body.trim().isEmpty
+            ? '\u041d\u043e\u0432\u043e\u0435 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435'
+            : body.trim();
 
     _showLocalNotification(normalizedTitle, normalizedBody, {
       'type': 'message',

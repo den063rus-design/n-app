@@ -123,7 +123,7 @@ export class ChatService {
     await this.notificationsService.createNotification({
       userId: message.receiverId,
       type: 'MESSAGE',
-      title: 'Новое сообщение',
+      title: sender.fio,
       body: message.text.substring(0, 100),
       data: {
         messageId: message.id,

@@ -12,6 +12,7 @@ import '../services/api_service.dart';
 import '../services/socket_service.dart';
 import '../services/call_service.dart';
 import '../services/push_service.dart';
+import '../services/chat_navigation_service.dart';
 import '../services/app_permissions_service.dart';
 import '../screens/call_screen.dart';
 import '../screens/login_screen.dart';
@@ -576,11 +577,13 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       final type = data['type'];
 
       if (type == 'message') {
-        // РћС‚РєСЂС‹РІР°РµРј С‡Р°С‚ СЃ РѕС‚РїСЂР°РІРёС‚РµР»РµРј
         final senderId = data['senderId'];
         if (senderId != null) {
           final userId = int.tryParse(senderId);
           if (userId != null) {
+            if (ChatNavigationService().isChatOpenWith(userId)) {
+              return;
+            }
             final userName = data['senderName'] ?? 'Пользователь';
             Navigator.push(
               navigatorKey.currentContext!,

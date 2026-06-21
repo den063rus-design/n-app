@@ -9,6 +9,7 @@ import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
 import '../models/message.dart';
 import '../services/call_service.dart';
+import '../services/chat_navigation_service.dart';
 import '../services/socket_service.dart';
 import '../widgets/message_bubble.dart';
 import 'call_screen.dart';
@@ -49,6 +50,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    ChatNavigationService().setActiveChat(widget.userId);
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _loadMessages();
@@ -60,6 +62,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    ChatNavigationService().clearActiveChat(widget.userId);
     WidgetsBinding.instance.removeObserver(this);
     _messageController.removeListener(_onTextChanged);
     _messageController.dispose();
