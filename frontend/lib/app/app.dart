@@ -304,6 +304,8 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   bool _isOffline = false;
   AppLifecycleState _lastLifecycleState = AppLifecycleState.resumed;
   AuthProvider? _authProvider;
+  int? _pendingMessageChatUserId;
+  String? _pendingMessageChatUserName;
 
   // РҐСЂР°РЅРёРј, РєР°РєРѕР№ СЌРєСЂР°РЅ РїРѕРєР°Р·С‹РІР°С‚СЊ (СЂРµРЅРґРµСЂРёС‚СЃСЏ РІ build, Р° РЅРµ С‡РµСЂРµР· pushReplacement)
   Widget? _currentScreen;
@@ -399,10 +401,91 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       _currentScreen = nextScreen;
     });
 
+    _flushPendingMessageNavigation();
+
     debugPrint(
       '[APP_SHELL] auth state changed -> currentScreen=${nextScreen.runtimeType} '
       'authenticated=${auth.isAuthenticated} isAdmin=${auth.isAdmin}',
     );
+  }
+
+  void _storePendingMessageNavigation({
+    required int userId,
+    required String userName,
+  }) {
+    _pendingMessageChatUserId = userId;
+    _pendingMessageChatUserName = userName;
+    debugPrint(
+      '[APP] stored pending message navigation userId=$userId userName=$userName',
+    );
+  }
+
+  void _clearPendingMessageNavigation() {
+    _pendingMessageChatUserId = null;
+    _pendingMessageChatUserName = null;
+  }
+
+  void _openChatFromNotification({
+    required int userId,
+    required String userName,
+  }) {
+    final auth = _authProvider;
+    final context = navigatorKey.currentContext;
+
+    if (_isChecking ||
+        auth == null ||
+        !auth.isAuthenticated ||
+        context == null ||
+        !context.mounted) {
+      _storePendingMessageNavigation(userId: userId, userName: userName);
+      return;
+    }
+
+    if (ChatNavigationService().isChatOpenWith(userId)) {
+      _clearPendingMessageNavigation();
+      return;
+    }
+
+    _clearPendingMessageNavigation();
+    unawaited(
+      PushService().cancelMessageNotificationForSender(
+        senderId: userId.toString(),
+        title: userName,
+      ),
+    );
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ChatScreen(
+          userId: userId,
+          userName: userName,
+          isAdmin: auth.isAdmin,
+        ),
+      ),
+    );
+  }
+
+  void _flushPendingMessageNavigation() {
+    final userId = _pendingMessageChatUserId;
+    final userName = _pendingMessageChatUserName;
+    final auth = _authProvider;
+
+    if (userId == null ||
+        userName == null ||
+        _isChecking ||
+        auth == null ||
+        !auth.isAuthenticated) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (ChatNavigationService().isChatOpenWith(userId)) {
+        _clearPendingMessageNavigation();
+        return;
+      }
+      _openChatFromNotification(userId: userId, userName: userName);
+    });
   }
 
   @override
@@ -577,22 +660,15 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       final type = data['type'];
 
       if (type == 'message') {
+        PushService().clearPendingMessageTap();
         final senderId = data['senderId'];
         if (senderId != null) {
           final userId = int.tryParse(senderId);
           if (userId != null) {
-            if (ChatNavigationService().isChatOpenWith(userId)) {
-              return;
-            }
             final userName = data['senderName'] ?? 'Пользователь';
-            Navigator.push(
-              navigatorKey.currentContext!,
-              MaterialPageRoute(
-                builder: (context) => ChatScreen(
-                  userId: userId,
-                  userName: userName,
-                ),
-              ),
+            _openChatFromNotification(
+              userId: userId,
+              userName: userName,
             );
           }
         }
@@ -602,6 +678,8 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         _handleCallPushTap(data);
       }
     });
+
+    _checkPendingMessageTap();
 
     // РџСЂРѕРІРµСЂСЏРµРј, РЅРµ Р±С‹Р»Рѕ Р»Рё СѓР¶Рµ РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРѕ СЃРѕСЃС‚РѕСЏРЅРёРµ РІС…РѕРґСЏС‰РµРіРѕ Р·РІРѕРЅРєР°
     // РёР· push-СѓРІРµРґРѕРјР»РµРЅРёСЏ (getInitialMessage РІ PushService.init()).
@@ -616,6 +694,28 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     // Р—РґРµСЃСЊ РјС‹ РїСЂРѕРІРµСЂСЏРµРј: РµСЃР»Рё CallService СѓР¶Рµ РІ RINGING, РЅРѕ РґРёР°Р»РѕРі РµС‰С‘ РЅРµ
     // РїРѕРєР°Р·Р°РЅ вЂ” РїРѕРєР°Р·С‹РІР°РµРј РґРёР°Р»РѕРі РёР· РґР°РЅРЅС‹С… CallService.
     _checkPendingIncomingCallFromPush();
+  }
+
+  void _checkPendingMessageTap() {
+    final pending = PushService().consumePendingMessageTap();
+    if (pending == null || pending['type'] != 'message') {
+      return;
+    }
+
+    final senderId = pending['senderId'];
+    final userId = senderId != null ? int.tryParse(senderId) : null;
+    if (userId == null) {
+      return;
+    }
+
+    final userName = pending['senderName'] ?? 'Пользователь';
+    debugPrint(
+      '[APP] restoring pending message tap userId=$userId userName=$userName',
+    );
+    _openChatFromNotification(
+      userId: userId,
+      userName: userName,
+    );
   }
 
   /// РџСЂРѕРІРµСЂСЏРµС‚, РЅРµ Р±С‹Р»Рѕ Р»Рё РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРѕ СЃРѕСЃС‚РѕСЏРЅРёРµ РІС…РѕРґСЏС‰РµРіРѕ Р·РІРѕРЅРєР° РёР· push
@@ -811,6 +911,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       setState(() {
         _isChecking = false;
       });
+      _flushPendingMessageNavigation();
       debugPrint('[APP_SHELL] _checkAuth() вЂ” END');
     } catch (e, stack) {
       debugPrint('[APP_SHELL] рџ”ґ CRASH in _checkAuth: $e');

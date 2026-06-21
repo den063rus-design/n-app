@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -10,6 +11,7 @@ import '../providers/chat_provider.dart';
 import '../models/message.dart';
 import '../services/call_service.dart';
 import '../services/chat_navigation_service.dart';
+import '../services/push_service.dart';
 import '../services/socket_service.dart';
 import '../widgets/message_bubble.dart';
 import 'call_screen.dart';
@@ -51,6 +53,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     ChatNavigationService().setActiveChat(widget.userId);
+    unawaited(
+      PushService().cancelMessageNotificationForSender(
+        senderId: widget.userId.toString(),
+        title: widget.userName,
+      ),
+    );
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _loadMessages();

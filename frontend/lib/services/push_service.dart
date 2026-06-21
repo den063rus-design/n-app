@@ -142,6 +142,7 @@ class PushService {
 
   /// Фиксированный ID для call-уведомления (чтобы не залипало).
   static const int incomingCallNotificationId = 777001;
+  static const int _messageNotificationBaseId = 880000;
 
   String? _fcmToken;
   String? get fcmToken => _fcmToken;
@@ -151,13 +152,50 @@ class PushService {
 
   /// Флаг: идёт ли отправка токена (защита от дублей).
   bool _isSendingToken = false;
+  final Map<String, int> _messageNotificationCountsBySender = {};
 
   final _notificationTapStream =
       StreamController<Map<String, String?>>.broadcast();
   Stream<Map<String, String?>> get onNotificationTap =>
       _notificationTapStream.stream;
+  Map<String, String?>? _pendingMessageTapData;
 
   bool _initialized = false;
+
+  Map<String, String?>? consumePendingMessageTap() {
+    final data = _pendingMessageTapData;
+    _pendingMessageTapData = null;
+    return data;
+  }
+
+  void clearPendingMessageTap() {
+    _pendingMessageTapData = null;
+  }
+
+  int messageNotificationIdForSender({
+    String? senderId,
+    String? title,
+  }) {
+    final senderKey =
+        (senderId?.trim().isNotEmpty == true) ? senderId!.trim() : (title ?? '');
+    return _messageNotificationBaseId + senderKey.hashCode.abs() % 99999;
+  }
+
+  Future<void> cancelMessageNotificationForSender({
+    String? senderId,
+    String? title,
+  }) async {
+    final notificationId = messageNotificationIdForSender(
+      senderId: senderId,
+      title: title,
+    );
+    _messageNotificationCountsBySender.remove(senderId?.trim().isNotEmpty == true
+        ? senderId!.trim()
+        : title ?? '');
+    try {
+      await _localNotifications.cancel(notificationId);
+    } catch (_) {}
+  }
 
   /// Инициализирует Firebase, FCM и локальные уведомления.
   Future<void> init() async {
@@ -633,13 +671,32 @@ class PushService {
     final payloadJson = jsonEncode(payloadMap);
 
     final type = data['type'] as String?;
-    final messageId = data['messageId'] as String?;
     final senderId = data['senderId'] as String?;
-    final notificationId = type == 'message'
-        ? int.tryParse(messageId ?? '') ??
-            900000 + (senderId ?? title).hashCode.abs() % 99999
-        : DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
+    if (type == 'message') {
+      final senderKey =
+          (senderId?.trim().isNotEmpty == true) ? senderId!.trim() : title;
+      final notificationId = messageNotificationIdForSender(
+        senderId: senderId,
+        title: title,
+      );
+      final currentCount = (_messageNotificationCountsBySender[senderKey] ?? 0) + 1;
+      _messageNotificationCountsBySender[senderKey] = currentCount;
+      final effectiveBody = currentCount > 1 ? '$body (+$currentCount)' : body;
+
+      _localNotifications.cancel(notificationId).whenComplete(() {
+        _localNotifications.show(
+          notificationId,
+          title,
+          effectiveBody,
+          details,
+          payload: payloadJson,
+        );
+      });
+      return;
+    }
+
+    final notificationId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     _localNotifications.show(
       notificationId,
       title,
@@ -701,7 +758,7 @@ class PushService {
 
     await Future.delayed(const Duration(milliseconds: 50));
 
-    _notificationTapStream.add({
+    final payload = {
       'type': type,
       'messageId': data['messageId'] as String?,
       'senderId': data['senderId'] as String?,
@@ -709,7 +766,17 @@ class PushService {
       'callId': data['callId'] as String?,
       'callerId': data['callerId'] as String?,
       'callerName': data['callerName'] as String?,
-    });
+    };
+
+    if (type == 'message' && !_notificationTapStream.hasListener) {
+      _pendingMessageTapData = payload;
+      debugPrint(
+        '[FCM_TAP] Stored pending message tap senderId=${payload['senderId']} senderName=${payload['senderName']}',
+      );
+      return;
+    }
+
+    _notificationTapStream.add(payload);
   }
 
   void dispose() {
