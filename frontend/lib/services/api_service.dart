@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -30,25 +30,25 @@ class ApiService {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
-          // Не добавляем токен для запроса логина
+          // РќРµ РґРѕР±Р°РІР»СЏРµРј С‚РѕРєРµРЅ РґР»СЏ Р·Р°РїСЂРѕСЃР° Р»РѕРіРёРЅР°
           if (options.path.contains('/auth/login')) {
-            debugPrint('[Dio] ${options.method} ${options.path} — без токена (login)');
+            debugPrint('[Dio] ${options.method} ${options.path} вЂ” Р±РµР· С‚РѕРєРµРЅР° (login)');
             handler.next(options);
             return;
           }
           final token = await _storage.read(key: 'jwt_token');
           if (token != null) {
             options.headers['Authorization'] = 'Bearer $token';
-            debugPrint('[Dio] ${options.method} ${options.path} — токен добавлен');
+            debugPrint('[Dio] ${options.method} ${options.path} вЂ” С‚РѕРєРµРЅ РґРѕР±Р°РІР»РµРЅ');
           } else {
-            debugPrint('[Dio] ${options.method} ${options.path} — токен отсутствует');
+            debugPrint('[Dio] ${options.method} ${options.path} вЂ” С‚РѕРєРµРЅ РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚');
           }
           handler.next(options);
         },
         onError: (error, handler) {
           debugPrint('[Dio] ERROR ${error.response?.statusCode} ${error.requestOptions.path}: ${error.response?.data}');
           if (error.response?.statusCode == 401) {
-            // Token expired — можно добавить логику refresh
+            // Token expired вЂ” РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ Р»РѕРіРёРєСѓ refresh
           }
           handler.next(error);
         },
@@ -59,7 +59,7 @@ class ApiService {
   Dio get dio => _dio;
 
   // =================================================================
-  // Базовые HTTP-методы
+  // Р‘Р°Р·РѕРІС‹Рµ HTTP-РјРµС‚РѕРґС‹
   // =================================================================
 
   Future<dynamic> get(String path, {Map<String, dynamic>? queryParameters}) async {
@@ -115,7 +115,7 @@ class ApiService {
     return User.fromJson(response as Map<String, dynamic>);
   }
 
-  /// Получить текущего пользователя по JWT-токену (GET /users/me)
+  /// РџРѕР»СѓС‡РёС‚СЊ С‚РµРєСѓС‰РµРіРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РїРѕ JWT-С‚РѕРєРµРЅСѓ (GET /users/me)
   Future<User> getCurrentUser() async {
     final response = await get('/users/me');
     return User.fromJson(response as Map<String, dynamic>);
@@ -167,8 +167,8 @@ class ApiService {
   // Files
   // =================================================================
 
-  /// Загружает файл на сервер.
-  /// [userId] — обязателен для ADMIN (ID получателя), для USER не нужен (backend сам берёт из JWT).
+  /// Р—Р°РіСЂСѓР¶Р°РµС‚ С„Р°Р№Р» РЅР° СЃРµСЂРІРµСЂ.
+  /// [userId] вЂ” РѕР±СЏР·Р°С‚РµР»РµРЅ РґР»СЏ ADMIN (ID РїРѕР»СѓС‡Р°С‚РµР»СЏ), РґР»СЏ USER РЅРµ РЅСѓР¶РµРЅ (backend СЃР°Рј Р±РµСЂС‘С‚ РёР· JWT).
   Future<Map<String, dynamic>> uploadFile(String filePath, {int? userId}) async {
     final fileName = File(filePath).uri.pathSegments.last;
     debugPrint('[ApiService.uploadFile] filePath=$filePath fileName=$fileName userId=$userId');
@@ -197,7 +197,7 @@ class ApiService {
       final decoded = response.data as Map<String, dynamic>;
       final fileKey = decoded['key'] as String?;
       if (fileKey == null) {
-        throw Exception('Сервер не вернул ключ файла. Ответ: $decoded');
+        throw Exception('РЎРµСЂРІРµСЂ РЅРµ РІРµСЂРЅСѓР» РєР»СЋС‡ С„Р°Р№Р»Р°. РћС‚РІРµС‚: $decoded');
       }
       return {
         'key': fileKey,
@@ -217,13 +217,13 @@ class ApiService {
           errorMsg = 'HTTP $statusCode: $body';
         }
       } else if (e.type == DioExceptionType.connectionTimeout || e.type == DioExceptionType.sendTimeout) {
-        errorMsg = 'Таймаут соединения при загрузке файла';
+        errorMsg = 'РўР°Р№РјР°СѓС‚ СЃРѕРµРґРёРЅРµРЅРёСЏ РїСЂРё Р·Р°РіСЂСѓР·РєРµ С„Р°Р№Р»Р°';
       } else if (e.type == DioExceptionType.connectionError) {
-        errorMsg = 'Ошибка сети при загрузке файла: ${e.message}';
+        errorMsg = 'РћС€РёР±РєР° СЃРµС‚Рё РїСЂРё Р·Р°РіСЂСѓР·РєРµ С„Р°Р№Р»Р°: ${e.message}';
       } else {
-        errorMsg = 'Ошибка загрузки файла: ${e.message}';
+        errorMsg = 'РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё С„Р°Р№Р»Р°: ${e.message}';
       }
-      throw Exception('Ошибка загрузки файла: $errorMsg');
+      throw Exception('РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё С„Р°Р№Р»Р°: $errorMsg');
     }
   }
 
@@ -262,30 +262,4 @@ class ApiService {
         .toList();
   }
 
-  // =================================================================
-  // LiveKit
-  // =================================================================
-
-  /// Получает LiveKit AccessToken для указанного звонка.
-  ///
-  /// POST /livekit/token
-  /// Тело: { "callId": 123 }
-  /// Ответ: { "wsUrl": "...", "roomName": "...", "token": "..." }
-  Future<Map<String, dynamic>> getLiveKitToken(int callId) async {
-    debugPrint('[API] getLiveKitToken request callId=$callId');
-    try {
-      final response = await post('/livekit/token', data: {
-        'callId': callId,
-      });
-      debugPrint('[API] getLiveKitToken ok callId=$callId');
-      return response as Map<String, dynamic>;
-    } catch (e) {
-      if (e is DioException) {
-        debugPrint('[API] getLiveKitToken fail callId=$callId status=${e.response?.statusCode} data=${e.response?.data} error=$e');
-      } else {
-        debugPrint('[API] getLiveKitToken fail callId=$callId error=$e');
-      }
-      rethrow;
-    }
-  }
 }
