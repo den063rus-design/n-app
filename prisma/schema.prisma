@@ -44,7 +44,7 @@ enum NotificationType {
 model User {
   id             Int           @id @default(autoincrement())
   fio            String
-  age            Int
+  age            Int?
   login          String        @unique
   passwordHash   String
   role           Role          @default(USER)

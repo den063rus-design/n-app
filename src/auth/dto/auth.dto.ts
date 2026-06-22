@@ -31,7 +31,7 @@ export class AuthResponseDto {
   user!: {
     id: number;
     fio: string;
-    age: number;
+    age: number | null;
     login: string;
     role: Role;
     status: UserStatus;
