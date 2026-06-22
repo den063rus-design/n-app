@@ -136,14 +136,14 @@ export class UsersService {
 
     const data: {
       fio?: string;
-      age?: number;
+      age?: number | null;
       login?: string;
       notes?: string;
     } = {};
 
     if (dto.fio !== undefined) data.fio = dto.fio;
     if (dto.fullName !== undefined) data.fio = dto.fullName;
-    if (dto.age !== undefined) data.age = dto.age;
+    if (dto.age !== undefined) data.age = dto.age; // null очистит поле в БД
     if (dto.login !== undefined) data.login = dto.login;
     if (dto.notes !== undefined) data.notes = dto.notes;
 

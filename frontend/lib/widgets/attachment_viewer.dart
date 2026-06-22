@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:audioplayers/audioplayers.dart';
@@ -381,9 +382,12 @@ class _FullscreenVideoPage extends StatefulWidget {
   State<_FullscreenVideoPage> createState() => _FullscreenVideoPageState();
 }
 
-class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
+class _FullscreenVideoPageState extends State<_FullscreenVideoPage>
+    with SingleTickerProviderStateMixin {
   late VideoPlayerController _controller;
   bool _isPlaying = false;
+  bool _showOverlay = true;
+  late Timer _overlayTimer;
 
   @override
   void initState() {
@@ -395,6 +399,13 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
       _controller.play();
     }
     setState(() => _isPlaying = _controller.value.isPlaying);
+    _startOverlayTimer();
+  }
+
+  void _startOverlayTimer() {
+    _overlayTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _showOverlay = false);
+    });
   }
 
   void _onControllerUpdate() {
@@ -405,9 +416,22 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
     }
   }
 
+  void _handleTap() {
+    if (_isPlaying) {
+      _controller.pause();
+      setState(() => _showOverlay = true);
+    } else {
+      _controller.play();
+      setState(() => _showOverlay = true);
+      _startOverlayTimer();
+    }
+  }
+
   @override
   void dispose() {
     _controller.removeListener(_onControllerUpdate);
+    _controller.pause(); // Останавливаем видео при выходе
+    _overlayTimer.cancel();
     // Не диспозим controller — он принадлежит AttachmentViewer
     super.dispose();
   }
@@ -420,52 +444,48 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
         backgroundColor: Colors.black,
         iconTheme: const IconThemeData(color: Colors.white),
         elevation: 0,
-        actions: [
-          IconButton(
-            icon: Icon(
-              _isPlaying ? Icons.pause : Icons.play_arrow,
-              color: Colors.white,
+      ),
+      body: GestureDetector(
+        onTap: _handleTap,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // Видео
+            Center(
+              child: _controller.value.isInitialized
+                  ? InteractiveViewer(
+                      minScale: 0.5,
+                      maxScale: 3.0,
+                      child: AspectRatio(
+                        aspectRatio: _controller.value.aspectRatio,
+                        child: VideoPlayer(_controller),
+                      ),
+                    )
+                  : const Center(
+                      child: CircularProgressIndicator(color: Colors.white),
+                    ),
             ),
-            onPressed: () {
-              if (_isPlaying) {
-                _controller.pause();
-              } else {
-                _controller.play();
-              }
-            },
-          ),
-        ],
-      ),
-      body: Center(
-        child: _controller.value.isInitialized
-            ? InteractiveViewer(
-                minScale: 0.5,
-                maxScale: 3.0,
-                child: AspectRatio(
-                  aspectRatio: _controller.value.aspectRatio,
-                  child: VideoPlayer(_controller),
+            // Центральный overlay play/pause
+            if (_showOverlay)
+              AnimatedOpacity(
+                opacity: _showOverlay ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 300),
+                child: Container(
+                  decoration: const BoxDecoration(
+                    color: Colors.black26,
+                    shape: BoxShape.circle,
+                  ),
+                  padding: const EdgeInsets.all(20),
+                  child: Icon(
+                    _isPlaying ? Icons.pause : Icons.play_arrow,
+                    color: Colors.white,
+                    size: 48,
+                  ),
                 ),
-              )
-            : const Center(
-                child: CircularProgressIndicator(color: Colors.white),
               ),
-      ),
-      // Тап по экрану — play/pause
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          if (_isPlaying) {
-            _controller.pause();
-          } else {
-            _controller.play();
-          }
-        },
-        backgroundColor: Colors.white24,
-        child: Icon(
-          _isPlaying ? Icons.pause : Icons.play_arrow,
-          color: Colors.white,
+          ],
         ),
       ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
 }
