@@ -196,51 +196,70 @@ void showIncomingCallDialogFromService({
   }
 
   callService.markIncomingDialogOpen();
-  debugPrint('[APP] GLOBAL showIncomingCallDialog pushed route');
+  debugPrint('[APP] GLOBAL showIncomingCallDialog scheduled route push');
 
-  Navigator.push<bool>(
-    context,
-    MaterialPageRoute(
-      fullscreenDialog: true,
-      settings: const RouteSettings(name: 'incoming_call_dialog'),
-      builder: (context) => IncomingCallDialog(
-        callerId: callerId,
-        callerName: callerName,
-        callId: callId,
-      ),
-    ),
-  ).then((result) async {
-    callService.markIncomingDialogClosed();
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    final pushContext = navigatorKey.currentContext;
+    final pushRoute = callRouteObserver.currentRouteName ?? 'null';
 
-    if (result == true) {
-      debugPrint('[APP] вњ… GLOBAL incoming dialog accepted вЂ” calling acceptCall()');
-      try {
-        await callService.acceptCall();
-
-        if (callService.state != CallState.ACCEPTING &&
-            callService.state != CallState.IN_CALL) {
-          debugPrint('[APP] вљ пёЏ GLOBAL acceptCall completed but state=${callService.state} вЂ” NOT opening CallScreen');
-          return;
-        }
-
-        _openCallScreenGlobal(
-          userId: callerId,
-          userName: callerName,
-          isIncoming: true,
-          from: source,
-        );
-      } catch (e) {
-        debugPrint('[APP] рџ”ґ GLOBAL acceptCall failed: $e вЂ” NOT opening CallScreen');
-      }
+    if (pushContext == null || !pushContext.mounted) {
+      debugPrint('[APP] ⚠️ GLOBAL showIncomingCallDialog aborted — navigator context unavailable in post-frame');
+      callService.markIncomingDialogClosed();
       return;
     }
 
-    if (result == false && callService.state == CallState.RINGING) {
-      debugPrint('[APP] вќЊ GLOBAL incoming dialog rejected вЂ” calling rejectCall()');
-      await callService.rejectCall();
-    } else {
-      debugPrint('[APP] вЏ­пёЏ GLOBAL incoming dialog dismissed/closed unexpectedly вЂ” result=$result state=${callService.state}, skipping rejectCall');
+    if (pushRoute == 'incoming_call_dialog') {
+      debugPrint('[APP] GLOBAL showIncomingCallDialog skipped in post-frame — dialog already on top');
+      callService.markIncomingDialogOpen();
+      return;
     }
+
+    debugPrint('[APP] GLOBAL showIncomingCallDialog pushed route');
+
+    Navigator.push<bool>(
+      pushContext,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        settings: const RouteSettings(name: 'incoming_call_dialog'),
+        builder: (context) => IncomingCallDialog(
+          callerId: callerId,
+          callerName: callerName,
+          callId: callId,
+        ),
+      ),
+    ).then((result) async {
+      callService.markIncomingDialogClosed();
+
+      if (result == true) {
+        debugPrint('[APP] вњ… GLOBAL incoming dialog accepted вЂ” calling acceptCall()');
+        try {
+          await callService.acceptCall();
+
+          if (callService.state != CallState.ACCEPTING &&
+              callService.state != CallState.IN_CALL) {
+            debugPrint('[APP] вљ пёЏ GLOBAL acceptCall completed but state=${callService.state} вЂ” NOT opening CallScreen');
+            return;
+          }
+
+          _openCallScreenGlobal(
+            userId: callerId,
+            userName: callerName,
+            isIncoming: true,
+            from: source,
+          );
+        } catch (e) {
+          debugPrint('[APP] рџ”ґ GLOBAL acceptCall failed: $e вЂ” NOT opening CallScreen');
+        }
+        return;
+      }
+
+      if (result == false && callService.state == CallState.RINGING) {
+        debugPrint('[APP] вќЊ GLOBAL incoming dialog rejected вЂ” calling rejectCall()');
+        await callService.rejectCall();
+      } else {
+        debugPrint('[APP] вЏ­пёЏ GLOBAL incoming dialog dismissed/closed unexpectedly вЂ” result=$result state=${callService.state}, skipping rejectCall');
+      }
+    });
   });
 }
 

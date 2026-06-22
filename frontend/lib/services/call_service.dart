@@ -589,17 +589,18 @@ class CallService {
         'вњ… remote stream received '
         '(trackKind=${event.track.kind}, videoTracks=$videoTracks, audioTracks=$audioTracks)',
       );
+      _remoteStreamController.add(stream);
+    };
 
-      if (event.track.kind == 'video' || videoTracks > 0) {
-        _remoteStreamController.add(null);
-        Future.microtask(() {
-          if (_remoteStream == stream) {
-            _remoteStreamController.add(stream);
-          }
-        });
-      } else {
-        _remoteStreamController.add(stream);
-      }
+    _peerConnection!.onAddStream = (stream) {
+      final videoTracks = stream.getVideoTracks().length;
+      final audioTracks = stream.getAudioTracks().length;
+      _remoteStream = stream;
+      _log(
+        '✅ remote stream received via onAddStream '
+        '(videoTracks=$videoTracks, audioTracks=$audioTracks)',
+      );
+      _remoteStreamController.add(stream);
     };
 
     _peerConnection!.onConnectionState = (state) {

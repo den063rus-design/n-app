@@ -203,16 +203,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<void> _pickImageFromGallery() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.image,
+      final XFile? image = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 80,
       );
-      if (result != null && result.files.single.path != null) {
-        final path = result.files.single.path!;
-        final fileName = result.files.single.name;
-        await _sendFile(path, 'image', fileName: fileName);
+      if (image != null) {
+        await _sendFile(image.path, 'image', fileName: image.name);
       }
     } catch (e) {
-      _showError('Ошибка выбора фото: $e');
+      _showError('?????? ?????? ????: $e');
     }
   }
 

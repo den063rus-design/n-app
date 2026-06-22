@@ -86,7 +86,6 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
 
       final currentRemote = _callService.currentRemoteStream;
       if (currentRemote != null) {
-        _remoteRenderer.srcObject = null;
         _remoteRenderer.srcObject = currentRemote;
         _remoteViewVersion++;
         if (mounted) setState(() {});
@@ -99,9 +98,6 @@ class _ActiveCallOverlayState extends State<ActiveCallOverlay> {
   void _subscribe() {
     _remoteStreamSub = _callService.remoteStream.listen((stream) {
       if (!mounted) return;
-      if (stream != null && identical(_remoteRenderer.srcObject, stream)) {
-        _remoteRenderer.srcObject = null;
-      }
       _remoteRenderer.srcObject = stream;
       _remoteViewVersion++;
       setState(() {});
