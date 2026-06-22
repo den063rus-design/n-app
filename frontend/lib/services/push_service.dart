@@ -9,6 +9,13 @@ import '../services/api_service.dart';
 import '../services/call_ringtone_service.dart';
 import '../services/call_service.dart';
 import '../services/chat_navigation_service.dart';
+import '../config/api_config.dart';
+import '../call_v2/call_v2_service.dart';
+import '../call_v2/call_v2_mappers.dart';
+import '../notifications_v2/incoming_call_notification_router_v2.dart';
+import '../notifications_v2/message_notification_router_v2.dart';
+import '../notifications_v2/notification_tap_router_v2.dart';
+import '../notifications_v2/notification_event_v2.dart';
 
 const String _defaultNotificationChannelId = 'default_notification_channel';
 const String _messageAlertsChannelId = 'message_alerts_channel';
@@ -342,9 +349,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       ? senderName
       : resolvedTitleSource.isNotEmpty
           ? resolvedTitleSource
-          : '????? ?????????';
+          : 'Новое сообщение';
   final messageBody =
-      resolvedBodySource.isNotEmpty ? resolvedBodySource : '????? ?????????';
+      resolvedBodySource.isNotEmpty ? resolvedBodySource : 'Новое сообщение';
   debugPrint(
     "[FCM_BG] Showing local message notification - title=$messageTitle senderId=${message.data['senderId']}",
   );
@@ -398,6 +405,7 @@ class PushService {
   Stream<Map<String, String?>> get onNotificationTap =>
       _notificationTapStream.stream;
   Map<String, String?>? _pendingMessageTapData;
+  Map<String, String?>? _pendingCallTapData;
 
   bool _initialized = false;
 
@@ -407,8 +415,18 @@ class PushService {
     return data;
   }
 
+  Map<String, String?>? consumePendingCallTap() {
+    final data = _pendingCallTapData;
+    _pendingCallTapData = null;
+    return data;
+  }
+
   void clearPendingMessageTap() {
     _pendingMessageTapData = null;
+  }
+
+  void clearPendingCallTap() {
+    _pendingCallTapData = null;
   }
 
   int messageNotificationIdForSender({
@@ -752,6 +770,43 @@ class PushService {
         return;
       }
 
+      // V2 routing
+      if (kUseCallV2) {
+        final transportEvent = CallV2Mappers.transportFromPush(
+          payload: jsonEncode(message.data),
+          isForeground: true,
+          notificationId: message.data['notification_id'] as String?,
+        );
+
+        final type = message.data['type'] as String?;
+
+        if (type == 'call') {
+          final router = IncomingCallNotificationRouterV2();
+          final action = router.route(transportEvent);
+
+          if (action is ShowIncomingCallAction) {
+            final callerId = int.tryParse(action.callerId) ?? 0;
+            final callId = int.tryParse(action.sessionId) ?? 0;
+            CallV2Service.instance.handleIncoming(
+              callerUserId: callerId,
+              callId: callId,
+              callType: action.callType,
+            );
+          }
+        } else if (type == 'message') {
+          final router = MessageNotificationRouterV2();
+          final action = router.route(transportEvent);
+
+          if (action is OpenChatAction) {
+            // Открыть чат через существующую навигацию
+            debugPrint('[PUSH_V2] OpenChatAction: chatId=${action.chatId}, messageId=${action.messageId}');
+          }
+        }
+
+        return; // V2 обработал — не идём в legacy
+      }
+
+      // Legacy path (только если V2 выключен)
       debugPrint(
         '[FCM_FG] PUSH hydrate callId=$callId, callerId=$callerId, callerName=$callerName',
       );
@@ -785,6 +840,7 @@ class PushService {
           _showCallNotification(message.data);
         }
       });
+
       return;
     }
 
@@ -981,24 +1037,100 @@ class PushService {
       final callerId = data['callerId'] as String?;
       final callerName = data['callerName'] as String?;
 
+      _pendingCallTapData = {
+        'type': 'call',
+        'callId': callId,
+        'callerId': callerId,
+        'callerName': callerName,
+      };
+
       if (_shouldIgnoreCallTapPayload(
         callId: callId,
         callerId: callerId,
         callerName: callerName,
       )) {
+        _pendingCallTapData = null;
         return;
       }
 
-      debugPrint(
-        '[FCM_TAP] PUSH hydrate callId=$callId, callerId=$callerId, callerName=$callerName',
-      );
-      CallService().hydrateIncomingCallFromPush(
-        callId: callId!,
-        callerId: callerId!,
-        callerName: callerName!,
-      );
+      if (kUseCallV2) {
+        try {
+          final transportEvent = CallV2Mappers.transportFromPush(
+            payload: jsonEncode(data),
+            isForeground: false,
+            notificationId: data['notification_id'] as String?,
+          );
+
+          // Парсим тип через роутеры
+          final callRouter = IncomingCallNotificationRouterV2();
+          final callAction = callRouter.route(transportEvent);
+
+          if (callAction is ShowIncomingCallAction) {
+            final decision = NotificationRoutingDecisionV2(
+              category: NotificationCategoryV2.incomingCall,
+              callSessionId: callAction.sessionId,
+              callerId: callAction.callerId,
+              callerName: callAction.callerName,
+              callType: callAction.callType,
+              rawPayload: transportEvent.payload,
+            );
+
+            final tapRouter = NotificationTapRouterV2();
+            final tapResult = tapRouter.handleTap(decision);
+
+            if (tapResult.action is ShowIncomingCallAction) {
+              final action = tapResult.action as ShowIncomingCallAction;
+              final callerId = int.tryParse(action.callerId) ?? 0;
+              final callId = int.tryParse(action.sessionId) ?? 0;
+              CallV2Service.instance.handleIncoming(
+                callerUserId: callerId,
+                callId: callId,
+                callType: action.callType,
+              );
+            }
+            return; // V2 обработал — не идём в legacy
+          }
+
+          final msgRouter = MessageNotificationRouterV2();
+          final msgAction = msgRouter.route(transportEvent);
+
+          if (msgAction is OpenChatAction) {
+            final decision = NotificationRoutingDecisionV2(
+              category: NotificationCategoryV2.message,
+              chatId: msgAction.chatId,
+              messageId: msgAction.messageId,
+              rawPayload: transportEvent.payload,
+            );
+
+            final tapRouter = NotificationTapRouterV2();
+            final tapResult = tapRouter.handleTap(decision);
+
+            if (tapResult.action is OpenChatAction) {
+              final action = tapResult.action as OpenChatAction;
+              // Открыть чат через существующую навигацию
+              debugPrint('[PUSH_V2_TAP] OpenChatAction: chatId=${action.chatId}, messageId=${action.messageId}');
+            }
+            return; // V2 обработал — не идём в legacy
+          }
+        } catch (_) {
+          // ignore — fallback на legacy
+        }
+      }
+
+      // Legacy path (только если V2 выключен или не смог обработать)
+      if (!kUseCallV2) {
+        debugPrint(
+          '[FCM_TAP] PUSH hydrate callId=$callId, callerId=$callerId, callerName=$callerName',
+        );
+        CallService().hydrateIncomingCallFromPush(
+          callId: callId!,
+          callerId: callerId!,
+          callerName: callerName!,
+        );
+      }
     }
 
+    // Для call-типов при V2 не эмитим в стрим — V2 сам управляет навигацией
     await Future.delayed(const Duration(milliseconds: 50));
 
     final payload = {
@@ -1015,6 +1147,14 @@ class PushService {
       _pendingMessageTapData = payload;
       debugPrint(
         '[FCM_TAP] Stored pending message tap senderId=${payload['senderId']} senderName=${payload['senderName']}',
+      );
+      return;
+    }
+
+    if (type == 'call' && !_notificationTapStream.hasListener) {
+      _pendingCallTapData = Map<String, String?>.from(payload);
+      debugPrint(
+        '[FCM_TAP] Stored pending call tap callId=${payload['callId']} callerId=${payload['callerId']}',
       );
       return;
     }

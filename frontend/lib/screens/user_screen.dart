@@ -29,7 +29,6 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
   final _imagePicker = ImagePicker();
   final _audioRecorder = AudioRecorder();
   bool _isRecording = false;
-  String? _recordingPath;
   bool _isSendingText = false;
   int _lastMessageCount = 0;
   int? _highlightedMessageId;
@@ -178,7 +177,7 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
         await _sendFile(image.path, 'image', fileName: image.name);
       }
     } catch (e) {
-      _showError('?????? ?????? ????');
+      _showError('Ошибка выбора фото');
     }
   }
 
@@ -257,7 +256,6 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
 
       setState(() {
         _isRecording = true;
-        _recordingPath = path;
       });
     } catch (e) {
       _showError('Ошибка начала записи');
@@ -270,7 +268,6 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
       if (path != null) {
         setState(() {
           _isRecording = false;
-          _recordingPath = path;
         });
         await _sendFile(path, 'audio');
       }
@@ -420,7 +417,6 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
     } catch (_) {}
     setState(() {
       _isRecording = false;
-      _recordingPath = null;
     });
   }
 

@@ -41,7 +41,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _imagePicker = ImagePicker();
   final _audioRecorder = AudioRecorder();
   bool _isRecording = false;
-  String? _recordingPath;
   bool _isSending = false;
   bool _isSendingText = false;
   int _lastMessageCount = 0;
@@ -211,7 +210,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         await _sendFile(image.path, 'image', fileName: image.name);
       }
     } catch (e) {
-      _showError('?????? ?????? ????: $e');
+      _showError('Ошибка выбора фото: $e');
     }
   }
 
@@ -294,7 +293,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
       setState(() {
         _isRecording = true;
-        _recordingPath = path;
       });
     } catch (e) {
       _showError('Ошибка начала записи: $e');
@@ -307,7 +305,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (path != null) {
         setState(() {
           _isRecording = false;
-          _recordingPath = path;
         });
         await _sendFile(path, 'audio');
       }
@@ -323,7 +320,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     } catch (_) {}
     setState(() {
       _isRecording = false;
-      _recordingPath = null;
     });
   }
 

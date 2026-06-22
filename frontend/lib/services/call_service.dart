@@ -1,4 +1,4 @@
-п»їimport 'dart:async';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../app/app.dart';
@@ -7,6 +7,9 @@ import 'socket_service.dart';
 import 'call_logger.dart';
 import 'call_ringtone_service.dart';
 import 'push_service.dart';
+import '../config/api_config.dart';
+import '../call_v2/call_v2_service.dart';
+import '../call_v2/call_v2_mappers.dart';
 
 enum CallState {
   IDLE,
@@ -58,6 +61,14 @@ class CallService {
   final _minimizedController = StreamController<bool>.broadcast();
   Map<String, dynamic>? _pendingIncomingCall;
 
+  // V2: сохраняем параметры исходящего звонка до получения callId от backend
+  String? _pendingCalleeId;
+  String? _pendingCallType;
+
+  /// V2 guard: true после того, как V2 получил хотя бы один final event.
+  /// Предотвращает повторные V2 вызовы от повторных socket-событий.
+  bool _v2FinalEventSent = false;
+
   String? _lastEndReason;
   int? _lastCallEndTimestamp;
   int? _lastEndedCallId;
@@ -106,13 +117,13 @@ class CallService {
   }
 
   Future<void> _doInit() async {
-    _log('СЂСџвЂќВ§ init()');
+    _log('рџ”§ init()');
     await _requestPermissions();
     _socketService.setOnConnectCallback(_setupSocketListeners);
     _connectionSubscription ??=
         _socketService.onConnectionChanged.listen((connected) {
       if (!connected) {
-        _log('СЂСџвЂќРЊ socket disconnected');
+        _log('рџ”Ќ socket disconnected');
       }
     });
     if (_socketService.isConnected) {
@@ -152,14 +163,14 @@ class CallService {
         _state == CallState.IN_CALL) {
       _isMinimized = true;
       _minimizedController.add(true);
-      _log('СЂСџвЂњВ± minimizeCall()');
+      _log('рџ“± minimizeCall()');
     }
   }
 
   void expandCall() {
     _isMinimized = false;
     _minimizedController.add(false);
-    _log('СЂСџвЂњВ± expandCall()');
+    _log('рџ“± expandCall()');
   }
 
   void hydrateIncomingCallFromPush({
@@ -168,13 +179,13 @@ class CallService {
     required String callerName,
   }) {
     _log(
-      'СЂСџвЂњС› hydrateIncomingCallFromPush() РІР‚вЂќ callId=$callId callerId=$callerId callerName=$callerName',
+      'рџ“ћ hydrateIncomingCallFromPush() вЂ” callId=$callId callerId=$callerId callerName=$callerName',
     );
 
     final parsedCallId = int.tryParse(callId);
     final parsedCallerId = int.tryParse(callerId);
     if (parsedCallId == null || parsedCallerId == null) {
-      _log('РІС™В РїС‘РЏ hydrateIncomingCallFromPush() РІР‚вЂќ invalid payload');
+      _log('вљ пёЏ hydrateIncomingCallFromPush() вЂ” invalid payload');
       return;
     }
 
@@ -182,7 +193,7 @@ class CallService {
         _state == CallState.RINGING ||
         _state == CallState.ACCEPTING ||
         _state == CallState.IN_CALL) {
-      _log('РІС™В РїС‘РЏ hydrateIncomingCallFromPush() РІР‚вЂќ already in call, state=$_state');
+      _log('вљ пёЏ hydrateIncomingCallFromPush() вЂ” already in call, state=$_state');
       return;
     }
 
@@ -198,7 +209,7 @@ class CallService {
     _pendingIncomingCall = {
       'callId': _currentCallId,
       'callerId': _remoteUserId,
-      'callerName': _remoteUserName ?? 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ',
+      'callerName': _remoteUserName ?? 'Пользователь',
     };
   }
 
@@ -217,7 +228,7 @@ class CallService {
   void _setupSocketListeners() {
     final socket = _socketService.socket;
     if (socket == null) {
-      _log('СЂСџвЂќРЉ _setupSocketListeners() РІР‚вЂќ socket is null');
+      _log('рџ”Њ _setupSocketListeners() вЂ” socket is null');
       return;
     }
 
@@ -233,7 +244,7 @@ class CallService {
     }
 
     _socketService.onCallEvent('call:incoming', (data) {
-      _log('СЂСџвЂњР† call:incoming РІР‚вЂќ data=$data state=$_state');
+      _log('рџ“І call:incoming вЂ” data=$data state=$_state');
 
       if (_isCallScreenOpen &&
           (_state == CallState.IDLE || _state == CallState.ENDED)) {
@@ -247,15 +258,16 @@ class CallService {
           _state == CallState.RINGING ||
           _state == CallState.ACCEPTING ||
           _state == CallState.IN_CALL) {
-        _log('РІС™В РїС‘РЏ call:incoming ignored РІР‚вЂќ active state=$_state');
+        _log('вљ пёЏ call:incoming ignored вЂ” active state=$_state');
         return;
       }
 
       _resetTimer?.cancel();
       _hardReset();
+      _v2FinalEventSent = false;
       _currentCallId = data['callId'] as int?;
       _remoteUserId = data['callerId'] as int?;
-      _remoteUserName = data['callerName'] as String? ?? 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ';
+      _remoteUserName = data['callerName'] as String? ?? 'Пользователь';
       _lastEndReason = null;
       _lastCallEndTimestamp = null;
       _lastEndedCallId = null;
@@ -264,7 +276,7 @@ class CallService {
       final incomingData = {
         'callId': _currentCallId,
         'callerId': _remoteUserId,
-        'callerName': _remoteUserName ?? 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ',
+        'callerName': _remoteUserName ?? 'Пользователь',
       };
       _pendingIncomingCall = Map<String, dynamic>.from(incomingData);
       _incomingCallController.add(incomingData);
@@ -274,27 +286,48 @@ class CallService {
           'callId': _currentCallId,
         });
       }
+
+      if (kUseCallV2 && !_v2FinalEventSent) {
+        final event = CallV2Mappers.incomingFromSocket(data);
+        CallV2Service.instance.handleIncoming(
+          callerUserId: event.callerUserId,
+          callId: event.callId,
+          callType: event.callType,
+          callerName: event.callerName,
+        );
+      }
     });
 
     _socketService.onCallEvent('call:started', (data) {
-      _log('СЂСџвЂњР† call:started РІР‚вЂќ data=$data state=$_state');
+      _log('рџ“І call:started вЂ” data=$data state=$_state');
 
       if (_state != CallState.CALLING) {
-        _log('РІС™В РїС‘РЏ call:started ignored РІР‚вЂќ state=$_state');
+        _log('вљ пёЏ call:started ignored вЂ” state=$_state');
         return;
       }
 
       final startedCallId = data['callId'] as int?;
       if (startedCallId != null) {
         _currentCallId = startedCallId;
-        _log('РІСљвЂ¦ call:started applied РІР‚вЂќ callId=$_currentCallId');
+        _log('вњ… call:started applied вЂ” callId=$_currentCallId');
+      }
+
+      // V2: создаём outgoing session с реальным callId (теперь _currentCallId точно установлен)
+      if (kUseCallV2 && !_v2FinalEventSent && _currentCallId != null && _pendingCalleeId != null) {
+        CallV2Service.instance.handleStartOutgoing(
+          calleeId: int.tryParse(_pendingCalleeId!) ?? 0,
+          callType: _pendingCallType,
+          callId: _currentCallId,
+        );
+        _pendingCalleeId = null;
+        _pendingCallType = null;
       }
     });
 
     _socketService.onCallEvent('call:accepted', (data) async {
-      _log('СЂСџвЂњР† call:accepted РІР‚вЂќ data=$data state=$_state');
+      _log('рџ“І call:accepted вЂ” data=$data state=$_state');
       if (_state != CallState.CALLING) {
-        _log('РІС™В РїС‘РЏ call:accepted ignored РІР‚вЂќ state=$_state');
+        _log('вљ пёЏ call:accepted ignored вЂ” state=$_state');
         return;
       }
 
@@ -311,7 +344,7 @@ class CallService {
       try {
         await _startPeerConnection(isCaller: true);
       } catch (e) {
-        _log('СЂСџвЂќТ‘ call:accepted connect failed: $e');
+        _log('рџ”ґ call:accepted connect failed: $e');
         if (_currentCallId != null) {
           _socketService.sendCallEvent('call:end', {
             'callId': _currentCallId,
@@ -319,13 +352,20 @@ class CallService {
         }
         await _endCall(reason: 'connection_failed');
       }
+
+      if (kUseCallV2 && !_v2FinalEventSent) {
+        final acceptedCallId = data['callId'] as int?;
+        CallV2Service.instance.handleRemoteAccepted(
+          remoteCallId: acceptedCallId ?? _currentCallId ?? 0,
+        );
+      }
     });
 
     _socketService.onCallEvent('call:signal', (data) async {
-      _log('СЂСџвЂњРЋ call:signal РІР‚вЂќ type=${data['type']} state=$_state');
+      _log('рџ“Ў call:signal вЂ” type=${data['type']} state=$_state');
 
       if (data['callId'] != null && data['callId'] != _currentCallId) {
-        _log('СЂСџвЂњРЋ call:signal ignored for another callId=${data['callId']}');
+        _log('рџ“Ў call:signal ignored for another callId=${data['callId']}');
         return;
       }
 
@@ -339,7 +379,7 @@ class CallService {
 
         if (_peerConnection == null) {
           _pendingRemoteCandidates.add(candidate);
-          _log('СЂСџвЂњРЋ candidate queued РІР‚вЂќ peer not ready');
+          _log('рџ“Ў candidate queued вЂ” peer not ready');
           return;
         }
 
@@ -347,7 +387,7 @@ class CallService {
           await _peerConnection!.addCandidate(candidate);
         } catch (e) {
           _pendingRemoteCandidates.add(candidate);
-          _log('РІС™В РїС‘РЏ addCandidate failed, queued for retry: $e');
+          _log('вљ пёЏ addCandidate failed, queued for retry: $e');
         }
         return;
       }
@@ -369,13 +409,13 @@ class CallService {
           'sdp': answer.sdp,
         });
         _applyState(CallState.IN_CALL);
-        _log('РІСљвЂ¦ answer sent');
+        _log('вњ… answer sent');
         return;
       }
 
       if (type == 'answer') {
         if (_peerConnection == null) {
-          _log('РІС™В РїС‘РЏ answer received but peer connection is null');
+          _log('вљ пёЏ answer received but peer connection is null');
           return;
         }
 
@@ -384,53 +424,60 @@ class CallService {
         );
         await _flushPendingRemoteCandidates();
         _applyState(CallState.IN_CALL);
-        _log('РІСљвЂ¦ answer applied');
+        _log('вњ… answer applied');
         return;
       }
 
-      _log('РІС™В РїС‘РЏ call:signal unknown type=$type');
+      _log('вљ пёЏ call:signal unknown type=$type');
     });
 
     _socketService.onCallEvent('call:ended', (data) async {
-      _log('СЂСџвЂњР† call:ended РІР‚вЂќ data=$data state=$_state');
+      _log('рџ“І call:ended вЂ” data=$data state=$_state');
       await CallRingtoneService().stopAllCallSounds();
       try {
         await PushService().cancelIncomingCallNotification();
       } catch (e) {
-        _log('вљ пёЏ call:ended cleanup failed: $e');
+        _log('?? call:ended cleanup failed: $e');
       }
       if (_state == CallState.IDLE || _state == CallState.ENDED) {
         return;
       }
       final reason = data['reason'] as String?;
+      if (kUseCallV2 && !_v2FinalEventSent) {
+        CallV2Service.instance.handleRemoteEnded(reason: reason);
+      }
       await _endCall(reason: reason);
       if (reason == 'rejected') {
-        _showSnackbar('Р—РІРѕРЅРѕРє РѕС‚РєР»РѕРЅС‘РЅ');
+        _showSnackbar('Звонок отклонён');
       } else if (reason == 'expired') {
-        _showSnackbar('Р—РІРѕРЅРѕРє СѓР¶Рµ Р·Р°РІРµСЂС€С‘РЅ');
+        _showSnackbar('Звонок уже завершён');
       }
     });
 
     _socketService.onCallEvent('call:rejected', (data) async {
-      _log('СЂСџвЂњР† call:rejected РІР‚вЂќ data=$data state=$_state');
+      _log('рџ“І call:rejected вЂ” data=$data state=$_state');
       if (_state == CallState.CALLING ||
           _state == CallState.RINGING ||
           _state == CallState.ACCEPTING) {
         await CallRingtoneService().stopAllCallSounds();
+        if (kUseCallV2 && !_v2FinalEventSent) {
+          CallV2Service.instance.handleRemoteRejected(reason: 'rejected');
+        }
         await _endCall(reason: 'rejected');
       }
     });
 
-    _log('СЂСџвЂќРЉ _setupSocketListeners() РІР‚вЂќ listeners registered');
+    _log('рџ”Њ _setupSocketListeners() вЂ” listeners registered');
   }
 
   Future<void> startCall(int userId) async {
     await init();
-    _log('СЂСџвЂњС› startCall() РІР‚вЂќ userId=$userId state=$_state');
+    _log('рџ“ћ startCall() вЂ” userId=$userId state=$_state');
     _resetTimer?.cancel();
     _lastEndReason = null;
     _lastCallEndTimestamp = null;
     _lastEndedCallId = null;
+    _v2FinalEventSent = false;
 
     if (_state != CallState.IDLE) {
       _hardReset();
@@ -442,8 +489,8 @@ class CallService {
 
     final connected = await _socketService.waitUntilConnected();
     if (!connected) {
-      _log('РІС™В РїС‘РЏ startCall() РІР‚вЂќ socket not connected, aborting');
-      _showSnackbar('РџРѕРґРѕР¶РґРёС‚Рµ, РїРѕРґРєР»СЋС‡Р°РµРјСЃСЏ Рє СЃРµСЂРІРµСЂСѓ...');
+      _log('вљ пёЏ startCall() вЂ” socket not connected, aborting');
+      _showSnackbar('Подождите, подключаемся к серверу...');
       return;
     }
 
@@ -453,14 +500,20 @@ class CallService {
       'calleeId': userId,
     });
     await CallRingtoneService().playOutgoingRingbackTone();
+
+    // V2: сохраняем calleeId для использования после получения callId из call:started
+    if (kUseCallV2 && !_v2FinalEventSent) {
+      _pendingCalleeId = userId.toString();
+      _pendingCallType = null;
+    }
   }
 
   Future<void> acceptCall() async {
     await init();
-    _log('РІСљвЂ¦ acceptCall() РІР‚вЂќ callId=$_currentCallId state=$_state');
+    _log('вњ… acceptCall() вЂ” callId=$_currentCallId state=$_state');
 
     if (_isAcceptingCall) {
-      _log('РІС™В РїС‘РЏ acceptCall() РІР‚вЂќ already accepting');
+      _log('вљ пёЏ acceptCall() вЂ” already accepting');
       return;
     }
 
@@ -471,14 +524,14 @@ class CallService {
 
       final callId = _currentCallId;
       if (callId == null) {
-        _log('РІС™В РїС‘РЏ acceptCall() РІР‚вЂќ callId is null');
+        _log('вљ пёЏ acceptCall() вЂ” callId is null');
         return;
       }
 
       final connected = await _socketService.waitUntilConnected();
       if (!connected) {
-        _log('РІС™В РїС‘РЏ acceptCall() РІР‚вЂќ socket not connected, aborting');
-        _showSnackbar('РџРѕРґРѕР¶РґРёС‚Рµ, РїРѕРґРєР»СЋС‡Р°РµРјСЃСЏ Рє СЃРµСЂРІРµСЂСѓ...');
+        _log('вљ пёЏ acceptCall() вЂ” socket not connected, aborting');
+        _showSnackbar('Подождите, подключаемся к серверу...');
         return;
       }
 
@@ -490,12 +543,15 @@ class CallService {
       try {
         await _startPeerConnection(isCaller: false);
       } catch (e) {
-        _log('СЂСџвЂќТ‘ acceptCall() connect failed: $e');
+        _log('рџ”ґ acceptCall() connect failed: $e');
         _socketService.sendCallEvent('call:end', {
           'callId': callId,
         });
         await _endCall(reason: 'connection_failed');
         rethrow;
+      }
+      if (kUseCallV2 && !_v2FinalEventSent) {
+        CallV2Service.instance.handleAccept();
       }
     } finally {
       _isAcceptingCall = false;
@@ -503,20 +559,23 @@ class CallService {
   }
 
   Future<void> rejectCall() async {
-    _log('РІСњРЉ rejectCall() РІР‚вЂќ callId=$_currentCallId state=$_state');
+    _log('вќЊ rejectCall() вЂ” callId=$_currentCallId state=$_state');
     await CallRingtoneService().stopAllCallSounds();
     _socketService.sendCallEvent('call:reject', {
       'callId': _currentCallId,
     });
+    if (kUseCallV2 && !_v2FinalEventSent) {
+      CallV2Service.instance.handleReject(reason: 'rejected');
+    }
     await _endCall(reason: 'rejected');
   }
 
   Future<void> endCall() async {
-    _log('СЂСџвЂќТ‘ endCall() РІР‚вЂќ callId=$_currentCallId state=$_state');
+    _log('рџ”ґ endCall() вЂ” callId=$_currentCallId state=$_state');
     if (_currentCallId == null && _state == CallState.CALLING) {
-      _log('РІС™В РїС‘РЏ endCall() РІР‚вЂќ waiting briefly for call:started');
+      _log('вљ пёЏ endCall() вЂ” waiting briefly for call:started');
       await Future.delayed(const Duration(milliseconds: 400));
-      _log('РІС™В РїС‘РЏ endCall() РІР‚вЂќ after wait callId=$_currentCallId state=$_state');
+      _log('вљ пёЏ endCall() вЂ” after wait callId=$_currentCallId state=$_state');
     }
 
     if (_currentCallId != null) {
@@ -524,12 +583,16 @@ class CallService {
         'callId': _currentCallId,
       });
     }
+    if (kUseCallV2) {
+      CallV2Service.instance.handleLocalEnd();
+    }
+    _v2FinalEventSent = true;
     await _endCall(reason: 'ended_by_caller');
   }
 
   Future<void> _startPeerConnection({required bool isCaller}) async {
     if (_peerConnection != null) {
-      _log('СЂСџвЂќВ§ _startPeerConnection() РІР‚вЂќ reusing existing peer');
+      _log('рџ”§ _startPeerConnection() вЂ” reusing existing peer');
       return;
     }
 
@@ -545,7 +608,7 @@ class CallService {
           await navigator.mediaDevices.getUserMedia(mediaConstraints);
       _localStreamController.add(_localStream);
     } catch (e) {
-      _log('РІСњРЉ getUserMedia failed: $e');
+      _log('вќЊ getUserMedia failed: $e');
       rethrow;
     }
 
@@ -559,7 +622,7 @@ class CallService {
         'sdpSemantics': 'unified-plan',
       });
     } catch (e) {
-      _log('РІСњРЉ createPeerConnection failed: $e');
+      _log('вќЊ createPeerConnection failed: $e');
       rethrow;
     }
 
@@ -586,7 +649,7 @@ class CallService {
 
       _remoteStream = stream;
       _log(
-        'РІСљвЂ¦ remote stream received '
+        'вњ… remote stream received '
         '(trackKind=${event.track.kind}, videoTracks=$videoTracks, audioTracks=$audioTracks)',
       );
       _remoteStreamController.add(stream);
@@ -597,16 +660,19 @@ class CallService {
       final audioTracks = stream.getAudioTracks().length;
       _remoteStream = stream;
       _log(
-        'вњ… remote stream received via onAddStream '
+        '? remote stream received via onAddStream '
         '(videoTracks=$videoTracks, audioTracks=$audioTracks)',
       );
       _remoteStreamController.add(stream);
     };
 
     _peerConnection!.onConnectionState = (state) {
-      _log('СЂСџвЂќвЂ” PeerConnection state=$state');
+      _log('рџ”— PeerConnection state=$state');
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         _cancelPeerDisconnectTimer();
+        if (kUseCallV2 && !_v2FinalEventSent) {
+          CallV2Service.instance.handleMediaConnected();
+        }
       } else if (state ==
           RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
         _schedulePeerDisconnect('peer_connection');
@@ -614,21 +680,30 @@ class CallService {
               RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
         _cancelPeerDisconnectTimer();
+        if (kUseCallV2 && !_v2FinalEventSent) {
+          CallV2Service.instance.handleMediaFailed(error: 'peer_connection_$state');
+        }
         unawaited(_endCall(reason: 'peer_disconnected'));
       }
     };
 
     _peerConnection!.onIceConnectionState = (state) {
-      _log('СЂСџВ§Р‰ ICE state=$state');
+      _log('рџ§Љ ICE state=$state');
       if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
           state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
         _cancelPeerDisconnectTimer();
+        if (kUseCallV2 && !_v2FinalEventSent) {
+          CallV2Service.instance.handleMediaConnected();
+        }
       } else if (state ==
           RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
         _schedulePeerDisconnect('ice');
       } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
           state == RTCIceConnectionState.RTCIceConnectionStateClosed) {
         _cancelPeerDisconnectTimer();
+        if (kUseCallV2 && !_v2FinalEventSent) {
+          CallV2Service.instance.handleMediaFailed(error: 'ice_$state');
+        }
         unawaited(_endCall(reason: 'peer_disconnected'));
       }
     };
@@ -640,7 +715,7 @@ class CallService {
         'type': 'offer',
         'sdp': offer.sdp,
       });
-      _log('РІСљвЂ¦ offer sent');
+      _log('вњ… offer sent');
     }
   }
 
@@ -653,11 +728,11 @@ class CallService {
       final servers = await _apiService.getIceConfig();
       if (servers.isNotEmpty) {
         _cachedIceServers = servers;
-        _log('рџЊђ ICE config loaded from backend: ${servers.length} server blocks');
+        _log('?? ICE config loaded from backend: ${servers.length} server blocks');
         return servers;
       }
     } catch (e) {
-      _log('вљ пёЏ ICE config load failed, using fallback STUN: $e');
+      _log('?? ICE config load failed, using fallback STUN: $e');
     }
 
     _cachedIceServers = const [
@@ -681,7 +756,7 @@ class CallService {
       try {
         await _peerConnection!.addCandidate(candidate);
       } catch (e) {
-        _log('РІС™В РїС‘РЏ queued candidate still failed: $e');
+        _log('вљ пёЏ queued candidate still failed: $e');
       }
     }
   }
@@ -689,7 +764,7 @@ class CallService {
   void toggleCamera() {
     _isFrontCamera = !_isFrontCamera;
     for (final track in _localStream?.getVideoTracks() ?? const <MediaStreamTrack>[]) {
-      track.switchCamera();
+      Helper.switchCamera(track);
     }
   }
 
@@ -714,6 +789,10 @@ class CallService {
         _state == CallState.IN_CALL) {
       unawaited(_endCall(reason: 'peer_disconnected'));
     }
+
+    if (kUseCallV2 && !_v2FinalEventSent) {
+      CallV2Service.instance.handleSocketLost(error: 'connection_lost');
+    }
   }
 
   void _cancelPeerDisconnectTimer() {
@@ -730,30 +809,31 @@ class CallService {
     }
 
     if (_peerDisconnectTimer != null) {
-      _log('рџ§Ї $source disconnected вЂ” timer already scheduled');
+      _log('?? $source disconnected — timer already scheduled');
       return;
     }
 
-    _log('рџ§Ї $source disconnected вЂ” scheduling delayed end');
+    _log('?? $source disconnected — scheduling delayed end');
     _peerDisconnectTimer = Timer(const Duration(seconds: 3), () {
       _peerDisconnectTimer = null;
-      _log('рџ§Ї $source disconnect timeout reached вЂ” ending call');
+      _log('?? $source disconnect timeout reached — ending call');
       unawaited(_endCall(reason: 'peer_disconnected'));
     });
   }
 
   Future<void> _endCall({String? reason}) async {
     if (_state == CallState.ENDED || _state == CallState.IDLE) {
-      _log('СЂСџвЂќТ‘ _endCall() skipped РІР‚вЂќ state=$_state');
+      _log('рџ”ґ _endCall() skipped вЂ” state=$_state');
       return;
     }
     if (_isEndingCall) {
-      _log('СЂСџвЂќТ‘ _endCall() skipped РІР‚вЂќ end already in progress');
+      _log('рџ”ґ _endCall() skipped вЂ” end already in progress');
       return;
     }
 
     _isEndingCall = true;
-    _log('СЂСџвЂќТ‘ _endCall() РІР‚вЂќ reason=$reason state=$_state');
+    _v2FinalEventSent = true;
+    _log('рџ”ґ _endCall() вЂ” reason=$reason state=$_state');
 
     _lastEndReason = reason;
     _lastCallEndTimestamp = DateTime.now().millisecondsSinceEpoch;
@@ -780,13 +860,13 @@ class CallService {
     try {
       await CallRingtoneService().stopAllCallSounds();
     } catch (e) {
-      _log('РІС™В РїС‘РЏ stopAllCallSounds cleanup failed: $e');
+      _log('вљ пёЏ stopAllCallSounds cleanup failed: $e');
     }
 
     try {
       await PushService().cancelIncomingCallNotification();
     } catch (e) {
-      _log('РІС™В РїС‘РЏ cancelIncomingCallNotification cleanup failed: $e');
+      _log('вљ пёЏ cancelIncomingCallNotification cleanup failed: $e');
     }
 
     _disposePeerResources();
@@ -794,7 +874,7 @@ class CallService {
     try {
       await _callLogger.close();
     } catch (e) {
-      _log('РІС™В РїС‘РЏ call logger close failed: $e');
+      _log('вљ пёЏ call logger close failed: $e');
     }
   }
 
@@ -806,7 +886,7 @@ class CallService {
       _peerConnection?.onIceConnectionState = null;
       _peerConnection?.close();
     } catch (e) {
-      _log('РІС™В РїС‘РЏ peer cleanup failed: $e');
+      _log('вљ пёЏ peer cleanup failed: $e');
     }
 
     try {
@@ -814,7 +894,7 @@ class CallService {
         track.stop();
       }
     } catch (e) {
-      _log('РІС™В РїС‘РЏ local stream cleanup failed: $e');
+      _log('вљ пёЏ local stream cleanup failed: $e');
     }
 
     _peerConnection = null;
@@ -824,12 +904,18 @@ class CallService {
   }
 
   void _hardReset() {
-    _log('СЂСџвЂќвЂћ _hardReset()');
+    _log('рџ”„ _hardReset()');
     _resetTimer?.cancel();
     _resetTimer = null;
     _cancelPeerDisconnectTimer();
     _disposePeerResources();
     unawaited(CallRingtoneService().stopAllCallSounds());
+
+    _v2FinalEventSent = true;
+
+    if (kUseCallV2) {
+      CallV2Service.instance.reset();
+    }
 
     _currentCallId = null;
     _remoteUserId = null;
@@ -844,6 +930,8 @@ class CallService {
     _isEndingCall = false;
     _lastEndReason = null;
     _pendingIncomingCall = null;
+    _pendingCalleeId = null;
+    _pendingCallType = null;
 
     _localStreamController.add(null);
     _remoteStreamController.add(null);

@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -14,6 +14,7 @@ import '../services/call_service.dart';
 import '../services/push_service.dart';
 import '../services/chat_navigation_service.dart';
 import '../services/app_permissions_service.dart';
+import '../config/api_config.dart';
 import '../screens/call_screen.dart';
 import '../screens/login_screen.dart';
 import '../screens/admin_screen.dart';
@@ -22,8 +23,10 @@ import '../screens/notifications_screen.dart';
 import '../screens/chat_screen.dart';
 import '../widgets/active_call_overlay.dart';
 import '../widgets/incoming_call_dialog.dart';
+import '../call_v2/call_v2_service.dart';
+import '../call_v2/call_ui_intent.dart';
 
-/// Р“Р»РѕР±Р°Р»СЊРЅС‹Р№ РєР»СЋС‡ РЅР°РІРёРіР°С‚РѕСЂР° РґР»СЏ РґРѕСЃС‚СѓРїР° РёР· CallService
+/// Глобальный ключ навигатора для доступа из CallService
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 final CallRouteObserver callRouteObserver = CallRouteObserver();
 
@@ -60,23 +63,23 @@ class CallRouteObserver extends NavigatorObserver {
   }
 }
 
-/// РћС‚РєСЂС‹РІР°РµС‚ CallScreen РёР· mini-call overlay РїСЂРё С‚Р°РїРµ.
+/// Открывает CallScreen из mini-call overlay при тапе.
 ///
-/// Р’С‹РЅРµСЃРµРЅР° РІ РіР»РѕР±Р°Р»СЊРЅСѓСЋ РѕР±Р»Р°СЃС‚СЊ, С‡С‚РѕР±С‹ Р±С‹С‚СЊ РґРѕСЃС‚СѓРїРЅРѕР№ РёР· MaterialApp.builder
-/// (РєРѕС‚РѕСЂС‹Р№ РЅР°С…РѕРґРёС‚СЃСЏ РІ NApp, Р° РЅРµ РІ _AppShellState).
+/// Вынесена в глобальную область, чтобы быть доступной из MaterialApp.builder
+/// (который находится в NApp, а не в _AppShellState).
 void openCallScreenFromOverlay() {
   final callService = CallService();
   final currentRoute = callRouteObserver.currentRouteName;
 
   if (currentRoute == 'call_screen') {
-    debugPrint('[APP] ⚠️ openCallScreenFromOverlay — top route already call_screen');
+    debugPrint('[APP] ?? openCallScreenFromOverlay � top route already call_screen');
     return;
   }
 
   if (callService.isCallScreenOpen &&
       callService.state != CallState.IDLE &&
       callService.state != CallState.ENDED) {
-    debugPrint('[APP] вљ пёЏ openCallScreenFromOverlay вЂ” call screen already open вЂ” ignoring');
+    debugPrint('[APP] ⚠️ openCallScreenFromOverlay — call screen already open — ignoring');
     return;
   }
 
@@ -84,20 +87,20 @@ void openCallScreenFromOverlay() {
   final remoteUserName = callService.remoteUserName;
 
   if (remoteUserId == null) {
-    debugPrint('[APP] вљ пёЏ openCallScreenFromOverlay вЂ” remoteUserId is null, cannot open CallScreen');
+    debugPrint('[APP] ⚠️ openCallScreenFromOverlay — remoteUserId is null, cannot open CallScreen');
     return;
   }
 
-  debugPrint('[APP] вњ… openCallScreenFromOverlay вЂ” opening CallScreen from overlay');
+  debugPrint('[APP] ✅ openCallScreenFromOverlay — opening CallScreen from overlay');
   callService.markCallScreenOpen();
-  debugPrint('[APP] вњ… openCallScreenFromOverlay вЂ” opening CallScreen (userId=$remoteUserId, from=overlay)');
+  debugPrint('[APP] ✅ openCallScreenFromOverlay — opening CallScreen (userId=$remoteUserId, from=overlay)');
   Navigator.push(
     navigatorKey.currentContext!,
     MaterialPageRoute(
       settings: const RouteSettings(name: 'call_screen'),
       builder: (context) => CallScreen(
         userId: remoteUserId,
-        userName: remoteUserName ?? 'Пользователь',
+        userName: remoteUserName ?? '������������',
         isIncoming: false,
         from: 'overlay',
       ),
@@ -113,17 +116,17 @@ void _openCallScreenGlobal({
 }) {
   final context = navigatorKey.currentContext;
   if (context == null || !context.mounted) {
-    debugPrint('[APP] вљ пёЏ _openCallScreenGlobal вЂ” navigator context unavailable');
+    debugPrint('[APP] ⚠️ _openCallScreenGlobal — navigator context unavailable');
     return;
   }
 
   final callService = CallService();
   if (callRouteObserver.currentRouteName == 'call_screen') {
-    debugPrint('[APP] ⚠️ _openCallScreenGlobal — top route already call_screen');
+    debugPrint('[APP] ?? _openCallScreenGlobal � top route already call_screen');
     return;
   }
   callService.markCallScreenOpen();
-  debugPrint('[APP] вњ… _openCallScreenGlobal вЂ” opening CallScreen (userId=$userId, from=$from)');
+  debugPrint('[APP] ✅ _openCallScreenGlobal — opening CallScreen (userId=$userId, from=$from)');
   Navigator.push(
     context,
     MaterialPageRoute(
@@ -148,8 +151,8 @@ void showIncomingCallDialogFromService({
   final context = navigatorKey.currentContext;
   final currentRoute = callRouteObserver.currentRouteName ?? 'null';
 
-  debugPrint('[APP] GLOBAL showIncomingCallDialog begin вЂ” callerId=$callerId, callerName=$callerName, callId=$callId, source=$source');
-  debugPrint('[APP] GLOBAL showIncomingCallDialog вЂ” state=${callService.state}, isCallScreenOpen=${callService.isCallScreenOpen}, isIncomingDialogOpen=${callService.isIncomingDialogOpen}, isMinimized=${callService.isMinimized}, currentCallId=${callService.currentCallId}, route=$currentRoute');
+  debugPrint('[APP] GLOBAL showIncomingCallDialog begin — callerId=$callerId, callerName=$callerName, callId=$callId, source=$source');
+  debugPrint('[APP] GLOBAL showIncomingCallDialog — state=${callService.state}, isCallScreenOpen=${callService.isCallScreenOpen}, isIncomingDialogOpen=${callService.isIncomingDialogOpen}, isMinimized=${callService.isMinimized}, currentCallId=${callService.currentCallId}, route=$currentRoute');
 
   if (callService.isIncomingDialogOpen) {
     if (currentRoute != 'incoming_call_dialog') {
@@ -173,7 +176,7 @@ void showIncomingCallDialogFromService({
   }
 
   if (context == null) {
-    debugPrint('[APP] вљ пёЏ GLOBAL showIncomingCallDialog вЂ” navigator context is null');
+    debugPrint('[APP] ⚠️ GLOBAL showIncomingCallDialog — navigator context is null');
     if (source == 'pending_service' || source == 'state_fallback' || source == 'service') {
       callService.restorePendingIncomingCall({
         'callerId': callerId,
@@ -184,7 +187,7 @@ void showIncomingCallDialogFromService({
     return;
   }
   if (!context.mounted) {
-    debugPrint('[APP] вљ пёЏ GLOBAL showIncomingCallDialog вЂ” navigator context is not mounted');
+    debugPrint('[APP] ⚠️ GLOBAL showIncomingCallDialog — navigator context is not mounted');
     if (source == 'pending_service' || source == 'state_fallback' || source == 'service') {
       callService.restorePendingIncomingCall({
         'callerId': callerId,
@@ -203,13 +206,13 @@ void showIncomingCallDialogFromService({
     final pushRoute = callRouteObserver.currentRouteName ?? 'null';
 
     if (pushContext == null || !pushContext.mounted) {
-      debugPrint('[APP] ⚠️ GLOBAL showIncomingCallDialog aborted — navigator context unavailable in post-frame');
+      debugPrint('[APP] ?? GLOBAL showIncomingCallDialog aborted � navigator context unavailable in post-frame');
       callService.markIncomingDialogClosed();
       return;
     }
 
     if (pushRoute == 'incoming_call_dialog') {
-      debugPrint('[APP] GLOBAL showIncomingCallDialog skipped in post-frame — dialog already on top');
+      debugPrint('[APP] GLOBAL showIncomingCallDialog skipped in post-frame � dialog already on top');
       callService.markIncomingDialogOpen();
       return;
     }
@@ -231,13 +234,13 @@ void showIncomingCallDialogFromService({
       callService.markIncomingDialogClosed();
 
       if (result == true) {
-        debugPrint('[APP] вњ… GLOBAL incoming dialog accepted вЂ” calling acceptCall()');
+        debugPrint('[APP] ✅ GLOBAL incoming dialog accepted — calling acceptCall()');
         try {
           await callService.acceptCall();
 
           if (callService.state != CallState.ACCEPTING &&
               callService.state != CallState.IN_CALL) {
-            debugPrint('[APP] вљ пёЏ GLOBAL acceptCall completed but state=${callService.state} вЂ” NOT opening CallScreen');
+            debugPrint('[APP] ⚠️ GLOBAL acceptCall completed but state=${callService.state} — NOT opening CallScreen');
             return;
           }
 
@@ -248,16 +251,16 @@ void showIncomingCallDialogFromService({
             from: source,
           );
         } catch (e) {
-          debugPrint('[APP] рџ”ґ GLOBAL acceptCall failed: $e вЂ” NOT opening CallScreen');
+          debugPrint('[APP] 🔴 GLOBAL acceptCall failed: $e — NOT opening CallScreen');
         }
         return;
       }
 
       if (result == false && callService.state == CallState.RINGING) {
-        debugPrint('[APP] вќЊ GLOBAL incoming dialog rejected вЂ” calling rejectCall()');
+        debugPrint('[APP] ❌ GLOBAL incoming dialog rejected — calling rejectCall()');
         await callService.rejectCall();
       } else {
-        debugPrint('[APP] вЏ­пёЏ GLOBAL incoming dialog dismissed/closed unexpectedly вЂ” result=$result state=${callService.state}, skipping rejectCall');
+        debugPrint('[APP] ⏭️ GLOBAL incoming dialog dismissed/closed unexpectedly — result=$result state=${callService.state}, skipping rejectCall');
       }
     });
   });
@@ -305,12 +308,12 @@ class NApp extends StatelessWidget {
   }
 }
 
-/// РљРѕСЂРЅРµРІР°СЏ РѕР±С‘СЂС‚РєР°: immersive mode + РјРѕРЅРёС‚РѕСЂРёРЅРі СЃРµС‚Рё + push-РЅР°РІРёРіР°С†РёСЏ.
+/// Корневая обёртка: immersive mode + мониторинг сети + push-навигация.
 ///
-/// Р’РђР–РќРћ: _AppShell РќР• РґРµР»Р°РµС‚ pushReplacementNamed РїРѕСЃР»Рµ Р»РѕРіРёРЅР°.
-/// Р’РјРµСЃС‚Рѕ СЌС‚РѕРіРѕ РѕРЅ СЂРµРЅРґРµСЂРёС‚ РЅСѓР¶РЅС‹Р№ СЌРєСЂР°РЅ РїСЂСЏРјРѕ РІ build().
-/// Р­С‚Рѕ РіР°СЂР°РЅС‚РёСЂСѓРµС‚, С‡С‚Рѕ _AppShell РІСЃРµРіРґР° РѕСЃС‚Р°С‘С‚СЃСЏ РєРѕСЂРЅРµРІС‹Рј РєРѕРЅС‚РµР№РЅРµСЂРѕРј
-/// РґР»СЏ ActiveCallOverlay, _listenIncomingCalls() Рё _listenPushNotificationTaps().
+/// ВАЖНО: _AppShell НЕ делает pushReplacementNamed после логина.
+/// Вместо этого он рендерит нужный экран прямо в build().
+/// Это гарантирует, что _AppShell всегда остаётся корневым контейнером
+/// для ActiveCallOverlay, _listenIncomingCalls() и _listenPushNotificationTaps().
 class _AppShell extends StatefulWidget {
   const _AppShell();
 
@@ -326,8 +329,11 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   int? _pendingMessageChatUserId;
   String? _pendingMessageChatUserName;
 
-  // РҐСЂР°РЅРёРј, РєР°РєРѕР№ СЌРєСЂР°РЅ РїРѕРєР°Р·С‹РІР°С‚СЊ (СЂРµРЅРґРµСЂРёС‚СЃСЏ РІ build, Р° РЅРµ С‡РµСЂРµР· pushReplacement)
+  // Храним, какой экран показывать (рендерится в build, а не через pushReplacement)
   Widget? _currentScreen;
+
+  // V2
+  StreamSubscription<CallUiIntentV2>? _v2IntentSubscription;
 
   @override
   void initState() {
@@ -340,7 +346,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       debugPrint('[APP_SHELL] Calling _checkAuth()');
       return _checkAuth();
     }).catchError((e) {
-      debugPrint('[APP_SHELL] вќЊ init/auth bootstrap failed: $e');
+      debugPrint('[APP_SHELL] ❌ init/auth bootstrap failed: $e');
       if (mounted) {
         setState(() {
           _currentScreen = const LoginScreen();
@@ -354,9 +360,11 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     debugPrint('[APP_SHELL] Calling _listenPushNotificationTaps()');
     _listenPushNotificationTaps();
     debugPrint('[APP_SHELL] Calling _requestInitialPermissions() (unawaited)');
-    _requestInitialPermissions(); // РўР— 2: Р·Р°РїСЂРѕСЃ СЂР°Р·СЂРµС€РµРЅРёР№ РїСЂРё СЃС‚Р°СЂС‚Рµ
+    _requestInitialPermissions(); // ТЗ 2: запрос разрешений при старте
     debugPrint('[APP_SHELL] Calling _listenCallState()');
     _listenCallState();
+    debugPrint('[APP_SHELL] Calling _setupV2CallListener()');
+    _setupV2CallListener();
     debugPrint('[APP_SHELL] ===== _AppShell.initState() END ====');
   }
 
@@ -374,20 +382,20 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     _authProvider?.addListener(_handleAuthStateChanged);
   }
 
-  /// РРЅРёС†РёР°Р»РёР·РёСЂСѓРµС‚ РіР»РѕР±Р°Р»СЊРЅС‹Рµ СЃРµСЂРІРёСЃС‹ (CallService).
+  /// Инициализирует глобальные сервисы (CallService).
   Future<void> _initServices() async {
-    debugPrint('[APP_SHELL] _initServices() вЂ” BEGIN');
+    debugPrint('[APP_SHELL] _initServices() — BEGIN');
     try {
       await CallService().init();
-      debugPrint('[APP_SHELL] _initServices() вЂ” CallService.init() OK');
+      debugPrint('[APP_SHELL] _initServices() — CallService.init() OK');
     } catch (e, stack) {
-      debugPrint('[APP_SHELL] рџ”ґ CRASH in _initServices (CallService.init): $e');
-      debugPrint('[APP_SHELL] рџ”ґ StackTrace: $stack');
+      debugPrint('[APP_SHELL] 🔴 CRASH in _initServices (CallService.init): $e');
+      debugPrint('[APP_SHELL] 🔴 StackTrace: $stack');
     }
-    debugPrint('[APP_SHELL] _initServices() вЂ” END');
+    debugPrint('[APP_SHELL] _initServices() — END');
   }
 
-  /// РўР— 2: Р—Р°РїСЂРѕСЃ СЂР°Р·СЂРµС€РµРЅРёР№ РїСЂРё СЃС‚Р°СЂС‚Рµ РїСЂРёР»РѕР¶РµРЅРёСЏ.
+  /// ТЗ 2: Запрос разрешений при старте приложения.
   void _requestInitialPermissions() {
     unawaited(AppPermissionsService().requestInitialPermissions());
   }
@@ -399,6 +407,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     _incomingCallSubscription?.cancel();
     _pushTapSubscription?.cancel();
     _callStateSubscription?.cancel();
+    _v2IntentSubscription?.cancel();
     super.dispose();
   }
 
@@ -421,6 +430,15 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     });
 
     _flushPendingMessageNavigation();
+
+    // V2: инициализация после успешного auth (replay pending startup event)
+    if (kUseCallV2 && auth.isAuthenticated) {
+      final userId = auth.currentUser?.id?.toString();
+      if (userId != null && userId.isNotEmpty) {
+        CallV2Service.instance.init(localUserId: userId);
+        debugPrint('[APP_SHELL] _handleAuthStateChanged — CallV2Service.init() OK (userId=$userId)');
+      }
+    }
 
     debugPrint(
       '[APP_SHELL] auth state changed -> currentScreen=${nextScreen.runtimeType} '
@@ -523,8 +541,8 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     }
   }
 
-  /// РўР— 1: РћР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РїСЂРёРЅСѓРґРёС‚РµР»СЊРЅРѕРµ Р·Р°РІРµСЂС€РµРЅРёРµ РїСЂРёР»РѕР¶РµРЅРёСЏ (swipe to kill / РІС‹РіСЂСѓР·РєР° РёР· РїР°РјСЏС‚Рё).
-  /// Р—Р°РІРµСЂС€Р°РµС‚ Р°РєС‚РёРІРЅС‹Р№ Р·РІРѕРЅРѕРє, РµСЃР»Рё РѕРЅ РµСЃС‚СЊ.
+  /// ТЗ 1: Обрабатывает принудительное завершение приложения (swipe to kill / выгрузка из памяти).
+  /// Завершает активный звонок, если он есть.
   void _handleAppKilled() {
     final callService = CallService();
     if (callService.currentCallId != null) {
@@ -532,14 +550,14 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       if (callState == CallState.CALLING ||
           callState == CallState.RINGING ||
           callState == CallState.IN_CALL) {
-        // РСЃРїРѕР»СЊР·СѓРµРј hardReset() РІРјРµСЃС‚Рѕ endCall(), С‚.Рє. РїСЂРё detached socket
-        // socket РјРѕР¶РµС‚ Р±С‹С‚СЊ СѓР¶Рµ Р·Р°РєСЂС‹С‚, Рё endCall() РїРѕРїС‹С‚Р°РµС‚СЃСЏ РѕС‚РїСЂР°РІРёС‚СЊ СЃРѕР±С‹С‚РёРµ
+        // Используем hardReset() вместо endCall(), т.к. при detached socket
+        // socket может быть уже закрыт, и endCall() попытается отправить событие
         callService.hardReset();
       }
     }
   }
 
-  /// РЎРєСЂС‹РІР°РµС‚ СЃРёСЃС‚РµРјРЅС‹Рµ РєРЅРѕРїРєРё РЅР°РІРёРіР°С†РёРё (Immersive Mode)
+  /// Скрывает системные кнопки навигации (Immersive Mode)
   void _enableStandardSystemUi() {
     SystemChrome.setEnabledSystemUIMode(
       SystemUiMode.manual,
@@ -558,14 +576,14 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   StreamSubscription<Map<String, dynamic>>? _incomingCallSubscription;
   StreamSubscription<CallState>? _callStateSubscription;
 
-  /// РЎР»СѓС€Р°РµС‚ СЃРѕСЃС‚РѕСЏРЅРёРµ Р·РІРѕРЅРєР° РґР»СЏ Р°РІС‚РѕР·Р°РєСЂС‹С‚РёСЏ IncomingCallDialog РїСЂРё Р·Р°РІРµСЂС€РµРЅРёРё.
+  /// Слушает состояние звонка для автозакрытия IncomingCallDialog при завершении.
   void _listenCallState() {
     final callService = CallService();
     _callStateSubscription = callService.stateStream.listen((state) {
       if (!mounted) return;
       if (state == CallState.RINGING) {
         if (callService.isIncomingDialogOpen || callService.isCallScreenOpen) {
-          debugPrint('[APP] _listenCallState вЂ” state=RINGING, UI already open вЂ” skipping fallback');
+          debugPrint('[APP] _listenCallState — state=RINGING, UI already open — skipping fallback');
           return;
         }
 
@@ -574,12 +592,12 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         final callId = callService.currentCallId ?? 0;
 
         if (callerId == null) {
-          debugPrint('[APP] _listenCallState вЂ” state=RINGING but remoteUserId is null');
+          debugPrint('[APP] _listenCallState — state=RINGING but remoteUserId is null');
           return;
         }
 
         debugPrint(
-          '[APP] _listenCallState вЂ” state=RINGING fallback -> show dialog '
+          '[APP] _listenCallState — state=RINGING fallback -> show dialog '
           '(callerId=$callerId, callerName=$callerName, callId=$callId)',
         );
 
@@ -587,7 +605,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
           if (!mounted) return;
           showIncomingCallDialogFromService(
             callerId: callerId,
-            callerName: callerName ?? 'Входящий звонок',
+            callerName: callerName ?? '�������� ������',
             callId: callId,
             source: 'state_fallback',
           );
@@ -596,12 +614,12 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       }
 
       if (state == CallState.ENDED || state == CallState.IDLE) {
-        // Guard: РµСЃР»Рё РґРёР°Р»РѕРі СѓР¶Рµ Р·Р°РєСЂС‹С‚ вЂ” РЅРµ РґРµР»Р°РµРј pop()
+        // Guard: если диалог уже закрыт — не делаем pop()
         if (!callService.isIncomingDialogOpen) {
-          debugPrint('[APP] рџ“ћ _listenCallState вЂ” state=$state, dialog already closed вЂ” skipping pop');
+          debugPrint('[APP] 📞 _listenCallState — state=$state, dialog already closed — skipping pop');
           return;
         }
-        debugPrint('[APP] рџ“ћ _listenCallState вЂ” state=$state, dialog open вЂ” closing via pop');
+        debugPrint('[APP] 📞 _listenCallState — state=$state, dialog open — closing via pop');
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           if (navigatorKey.currentContext == null) return;
@@ -609,7 +627,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
           final routeName = callRouteObserver.currentRouteName;
           if (routeName != 'incoming_call_dialog') {
-            debugPrint('[APP] вљ пёЏ _listenCallState вЂ” top route is "$routeName", not incoming_call_dialog вЂ” skipping pop');
+            debugPrint('[APP] ⚠️ _listenCallState — top route is "$routeName", not incoming_call_dialog — skipping pop');
             return;
           }
 
@@ -619,9 +637,58 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     });
   }
 
-  /// РЎР»СѓС€Р°РµС‚ РІС…РѕРґСЏС‰РёРµ Р·РІРѕРЅРєРё Рё РїРѕРєР°Р·С‹РІР°РµС‚ IncomingCallDialog С‡РµСЂРµР· fullscreen route.
+  /// V2: подписка на intentStream (вызывается в initState).
+  /// Подписка происходит ДО init(), чтобы не пропустить replay.
+  void _setupV2CallListener() {
+    if (!kUseCallV2) return;
+    _v2IntentSubscription = CallV2Service.instance.intentStream.listen(_handleV2Intent);
+    debugPrint('[APP] _setupV2CallListener — subscribed to V2 intentStream');
+  }
+
+  /// V2: обработка UI intents.
+  void _handleV2Intent(CallUiIntentV2 intent) {
+    if (!mounted) return;
+    debugPrint('[APP] _handleV2Intent — ${intent.runtimeType}');
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      if (intent is ShowIncomingCallIntent) {
+        showIncomingCallDialogFromService(
+          callerId: intent.callerUserId,
+          callerName: intent.callerName ?? 'Incoming call',
+          callId: intent.callId,
+          source: 'v2_push',
+        );
+      } else if (intent is ShowOutgoingCallIntent) {
+        Navigator.push(
+          navigatorKey.currentContext!,
+          MaterialPageRoute(
+            builder: (_) => CallScreen(
+              userId: intent.calleeUserId,
+              userName: intent.calleeName ?? 'User',
+            ),
+          ),
+        );
+      } else if (intent is ShowActiveCallIntent) {
+        Navigator.push(
+          navigatorKey.currentContext!,
+          MaterialPageRoute(
+            builder: (_) => CallScreen(
+              userId: intent.remoteUserId ?? 0,
+              userName: intent.remoteUserName ?? 'User',
+            ),
+          ),
+        );
+      } else if (intent is DismissCallScreenIntent) {
+        Navigator.of(navigatorKey.currentContext!).pop();
+      }
+    });
+  }
+
+  /// Слушает входящие звонки и показывает IncomingCallDialog через fullscreen route.
   void _listenIncomingCalls() {
-    debugPrint('[APP] _listenIncomingCalls вЂ” subscribing to incomingCallStream (backup path)');
+    debugPrint('[APP] _listenIncomingCalls — subscribing to incomingCallStream (backup path)');
     _incomingCallSubscription = CallService().incomingCallStream.listen(
       (data) {
         if (!mounted) return;
@@ -630,7 +697,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         final callerName = data['callerName'] as String;
         final callId = data['callId'] as int? ?? 0;
 
-        debugPrint('[APP] рџ“ћ APP incoming socket event (backup path) вЂ” callerId=$callerId, callerName=$callerName, callId=$callId');
+        debugPrint('[APP] 📞 APP incoming socket event (backup path) — callerId=$callerId, callerName=$callerName, callId=$callId');
 
         final isForeground = _lastLifecycleState == AppLifecycleState.resumed ||
             _lastLifecycleState == AppLifecycleState.inactive;
@@ -638,14 +705,14 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         if (!isForeground) {
           final pushService = PushService();
           if (pushService.fcmToken == null) {
-            debugPrint('[APP] incoming socket event while app is backgrounded and FCM token is missing — showing local call notification');
+            debugPrint('[APP] incoming socket event while app is backgrounded and FCM token is missing � showing local call notification');
             unawaited(pushService.showIncomingCallNotificationFromSocket(
               callId: callId.toString(),
               callerId: callerId.toString(),
               callerName: callerName,
             ));
           } else {
-            debugPrint('[APP] incoming socket event while app is backgrounded — relying on FCM call notification');
+            debugPrint('[APP] incoming socket event while app is backgrounded � relying on FCM call notification');
           }
           return;
         }
@@ -661,8 +728,8 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         );
       },
       onError: (error, stackTrace) {
-        debugPrint('[APP] _listenIncomingCalls вЂ” stream error: $error');
-        debugPrint('[APP] _listenIncomingCalls вЂ” stackTrace: $stackTrace');
+        debugPrint('[APP] _listenIncomingCalls — stream error: $error');
+        debugPrint('[APP] _listenIncomingCalls — stackTrace: $stackTrace');
       },
     );
 
@@ -671,7 +738,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
   StreamSubscription<Map<String, String?>>? _pushTapSubscription;
 
-  /// РЎР»СѓС€Р°РµС‚ РЅР°Р¶Р°С‚РёСЏ РЅР° push-СѓРІРµРґРѕРјР»РµРЅРёСЏ Рё РІС‹РїРѕР»РЅСЏРµС‚ РЅР°РІРёРіР°С†РёСЋ.
+  /// Слушает нажатия на push-уведомления и выполняет навигацию.
   void _listenPushNotificationTaps() {
     _pushTapSubscription = PushService().onNotificationTap.listen((data) {
       if (!mounted) return;
@@ -684,7 +751,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         if (senderId != null) {
           final userId = int.tryParse(senderId);
           if (userId != null) {
-            final userName = data['senderName'] ?? 'Пользователь';
+            final userName = data['senderName'] ?? '������������';
             _openChatFromNotification(
               userId: userId,
               userName: userName,
@@ -692,26 +759,28 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
           }
         }
       } else if (type == 'call') {
-        // Р”Р»СЏ Р·РІРѕРЅРєРѕРІ вЂ” С‚Р° Р¶Рµ Р»РѕРіРёРєР°, С‡С‚Рѕ Рё РґР»СЏ socket incoming:
-        // РїРѕРєР°Р·Р°С‚СЊ IncomingCallDialog, Р° РЅРµ СЃСЂР°Р·Сѓ CallScreen
+        // Для звонков — та же логика, что и для socket incoming:
+        // показать IncomingCallDialog, а не сразу CallScreen
+        PushService().clearPendingCallTap();
         _handleCallPushTap(data);
       }
     });
 
     _checkPendingMessageTap();
+    _checkPendingCallTap();
 
-    // РџСЂРѕРІРµСЂСЏРµРј, РЅРµ Р±С‹Р»Рѕ Р»Рё СѓР¶Рµ РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРѕ СЃРѕСЃС‚РѕСЏРЅРёРµ РІС…РѕРґСЏС‰РµРіРѕ Р·РІРѕРЅРєР°
-    // РёР· push-СѓРІРµРґРѕРјР»РµРЅРёСЏ (getInitialMessage РІ PushService.init()).
+    // Проверяем, не было ли уже восстановлено состояние входящего звонка
+    // из push-уведомления (getInitialMessage в PushService.init()).
     //
-    // РЎС†РµРЅР°СЂРёР№: РїСЂРёР»РѕР¶РµРЅРёРµ Р±С‹Р»Рѕ СѓР±РёС‚Рѕ -> РїСЂРёС€С‘Р» push -> РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ С‚Р°РїРЅСѓР» ->
+    // Сценарий: приложение было убито -> пришёл push -> пользователь тапнул ->
     // PushService.init() -> getInitialMessage() -> _emitTapFromData() ->
     // hydrateIncomingCallFromPush() -> state=RINGING.
-    // РќРћ: _emitTapFromData() СЌРјРёС‚РёС‚ РІ _notificationTapStream Р”Рћ С‚РѕРіРѕ, РєР°Рє
-    // _listenPushNotificationTaps() РїРѕРґРїРёСЃР°Р»СЃСЏ РЅР° СЃС‚СЂРёРј (С‚.Рє. PushService.init()
-    // РІС‹Р·С‹РІР°РµС‚СЃСЏ РІ main() РґРѕ runApp()). Р’ СЂРµР·СѓР»СЊС‚Р°С‚Рµ СЃРѕР±С‹С‚РёРµ С‚РµСЂСЏРµС‚СЃСЏ.
+    // НО: _emitTapFromData() эмитит в _notificationTapStream ДО того, как
+    // _listenPushNotificationTaps() подписался на стрим (т.к. PushService.init()
+    // вызывается в main() до runApp()). В результате событие теряется.
     //
-    // Р—РґРµСЃСЊ РјС‹ РїСЂРѕРІРµСЂСЏРµРј: РµСЃР»Рё CallService СѓР¶Рµ РІ RINGING, РЅРѕ РґРёР°Р»РѕРі РµС‰С‘ РЅРµ
-    // РїРѕРєР°Р·Р°РЅ вЂ” РїРѕРєР°Р·С‹РІР°РµРј РґРёР°Р»РѕРі РёР· РґР°РЅРЅС‹С… CallService.
+    // Здесь мы проверяем: если CallService уже в RINGING, но диалог ещё не
+    // показан — показываем диалог из данных CallService.
     _checkPendingIncomingCallFromPush();
   }
 
@@ -727,7 +796,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       return;
     }
 
-    final userName = pending['senderName'] ?? 'Пользователь';
+    final userName = pending['senderName'] ?? '������������';
     debugPrint(
       '[APP] restoring pending message tap userId=$userId userName=$userName',
     );
@@ -737,15 +806,27 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     );
   }
 
-  /// РџСЂРѕРІРµСЂСЏРµС‚, РЅРµ Р±С‹Р»Рѕ Р»Рё РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРѕ СЃРѕСЃС‚РѕСЏРЅРёРµ РІС…РѕРґСЏС‰РµРіРѕ Р·РІРѕРЅРєР° РёР· push
-  /// РґРѕ С‚РѕРіРѕ, РєР°Рє РїРѕРґРїРёСЃРєР° РЅР° СЃС‚СЂРёРј Р±С‹Р»Р° СѓСЃС‚Р°РЅРѕРІР»РµРЅР°.
+  void _checkPendingCallTap() {
+    final pending = PushService().consumePendingCallTap();
+    if (pending == null || pending['type'] != 'call') {
+      return;
+    }
+
+    debugPrint(
+      '[APP] restoring pending call tap callId=${pending['callId']} callerId=${pending['callerId']}',
+    );
+    _handleCallPushTap(pending);
+  }
+
+  /// Проверяет, не было ли восстановлено состояние входящего звонка из push
+  /// до того, как подписка на стрим была установлена.
   ///
-  /// Р•СЃР»Рё CallService РІ RINGING вЂ” РёР·РІР»РµРєР°РµС‚ РґР°РЅРЅС‹Рµ Р·РІРѕРЅРєР° РёР· CallService
-  /// Рё РІС‹Р·С‹РІР°РµС‚ _showIncomingCallDialog(). Р’СЃРµ guard'С‹ РІРЅСѓС‚СЂРё _showIncomingCallDialog().
+  /// Если CallService в RINGING — извлекает данные звонка из CallService
+  /// и вызывает _showIncomingCallDialog(). Все guard'ы внутри _showIncomingCallDialog().
   void _checkPendingIncomingCallFromPush() {
     final callService = CallService();
     if (callService.state != CallState.RINGING) {
-      debugPrint('[APP] _checkPendingIncomingCallFromPush вЂ” state=${callService.state}, not RINGING вЂ” nothing to do');
+      debugPrint('[APP] _checkPendingIncomingCallFromPush — state=${callService.state}, not RINGING — nothing to do');
       return;
     }
 
@@ -754,15 +835,15 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     final currentCallId = callService.currentCallId;
 
     if (remoteUserId == null) {
-      debugPrint('[APP] _checkPendingIncomingCallFromPush вЂ” remoteUserId is null, cannot show dialog');
+      debugPrint('[APP] _checkPendingIncomingCallFromPush — remoteUserId is null, cannot show dialog');
       return;
     }
 
-    debugPrint('[APP] _checkPendingIncomingCallFromPush вЂ” state=RINGING вЂ” showing IncomingCallDialog (callerId=$remoteUserId, callerName=$remoteUserName)');
+    debugPrint('[APP] _checkPendingIncomingCallFromPush — state=RINGING — showing IncomingCallDialog (callerId=$remoteUserId, callerName=$remoteUserName)');
 
     showIncomingCallDialogFromService(
       callerId: remoteUserId,
-      callerName: remoteUserName ?? 'Входящий звонок',
+      callerName: remoteUserName ?? '�������� ������',
       callId: currentCallId ?? 0,
       source: 'push',
     );
@@ -773,7 +854,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     final pending = callService.consumePendingIncomingCall();
 
     if (pending == null) {
-      debugPrint('[APP] _checkPendingIncomingCallFromService вЂ” no pending incoming call');
+      debugPrint('[APP] _checkPendingIncomingCallFromService — no pending incoming call');
       return;
     }
 
@@ -782,44 +863,44 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     final callId = pending['callId'] as int? ?? 0;
 
     if (callerId == null) {
-      debugPrint('[APP] _checkPendingIncomingCallFromService вЂ” pending callerId is null');
+      debugPrint('[APP] _checkPendingIncomingCallFromService — pending callerId is null');
       return;
     }
 
     debugPrint(
-      '[APP] _checkPendingIncomingCallFromService вЂ” showing pending incoming call '
+      '[APP] _checkPendingIncomingCallFromService — showing pending incoming call '
       '(callerId=$callerId, callerName=$callerName, callId=$callId)',
     );
 
     showIncomingCallDialogFromService(
       callerId: callerId,
-      callerName: callerName ?? 'Входящий звонок',
+      callerName: callerName ?? '�������� ������',
       callId: callId,
       source: 'pending_service',
     );
   }
 
-  /// РћР±СЂР°Р±Р°С‚С‹РІР°РµС‚ С‚Р°Рї РїРѕ call push-СѓРІРµРґРѕРјР»РµРЅРёСЋ.
+  /// Обрабатывает тап по call push-уведомлению.
   ///
-  /// РџС‹С‚Р°РµС‚СЃСЏ РІРѕСЃСЃС‚Р°РЅРѕРІРёС‚СЊ СЃРѕСЃС‚РѕСЏРЅРёРµ РІС…РѕРґСЏС‰РµРіРѕ Р·РІРѕРЅРєР° РёР· payload,
-  /// Р·Р°С‚РµРј РІС‹Р·С‹РІР°РµС‚ РµРґРёРЅС‹Р№ РјРµС‚РѕРґ _showIncomingCallDialog().
-  /// Р’СЃРµ guard'С‹ (СѓР¶Рµ РѕС‚РєСЂС‹С‚ РґРёР°Р»РѕРі / CallScreen) РїСЂРѕРІРµСЂСЏСЋС‚СЃСЏ РІРЅСѓС‚СЂРё
+  /// Пытается восстановить состояние входящего звонка из payload,
+  /// затем вызывает единый метод _showIncomingCallDialog().
+  /// Все guard'ы (уже открыт диалог / CallScreen) проверяются внутри
   /// _showIncomingCallDialog().
   void _handleCallPushTap(Map<String, String?> data) {
     final callerIdStr = data['callerId'];
-    final callerName = data['callerName'] ?? 'Входящий звонок';
+    final callerName = data['callerName'] ?? '�������� ������';
     final callIdStr = data['callId'];
 
-    debugPrint('[APP] APP incoming push tap вЂ” callerId=$callerIdStr, callerName=$callerName, callId=$callIdStr');
+    debugPrint('[APP] APP incoming push tap — callerId=$callerIdStr, callerName=$callerName, callId=$callIdStr');
 
     if (callerIdStr == null) {
-      debugPrint('[APP] вљ пёЏ callerId is null, cannot process');
+      debugPrint('[APP] ⚠️ callerId is null, cannot process');
       return;
     }
 
     final callerId = int.tryParse(callerIdStr);
     if (callerId == null) {
-      debugPrint('[APP] вљ пёЏ invalid callerId: $callerIdStr');
+      debugPrint('[APP] ⚠️ invalid callerId: $callerIdStr');
       return;
     }
 
@@ -828,15 +909,15 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     final callService = CallService();
 
     if (callId != 0 && callService.lastEndedCallId == callId) {
-      debugPrint('[APP] ⚠️ ignoring stale call notification tap for ended callId=$callId');
+      debugPrint('[APP] ?? ignoring stale call notification tap for ended callId=$callId');
       unawaited(PushService().cancelIncomingCallNotification());
       return;
     }
 
-    // Р•СЃР»Рё state СѓР¶Рµ RINGING вЂ” socket СѓР¶Рµ СѓСЃС‚Р°РЅРѕРІРёР» СЃРѕСЃС‚РѕСЏРЅРёРµ,
-    // hydrate РЅРµ РЅСѓР¶РµРЅ. РџСЂРѕСЃС‚Рѕ РїРѕРєР°Р·С‹РІР°РµРј РґРёР°Р»РѕРі.
+    // Если state уже RINGING — socket уже установил состояние,
+    // hydrate не нужен. Просто показываем диалог.
     if (callService.state == CallState.RINGING) {
-      debugPrint('[APP] state=RINGING вЂ” showing dialog without hydrate');
+      debugPrint('[APP] state=RINGING — showing dialog without hydrate');
       showIncomingCallDialogFromService(
         callerId: callerId,
         callerName: callerName,
@@ -846,14 +927,14 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       return;
     }
 
-    // Р•СЃР»Рё СѓР¶Рµ РЅР° Р·РІРѕРЅРєРµ (CALLING / IN_CALL) вЂ” РёРіРЅРѕСЂРёСЂСѓРµРј push
+    // Если уже на звонке (CALLING / IN_CALL) — игнорируем push
     if (callService.state == CallState.CALLING ||
         callService.state == CallState.IN_CALL) {
-      debugPrint('[APP] вљ пёЏ already in call (state=${callService.state}) вЂ” ignoring push tap');
+      debugPrint('[APP] ⚠️ already in call (state=${callService.state}) — ignoring push tap');
       return;
     }
 
-    // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј СЃРѕСЃС‚РѕСЏРЅРёРµ РёР· push
+    // Восстанавливаем состояние из push
     debugPrint('[APP] Hydrating incoming call from push (state=${callService.state})');
     callService.hydrateIncomingCallFromPush(
       callId: callIdStr ?? '',
@@ -870,7 +951,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   }
 
 
-  /// РњРѕРЅРёС‚РѕСЂРёРЅРі РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє РёРЅС‚РµСЂРЅРµС‚Сѓ
+  /// Мониторинг подключения к интернету
   void _monitorConnectivity() {
     Connectivity().onConnectivityChanged.listen((results) {
       if (!mounted) return;
@@ -890,25 +971,25 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   }
 
   Future<void> _checkAuth() async {
-    debugPrint('[APP_SHELL] _checkAuth() вЂ” BEGIN');
+    debugPrint('[APP_SHELL] _checkAuth() — BEGIN');
     try {
       final auth = context.read<AuthProvider>();
-      debugPrint('[APP_SHELL] _checkAuth() вЂ” AuthProvider obtained');
+      debugPrint('[APP_SHELL] _checkAuth() — AuthProvider obtained');
       final hasToken = await auth.checkAuth();
-      debugPrint('[APP_SHELL] _checkAuth() вЂ” checkAuth() returned: hasToken=$hasToken');
+      debugPrint('[APP_SHELL] _checkAuth() — checkAuth() returned: hasToken=$hasToken');
 
       if (!mounted) {
-        debugPrint('[APP_SHELL] _checkAuth() вЂ” not mounted after checkAuth, returning');
+        debugPrint('[APP_SHELL] _checkAuth() — not mounted after checkAuth, returning');
         return;
       }
 
       if (hasToken) {
         if (auth.currentUser == null) {
-          debugPrint('[APP_SHELL] _checkAuth() вЂ” hasToken but currentUser is null, showing LoginScreen');
+          debugPrint('[APP_SHELL] _checkAuth() — hasToken but currentUser is null, showing LoginScreen');
           _currentScreen = const LoginScreen();
         } else {
-          debugPrint('[APP_SHELL] _checkAuth() вЂ” authenticated as user: ${auth.currentUser?.id}, isAdmin=${auth.isAdmin}');
-          // РџРѕСЃР»Рµ СѓСЃРїРµС€РЅРѕР№ Р°СѓС‚РµРЅС‚РёС„РёРєР°С†РёРё РѕС‚РїСЂР°РІР»СЏРµРј FCM token РЅР° backend
+          debugPrint('[APP_SHELL] _checkAuth() — authenticated as user: ${auth.currentUser?.id}, isAdmin=${auth.isAdmin}');
+          // После успешной аутентификации отправляем FCM token на backend
           debugPrint('[APP] token sync after auth begin');
           unawaited(PushService().syncTokenToBackend().then((_) {
             debugPrint('[APP] token sync after auth success');
@@ -916,26 +997,26 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
             debugPrint('[APP] token sync after auth fail: $e');
           }));
 
-          // Р РµРЅРґРµСЂРёРј РЅСѓР¶РЅС‹Р№ СЌРєСЂР°РЅ РїСЂСЏРјРѕ Р·РґРµСЃСЊ, Р±РµР· pushReplacement
+          // Рендерим нужный экран прямо здесь, без pushReplacement
           _currentScreen = auth.isAdmin
               ? const AdminScreen()
               : const UserScreen();
         }
       } else {
-        debugPrint('[APP_SHELL] _checkAuth() вЂ” no token, showing LoginScreen');
+        debugPrint('[APP_SHELL] _checkAuth() — no token, showing LoginScreen');
         _currentScreen = const LoginScreen();
       }
 
-      debugPrint('[APP_SHELL] _checkAuth() вЂ” setting _isChecking=false, _currentScreen=$_currentScreen');
+      debugPrint('[APP_SHELL] _checkAuth() — setting _isChecking=false, _currentScreen=$_currentScreen');
       setState(() {
         _isChecking = false;
       });
       _flushPendingMessageNavigation();
-      debugPrint('[APP_SHELL] _checkAuth() вЂ” END');
+      debugPrint('[APP_SHELL] _checkAuth() — END');
     } catch (e, stack) {
-      debugPrint('[APP_SHELL] рџ”ґ CRASH in _checkAuth: $e');
-      debugPrint('[APP_SHELL] рџ”ґ StackTrace: $stack');
-      // Fallback вЂ” РїРѕРєР°Р·С‹РІР°РµРј LoginScreen РїСЂРё РѕС€РёР±РєРµ
+      debugPrint('[APP_SHELL] 🔴 CRASH in _checkAuth: $e');
+      debugPrint('[APP_SHELL] 🔴 StackTrace: $stack');
+      // Fallback — показываем LoginScreen при ошибке
       if (mounted) {
         _currentScreen = const LoginScreen();
         setState(() {
@@ -949,7 +1030,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        // РћСЃРЅРѕРІРЅРѕР№ РєРѕРЅС‚РµРЅС‚ РїСЂРёР»РѕР¶РµРЅРёСЏ
+        // Основной контент приложения
         if (_isChecking)
           const Scaffold(
             body: Center(
@@ -961,10 +1042,10 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         else
           const Scaffold(
             body: Center(
-              child: Text('Ошибка загрузки приложения'),
+              child: Text('������ �������� ����������'),
             ),
           ),
-        // РџР»Р°С€РєР° "РќРµС‚ СЃРѕРµРґРёРЅРµРЅРёСЏ"
+        // Плашка "Нет соединения"
         if (_isOffline)
           Positioned(
             top: 0,
@@ -985,7 +1066,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Нет соединения с сетью. Ожидание восстановления...',
+                        '��� ���������� � �����. �������� ��������������...',
                         style: TextStyle(color: Colors.white, fontSize: 13),
                       ),
                     ),
@@ -998,8 +1079,8 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     );
   }
 
-  /// Р•РґРёРЅС‹Р№ РјРµС‚РѕРґ РѕС‚РєСЂС‹С‚РёСЏ CallScreen.
-  /// Р’С‹Р·С‹РІР°РµС‚ markCallScreenOpen() Рё РґРµР»Р°РµС‚ Navigator.push.
+  /// Единый метод открытия CallScreen.
+  /// Вызывает markCallScreenOpen() и делает Navigator.push.
   void _openCallScreen({
     required int userId,
     required String userName,
@@ -1008,7 +1089,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   }) {
     final callService = CallService();
     callService.markCallScreenOpen();
-    debugPrint('[APP] вњ… _openCallScreen вЂ” opening CallScreen (userId=$userId, from=$from)');
+    debugPrint('[APP] ✅ _openCallScreen — opening CallScreen (userId=$userId, from=$from)');
     Navigator.push(
       navigatorKey.currentContext!,
       MaterialPageRoute(

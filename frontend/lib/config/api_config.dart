@@ -25,3 +25,8 @@ class ApiConfig {
   static const String chat = '/chat';
   static const String chatMy = '/chat/my';
 }
+
+/// Feature flag для включения V2 call-flow.
+/// false — используется текущая система звонков (legacy).
+/// true — V2 coordinator/service управляет звонками.
+const bool kUseCallV2 = true;
