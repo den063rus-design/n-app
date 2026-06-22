@@ -47,6 +47,11 @@ frontend/android/app/build/
 
 # Firebase
 frontend/android/app/google-services.json
+frontend/android/key.properties
+frontend/android/*.jks
+frontend/android/app/*.jks
+frontend/android/app/*.jks.old
+firebase-service-account.json
 
 # Загрузки
 uploads/

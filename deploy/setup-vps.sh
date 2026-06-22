@@ -18,7 +18,7 @@ sudo systemctl enable postgresql
 # Создание БД и пользователя
 echo "[2/6] Создание базы данных..."
 sudo -u postgres psql -c "CREATE DATABASE n_app;" 2>/dev/null || echo "  База данных n_app уже существует"
-sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+echo "  Задайте пароль пользователя postgres вручную через psql"
 
 # 3. Установка MinIO
 echo "[3/6] Установка MinIO..."
@@ -34,8 +34,8 @@ fi
 
 # Запуск MinIO (в фоне)
 echo "  Запуск MinIO..."
-export MINIO_ROOT_USER=minioadmin
-export MINIO_ROOT_PASSWORD=minioadmin
+export MINIO_ROOT_USER="${MINIO_ROOT_USER:-CHANGE_ME_MINIO_USER}"
+export MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-CHANGE_ME_MINIO_PASSWORD}"
 nohup minio server /data/minio --console-address ":9001" > /var/log/minio.log 2>&1 &
 echo "  MinIO запущен на порту 9000 (консоль: 9001)"
 

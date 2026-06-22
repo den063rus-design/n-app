@@ -130,7 +130,7 @@ npm install
 
 ### 8. Создать `.env`
 
-Создай файл `C:\Users\user\Desktop\N APP\.env` локально по аналогии, а на сервере файл должен лежать в `/opt/n-app/.env`.
+Создай локальный файл `.env` по аналогии, а на сервере файл должен лежать в `/opt/n-app/.env`.
 
 Пример содержимого для Debian:
 
@@ -370,9 +370,9 @@ psql "$DATABASE_URL" -c "INSERT INTO \"User\" (fio, age, login, \"passwordHash\"
 
 Смотри конфиги:
 
-- `C:\Users\user\Desktop\N APP\frontend\pubspec.yaml`
-- `C:\Users\user\Desktop\N APP\frontend\android\settings.gradle`
-- `C:\Users\user\Desktop\N APP\frontend\android\app\build.gradle`
+- `frontend/pubspec.yaml`
+- `frontend/android/settings.gradle`
+- `frontend/android/app/build.gradle`
 
 Текущие важные значения:
 
@@ -405,20 +405,33 @@ adb devices
 adb install -r build\app\outputs\flutter-apk\app-release.apk
 ```
 
+### Секреты для Android-подписи и Firebase
+
+Не храните в git реальные секреты:
+
+- `frontend/android/key.properties`
+- `frontend/android/*.jks`
+- Firebase service account JSON
+
+Используйте только локальные ignored-файлы:
+
+- `frontend/android/key.properties` — создаётся из `frontend/android/key.properties.example`
+- `firebase-service-account.json` — создаётся локально из `firebase-service-account.example.json`
+
 ### Полезные скрипты в репозитории
 
-- `C:\Users\user\Desktop\N APP\deploy\build-apk.sh`
-- `C:\Users\user\Desktop\N APP\deploy\sign-apk.bat`
-- `C:\Users\user\Desktop\N APP\deploy\setup-android-sdk.sh`
-- `C:\Users\user\Desktop\N APP\deploy\setup-vps.sh`
-- `C:\Users\user\Desktop\N APP\deploy\deploy-debian.sh`
-- `C:\Users\user\Desktop\N APP\deploy\deploy-backend.sh`
+- `deploy/build-apk.sh`
+- `deploy/sign-apk.bat`
+- `deploy/setup-android-sdk.sh`
+- `deploy/setup-vps.sh`
+- `deploy/deploy-debian.sh`
+- `deploy/deploy-backend.sh`
 
 ## Настройка frontend API
 
 Файл:
 
-- `C:\Users\user\Desktop\N APP\frontend\lib\config\api_config.dart`
+- `frontend/lib/config/api_config.dart`
 
 Если приложение собирается под реальный сервер, проверь:
 

@@ -44,6 +44,12 @@ CORS_ORIGIN="http://YOUR_SERVER_IP:3000"
 FILE_STORAGE_DRIVER=local
 ```
 
+Реальные секреты не храните в git:
+
+- `frontend/android/key.properties`
+- Android keystore `.jks`
+- Firebase service account JSON
+
 ### Проверка backend
 
 ```bash
