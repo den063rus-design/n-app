@@ -168,7 +168,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         if (currentCall && currentCall.status === CallStatus.PENDING) {
           this.logger.warn(`[CALL_GATEWAY] CALL_DELIVERY_TIMEOUT fired callId=${callId}`);
           await this.callService.endCall(callId);
-          this.sendToUser(currentCall.callerId, 'call:ended', {
+          this.sendToBoth(currentCall.callerId, currentCall.calleeId, 'call:ended', {
             callId,
             reason: 'no_answer',
           });
@@ -179,7 +179,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.callDeliveryTimeouts.delete(callId);
         this.deliveredIncomingCalls.delete(callId);
       }
-    }, 8000);
+    }, 15000);
 
     this.callDeliveryTimeouts.set(callId, timeout);
   }

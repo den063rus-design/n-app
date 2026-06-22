@@ -390,11 +390,15 @@ class CallService {
 
     _socketService.onCallEvent('call:ended', (data) async {
       _log('рџ“І call:ended вЂ” data=$data state=$_state');
+      await CallRingtoneService().stopAllCallSounds();
+      try {
+        await PushService().cancelIncomingCallNotification();
+      } catch (e) {
+        _log('⚠️ call:ended cleanup failed: $e');
+      }
       if (_state == CallState.IDLE || _state == CallState.ENDED) {
         return;
       }
-
-      await CallRingtoneService().stopAllCallSounds();
       final reason = data['reason'] as String?;
       await _endCall(reason: reason);
       if (reason == 'rejected') {
