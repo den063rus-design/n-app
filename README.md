@@ -1,21 +1,23 @@
 ﻿# N App
 
-Закрытая система общения администратора с пользователями.
+Закрытая система общения преподавателя английского языка с учениками в формате `1 на 1`.
 
 - Backend: `NestJS`, `Prisma`, `PostgreSQL`, `Socket.IO`, `JWT`, `bcrypt`
 - Frontend: `Flutter`
 - Файлы: локальное хранилище `uploads/` сейчас, `MinIO` можно подключить позже
 - Архитектура: `Controller -> Service -> PrismaService`
 
+> Важно: в текущей модели данных и части кода роль преподавателя может по-прежнему называться `ADMIN`. Это внутреннее техническое имя роли, а по бизнес-смыслу это преподаватель.
+
 ## Что умеет проект
 
 - вход по логину и паролю без самостоятельной регистрации
-- создание пользователей только администратором
-- чат `user <-> admin`
+- создание учеников и доступов только преподавателем
+- чат `ученик <-> преподаватель`
 - текст, фото, видео, голосовые и документы
 - поиск по чату
 - статусы сообщений `SENT / DELIVERED / READ`
-- блокировка, разблокировка, архивирование, восстановление пользователей
+- блокировка, разблокировка, архивирование, восстановление учеников
 - in-app уведомления через `Socket.IO`
 - WebRTC-звонки
 
@@ -152,7 +154,7 @@ MINIO_ACCESS_KEY=CHANGE_ME
 MINIO_SECRET_KEY=CHANGE_ME
 ```
 
-### 9. Применить Prisma и создать администратора
+### 9. Применить Prisma и создать учётную запись преподавателя
 
 ```bash
 npx prisma generate
@@ -160,7 +162,7 @@ npx prisma migrate deploy
 npx prisma db seed
 ```
 
-После `seed` по умолчанию создаётся администратор:
+После `seed` по умолчанию создаётся учётная запись преподавателя:
 
 - логин: `admin`
 - пароль: `admin123`
@@ -308,9 +310,9 @@ pm2 restart n-app-backend
 npx prisma migrate deploy
 ```
 
-## Если потерян логин или пароль администратора
+## Если потерян логин или пароль преподавателя
 
-### Вариант 1. Сбросить пароль существующему админу
+### Вариант 1. Сбросить пароль существующей учётной записи преподавателя
 
 Перейди в проект:
 
@@ -332,20 +334,20 @@ node -e "const bcrypt=require('bcrypt'); bcrypt.hash('NEW_ADMIN_PASSWORD',10).th
 psql "$DATABASE_URL" -c "SELECT id, login, role, status FROM \"User\" ORDER BY id;"
 ```
 
-Обнови нужного администратора по `id`:
+Обнови нужную учётную запись преподавателя по `id`:
 
 ```bash
 psql "$DATABASE_URL" -c "UPDATE \"User\" SET login='admin', \"passwordHash\"='PASTE_BCRYPT_HASH_HERE', role='ADMIN', status='ACTIVE' WHERE id=ADMIN_ID;"
 ```
 
-### Вариант 2. Создать нового администратора вручную
+### Вариант 2. Создать нового преподавателя вручную
 
 Сначала получи hash так же, как в примере выше.
 
 Потом создай запись:
 
 ```bash
-psql "$DATABASE_URL" -c "INSERT INTO \"User\" (fio, age, login, \"passwordHash\", role, status, \"createdAt\", \"updatedAt\") VALUES ('Главный администратор', 30, 'admin', 'PASTE_BCRYPT_HASH_HERE', 'ADMIN', 'ACTIVE', NOW(), NOW());"
+psql "$DATABASE_URL" -c "INSERT INTO \"User\" (fio, age, login, \"passwordHash\", role, status, \"createdAt\", \"updatedAt\") VALUES ('Преподаватель английского языка', 30, 'teacher', 'PASTE_BCRYPT_HASH_HERE', 'ADMIN', 'ACTIVE', NOW(), NOW());"
 ```
 
 ## Frontend: что нужно для сборки APK
@@ -442,7 +444,7 @@ adb install -r build\app\outputs\flutter-apk\app-release.apk
 ## Основные backend-модули
 
 - `auth` — вход и JWT
-- `users` — создание, изменение, блокировка, архив
+- `users` — создание, изменение, блокировка, архив учеников
 - `chat` — сообщения, история, статусы
 - `files` — upload / download / delete файлов
 - `call` — signaling и логика звонков
@@ -451,9 +453,9 @@ adb install -r build\app\outputs\flutter-apk\app-release.apk
 ## Основные экраны frontend
 
 - `login_screen.dart` — вход
-- `admin_screen.dart` — список пользователей
-- `chat_screen.dart` — чат администратора с пользователем
-- `user_screen.dart` — чат пользователя
+- `admin_screen.dart` — список учеников преподавателя
+- `chat_screen.dart` — чат преподавателя с учеником
+- `user_screen.dart` — чат ученика с преподавателем
 - `call_screen.dart` — видеозвонок
 - `notifications_screen.dart` — уведомления
 - `archive_screen.dart` — архив пользователей
@@ -491,7 +493,7 @@ uploads/12_ivanov_ivan_ivanovich/3f2c8d9a.jpg
 
 ### Удаление файлов
 
-При удалении сообщения администратором backend автоматически удаляет
+При удалении сообщения преподавателем backend автоматически удаляет
 связанные физические файлы из папки `uploads/`. Если файл уже отсутствует
 на диске — запрос не ломается, ошибка логируется.
 
