@@ -10,6 +10,72 @@ import '../services/call_ringtone_service.dart';
 import '../services/call_service.dart';
 import '../services/chat_navigation_service.dart';
 
+const String _defaultNotificationChannelId = 'default_notification_channel';
+const String _messageAlertsChannelId = 'message_alerts_channel';
+const String _messageSummaryChannelId = 'message_summary_channel';
+const String _incomingCallChannelId = 'incoming_call_channel';
+
+Future<void> _ensureNotificationChannels(
+  FlutterLocalNotificationsPlugin notifications,
+) async {
+  if (defaultTargetPlatform != TargetPlatform.android) {
+    return;
+  }
+
+  const AndroidNotificationChannel defaultChannel = AndroidNotificationChannel(
+    _defaultNotificationChannelId,
+    '\u041e\u0441\u043d\u043e\u0432\u043d\u044b\u0435 \u0443\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u044f',
+    description:
+        '\u0423\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u044f \u043e \u043d\u043e\u0432\u044b\u0445 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f\u0445 \u0438 \u0437\u0432\u043e\u043d\u043a\u0430\u0445',
+    importance: Importance.high,
+    playSound: true,
+    enableVibration: true,
+  );
+
+  const AndroidNotificationChannel messageAlertsChannel =
+      AndroidNotificationChannel(
+    _messageAlertsChannelId,
+    '\u0421\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f',
+    description:
+        '\u0417\u0432\u0443\u043a \u0438 \u0432\u0441\u043f\u043b\u044b\u0432\u0430\u044e\u0449\u0435\u0435 \u0443\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u0435 \u0434\u043b\u044f \u043a\u0430\u0436\u0434\u043e\u0433\u043e \u043d\u043e\u0432\u043e\u0433\u043e \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f',
+    importance: Importance.max,
+    playSound: true,
+    enableVibration: true,
+  );
+
+  const AndroidNotificationChannel messageSummaryChannel =
+      AndroidNotificationChannel(
+    _messageSummaryChannelId,
+    '\u0413\u0440\u0443\u043f\u043f\u044b \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0439',
+    description:
+        '\u0422\u0438\u0445\u043e\u0435 \u0441\u0432\u043e\u0434\u043d\u043e\u0435 \u0443\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u0435 \u043f\u043e \u0434\u0438\u0430\u043b\u043e\u0433\u0443',
+    importance: Importance.low,
+    playSound: false,
+    enableVibration: false,
+  );
+
+  const AndroidNotificationChannel callChannel = AndroidNotificationChannel(
+    _incomingCallChannelId,
+    '\u0412\u0445\u043e\u0434\u044f\u0449\u0438\u0435 \u0437\u0432\u043e\u043d\u043a\u0438',
+    description:
+        '\u0423\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u044f \u043e \u0432\u0445\u043e\u0434\u044f\u0449\u0438\u0445 \u0437\u0432\u043e\u043d\u043a\u0430\u0445',
+    importance: Importance.max,
+    playSound: true,
+    enableVibration: true,
+  );
+
+  final androidPlugin = notifications.resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>();
+  if (androidPlugin == null) {
+    return;
+  }
+
+  await androidPlugin.createNotificationChannel(defaultChannel);
+  await androidPlugin.createNotificationChannel(messageAlertsChannel);
+  await androidPlugin.createNotificationChannel(messageSummaryChannel);
+  await androidPlugin.createNotificationChannel(callChannel);
+}
+
 int _messageNotificationIdForSender({
   String? senderId,
   String? title,
@@ -24,14 +90,17 @@ String _messageNotificationSenderKey({
   String? senderId,
   String? title,
 }) {
-  return (senderId?.trim().isNotEmpty == true) ? senderId!.trim() : (title ?? '');
+  return (senderId?.trim().isNotEmpty == true)
+      ? senderId!.trim()
+      : (title ?? '');
 }
 
-String _messageNotificationGroupKey({
-  String? senderId,
-  String? title,
-}) {
-  return 'messages_sender_${_messageNotificationSenderKey(senderId: senderId, title: title)}';
+String _messageNotificationAlertTagPrefix(String senderKey) {
+  return 'message_alert_$senderKey';
+}
+
+String _messageNotificationSummaryTag(String senderKey) {
+  return 'message_summary_$senderKey';
 }
 
 int _messageNotificationAlertId() {
@@ -49,22 +118,38 @@ Future<void> _cancelMessageNotificationGroup({
     senderId: senderId,
     title: title,
   );
-  final groupKey = _messageNotificationGroupKey(
+  final senderKey = _messageNotificationSenderKey(
     senderId: senderId,
     title: title,
   );
+  final alertTagPrefix = _messageNotificationAlertTagPrefix(senderKey);
+  final summaryTag = _messageNotificationSummaryTag(senderKey);
 
   try {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      await PushService.notificationsChannel.invokeMethod<void>(
+        'cancelNotificationsByTagPrefix',
+        {
+          'tagPrefix': alertTagPrefix,
+          'summaryId': summaryId,
+          'summaryTag': summaryTag,
+        },
+      );
+      return;
+    }
+
     final active = await notifications.getActiveNotifications();
     for (final notification in active) {
       final notificationId = notification.id;
       if (notificationId == null) continue;
-      if (notificationId == summaryId || notification.groupKey == groupKey) {
+      if (notificationId == summaryId) {
         await notifications.cancel(notificationId);
       }
     }
   } catch (_) {
-    await notifications.cancel(summaryId);
+    try {
+      await notifications.cancel(summaryId);
+    } catch (_) {}
   }
 }
 
@@ -80,10 +165,8 @@ Future<void> _showGroupedMessageNotification({
     senderId: senderId,
     title: title,
   );
-  final groupKey = _messageNotificationGroupKey(
-    senderId: senderId,
-    title: title,
-  );
+  final alertTagPrefix = _messageNotificationAlertTagPrefix(senderKey);
+  final summaryTag = _messageNotificationSummaryTag(senderKey);
   final summaryId = _messageNotificationIdForSender(
     senderId: senderId,
     title: title,
@@ -91,15 +174,20 @@ Future<void> _showGroupedMessageNotification({
   final alertId = _messageNotificationAlertId();
   var existingCount = 0;
   try {
-    final active = await notifications.getActiveNotifications();
-    existingCount = active
-        .where((notification) => notification.groupKey == groupKey)
-        .length;
-    if (existingCount > 0) {
-      existingCount -= 1;
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      existingCount = await PushService.notificationsChannel
+              .invokeMethod<int>('getNotificationCountByTagPrefix', {
+            'tagPrefix': alertTagPrefix,
+          }) ??
+          0;
+    } else {
+      existingCount = countsBySender[senderKey] ?? 0;
     }
   } catch (_) {}
-  final count = ((countsBySender[senderKey] ?? existingCount) + 1);
+  final childTag = '${alertTagPrefix}_${DateTime.now().microsecondsSinceEpoch}';
+  final count = existingCount > 0
+      ? existingCount + 1
+      : ((countsBySender[senderKey] ?? 0) + 1);
   countsBySender[senderKey] = count;
   final summaryBody = count > 1 ? '$body (+$count)' : body;
 
@@ -113,39 +201,30 @@ Future<void> _showGroupedMessageNotification({
     'callerName': data['callerName'] as String?,
   });
 
-  await _cancelMessageNotificationGroup(
-    notifications: notifications,
-    senderId: senderId,
-    title: title,
-  );
-
   final childDetails = AndroidNotificationDetails(
-    'default_notification_channel',
+    _messageAlertsChannelId,
     'Основные уведомления',
     channelDescription: 'Уведомления о новых сообщениях и звонках',
-    importance: Importance.high,
-    priority: Priority.high,
+    importance: Importance.max,
+    priority: Priority.max,
     showWhen: true,
     enableVibration: true,
     playSound: true,
-    groupKey: groupKey,
-    groupAlertBehavior: GroupAlertBehavior.all,
-    tag: 'message_child_$senderKey',
+    tag: childTag,
+    onlyAlertOnce: false,
   );
 
   final summaryDetails = AndroidNotificationDetails(
-    'default_notification_channel',
+    _messageSummaryChannelId,
     'Основные уведомления',
     channelDescription: 'Уведомления о новых сообщениях и звонках',
-    importance: Importance.high,
-    priority: Priority.high,
+    importance: Importance.low,
+    priority: Priority.low,
     showWhen: true,
     enableVibration: false,
     playSound: false,
-    groupKey: groupKey,
-    setAsGroupSummary: true,
-    groupAlertBehavior: GroupAlertBehavior.children,
-    tag: 'message_summary_$senderKey',
+    tag: summaryTag,
+    onlyAlertOnce: true,
   );
 
   await notifications.show(
@@ -199,6 +278,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       InitializationSettings(android: androidSettings);
 
   await localNotifications.initialize(initSettings);
+  await _ensureNotificationChannels(localNotifications);
 
   final payloadData = <String, String?>{
     'type': message.data['type'],
@@ -214,7 +294,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     Future<void> showCallNotification() async {
       const AndroidNotificationDetails androidDetails =
           AndroidNotificationDetails(
-        'incoming_call_channel',
+        _incomingCallChannelId,
         'Входящие звонки',
         channelDescription: 'Уведомления о входящих звонках',
         importance: Importance.max,
@@ -258,9 +338,8 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       : resolvedTitleSource.isNotEmpty
           ? resolvedTitleSource
           : '????? ?????????';
-  final messageBody = resolvedBodySource.isNotEmpty
-      ? resolvedBodySource
-      : '????? ?????????';
+  final messageBody =
+      resolvedBodySource.isNotEmpty ? resolvedBodySource : '????? ?????????';
   debugPrint(
     "[FCM_BG] Showing local message notification - title=$messageTitle senderId=${message.data['senderId']}",
   );
@@ -293,6 +372,7 @@ class PushService {
       FlutterLocalNotificationsPlugin();
   static const MethodChannel _notificationsChannel =
       MethodChannel('com.napp.app/notifications');
+  static MethodChannel get notificationsChannel => _notificationsChannel;
 
   /// Фиксированный ID для call-уведомления (чтобы не залипало).
   static const int incomingCallNotificationId = 777001;
@@ -330,8 +410,9 @@ class PushService {
     String? senderId,
     String? title,
   }) {
-    final senderKey =
-        (senderId?.trim().isNotEmpty == true) ? senderId!.trim() : (title ?? '');
+    final senderKey = (senderId?.trim().isNotEmpty == true)
+        ? senderId!.trim()
+        : (title ?? '');
     return messageNotificationBaseId + senderKey.hashCode.abs() % 99999;
   }
 
@@ -399,6 +480,7 @@ class PushService {
         await androidPlugin.createNotificationChannel(defaultChannel);
         await androidPlugin.createNotificationChannel(callChannel);
       }
+      await _ensureNotificationChannels(_localNotifications);
     } catch (e, stack) {
       debugPrint('[PUSH] 🔴 notification channels creation failed: $e');
       debugPrint('[PUSH] 🔴 StackTrace: $stack');
@@ -503,7 +585,8 @@ class PushService {
     }
 
     if (_fcmToken == null) {
-      debugPrint('[FCM] token sync skipped — _fcmToken still null after refresh');
+      debugPrint(
+          '[FCM] token sync skipped — _fcmToken still null after refresh');
       return;
     }
 
@@ -537,7 +620,8 @@ class PushService {
     final lastCallEndTimestamp = callService.lastCallEndTimestamp;
 
     if (state != CallState.IDLE && state != CallState.ENDED) {
-      debugPrint('[PUSH] PUSH ignored because state=$state (active call in progress)');
+      debugPrint(
+          '[PUSH] PUSH ignored because state=$state (active call in progress)');
       return true;
     }
 
@@ -681,8 +765,11 @@ class PushService {
 
       Future.delayed(const Duration(milliseconds: 300), () {
         final cs = CallService();
-        if (!cs.isIncomingDialogOpen && !cs.isCallScreenOpen && cs.state == CallState.RINGING) {
-          debugPrint('[FCM_FG] Fallback: incoming screen not opened, showing call notification');
+        if (!cs.isIncomingDialogOpen &&
+            !cs.isCallScreenOpen &&
+            cs.state == CallState.RINGING) {
+          debugPrint(
+              '[FCM_FG] Fallback: incoming screen not opened, showing call notification');
           _showCallNotification(message.data);
         }
       });
@@ -716,7 +803,8 @@ class PushService {
     required String callerId,
     required String callerName,
   }) async {
-    debugPrint('[PUSH] showIncomingCallNotificationFromSocket ? callId=$callId callerId=$callerId callerName=$callerName');
+    debugPrint(
+        '[PUSH] showIncomingCallNotificationFromSocket ? callId=$callId callerId=$callerId callerName=$callerName');
     _showCallNotification({
       'type': 'call',
       'callId': callId,
@@ -743,10 +831,9 @@ class PushService {
         : rawTitle.isNotEmpty
             ? rawTitle
             : '\u041d\u043e\u0432\u043e\u0435 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435';
-    final normalizedBody =
-        body.trim().isEmpty
-            ? '\u041d\u043e\u0432\u043e\u0435 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435'
-            : body.trim();
+    final normalizedBody = body.trim().isEmpty
+        ? '\u041d\u043e\u0432\u043e\u0435 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435'
+        : body.trim();
 
     _showLocalNotification(normalizedTitle, normalizedBody, {
       'type': 'message',
@@ -759,7 +846,7 @@ class PushService {
   void _showCallNotification(Map<String, dynamic> data) {
     const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
-      'incoming_call_channel',
+      _incomingCallChannelId,
       'Входящие звонки',
       channelDescription: 'Уведомления о входящих звонках',
       importance: Importance.max,
@@ -816,7 +903,7 @@ class PushService {
 
     const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
-      'default_notification_channel',
+      _defaultNotificationChannelId,
       'Основные уведомления',
       channelDescription: 'Уведомления о новых сообщениях и звонках',
       importance: Importance.high,
