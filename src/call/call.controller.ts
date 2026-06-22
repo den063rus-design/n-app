@@ -21,4 +21,9 @@ export class CallController {
   async getUserHistory(@Param('userId', ParseIntPipe) userId: number) {
     return this.callService.getUserCalls(userId);
   }
+
+  @Get('ice-config')
+  async getIceConfig(@CurrentUser('sub') userId: number) {
+    return this.callService.getIceConfig(userId);
+  }
 }

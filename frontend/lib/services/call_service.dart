@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../app/app.dart';
+import 'api_service.dart';
 import 'socket_service.dart';
 import 'call_logger.dart';
 import 'call_ringtone_service.dart';
@@ -23,6 +24,7 @@ class CallService {
 
   final SocketService _socketService = SocketService();
   final CallLogger _callLogger = CallLogger();
+  final ApiService _apiService = ApiService();
 
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
@@ -46,6 +48,7 @@ class CallService {
   Timer? _resetTimer;
   Timer? _peerDisconnectTimer;
   StreamSubscription<bool>? _connectionSubscription;
+  List<Map<String, dynamic>>? _cachedIceServers;
 
   final _stateController = StreamController<CallState>.broadcast();
   final _localStreamController = StreamController<MediaStream?>.broadcast();
@@ -547,10 +550,13 @@ class CallService {
     }
 
     try {
+      final iceServers = await _getIceServers();
       _peerConnection = await createPeerConnection({
-        'iceServers': [
-          {'urls': 'stun:stun.l.google.com:19302'},
-        ],
+        'iceServers': iceServers,
+        'iceTransportPolicy': 'all',
+        'bundlePolicy': 'max-bundle',
+        'rtcpMuxPolicy': 'require',
+        'sdpSemantics': 'unified-plan',
       });
     } catch (e) {
       _log('вќЊ createPeerConnection failed: $e');
@@ -635,6 +641,35 @@ class CallService {
       });
       _log('вњ… offer sent');
     }
+  }
+
+  Future<List<Map<String, dynamic>>> _getIceServers() async {
+    if (_cachedIceServers != null && _cachedIceServers!.isNotEmpty) {
+      return _cachedIceServers!;
+    }
+
+    try {
+      final servers = await _apiService.getIceConfig();
+      if (servers.isNotEmpty) {
+        _cachedIceServers = servers;
+        _log('🌐 ICE config loaded from backend: ${servers.length} server blocks');
+        return servers;
+      }
+    } catch (e) {
+      _log('⚠️ ICE config load failed, using fallback STUN: $e');
+    }
+
+    _cachedIceServers = const [
+      {
+        'urls': [
+          'stun:stun.l.google.com:19302',
+          'stun:stun1.l.google.com:19302',
+          'stun:stun2.l.google.com:19302',
+          'stun:global.stun.twilio.com:3478',
+        ],
+      },
+    ];
+    return _cachedIceServers!;
   }
 
   Future<void> _flushPendingRemoteCandidates() async {

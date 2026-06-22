@@ -79,6 +79,45 @@ export class CallService {
     return call;
   }
 
+  getIceConfig(userId?: number) {
+    const stunUrls = (process.env.WEBRTC_STUN_URLS ??
+            'stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302,stun:stun2.l.google.com:19302,stun:global.stun.twilio.com:3478')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    const iceServers: Array<Record<string, unknown>> = [];
+
+    if (stunUrls.length > 0) {
+      iceServers.push({
+        urls: stunUrls,
+      });
+    }
+
+    const turnUrls = (process.env.WEBRTC_TURN_URLS ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const turnUsername = process.env.WEBRTC_TURN_USERNAME?.trim();
+    const turnCredential = process.env.WEBRTC_TURN_CREDENTIAL?.trim();
+
+    if (turnUrls.length > 0 && turnUsername && turnCredential) {
+      iceServers.push({
+        urls: turnUrls,
+        username: turnUsername,
+        credential: turnCredential,
+      });
+    }
+
+    console.log(
+      `[CALL_SERVICE] getIceConfig user=${userId ?? 'unknown'} stun=${stunUrls.length} turn=${turnUrls.length > 0 ? 'configured' : 'missing'}`,
+    );
+
+    return {
+      iceServers,
+    };
+  }
+
   /**
    * Находит ВСЕ активные (PENDING или ACCEPTED) звонки пользователя,
    * отсортированные от самого свежего к самому старому.

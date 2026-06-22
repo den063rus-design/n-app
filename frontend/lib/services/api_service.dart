@@ -87,6 +87,15 @@ class ApiService {
     return response.data;
   }
 
+  Future<List<Map<String, dynamic>>> getIceConfig() async {
+    final response = await get('/call/ice-config');
+    final rawServers = (response as Map<String, dynamic>)['iceServers'] as List<dynamic>? ?? const [];
+    return rawServers
+        .where((server) => server is Map)
+        .map((server) => Map<String, dynamic>.from(server as Map))
+        .toList();
+  }
+
   // =================================================================
   // Users
   // =================================================================
