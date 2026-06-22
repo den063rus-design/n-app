@@ -290,6 +290,14 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     'callerName': message.data['callerName'],
   };
   final payloadJson = jsonEncode(payloadData);
+  if (type == 'call_end') {
+    debugPrint(
+      "[FCM_BG] Cancelling call notification - callId=${message.data['callId']}",
+    );
+    await localNotifications.cancel(PushService.incomingCallNotificationId);
+    return;
+  }
+
   if (type == 'call') {
     Future<void> showCallNotification() async {
       const AndroidNotificationDetails androidDetails =
@@ -323,9 +331,6 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       "[FCM_BG] Showing call notification - callerName=${message.data['callerName']}, callId=${message.data['callId']}",
     );
 
-    await showCallNotification();
-    await Future.delayed(const Duration(milliseconds: 400));
-    await localNotifications.cancelAll();
     await showCallNotification();
     return;
   }
@@ -725,6 +730,13 @@ class PushService {
     debugPrint(
       '[FCM_FG] push received - type=$type, callId=${message.data['callId']}, callerId=${message.data['callerId']}, callerName=${message.data['callerName']}',
     );
+
+    if (type == 'call_end') {
+      debugPrint('[FCM_FG] call_end received - cancelling call notification');
+      unawaited(cancelIncomingCallNotification());
+      unawaited(CallRingtoneService().stopAllCallSounds());
+      return;
+    }
 
     if (type == 'call') {
       if (_shouldIgnoreCallPush()) return;

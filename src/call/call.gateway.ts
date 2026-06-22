@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+﻿import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import {
   OnGatewayConnection,
@@ -94,6 +94,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         callId: call.id,
         reason: 'peer_disconnected',
       });
+      await this.notifyCallEndedPush(call.id, userId, otherUserId);
     } catch (error) {
       this.logger.error(
         `[CALL_GATEWAY] DISCONNECT failed clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`,
@@ -101,9 +102,9 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  /** Отправляет call:incoming и создаёт push-уведомление для callee.
-   *  Вынесено в отдельный метод, чтобы не дублировать код
-   *  для нового звонка и для reused pending звонка. */
+  /** РћС‚РїСЂР°РІР»СЏРµС‚ call:incoming Рё СЃРѕР·РґР°С‘С‚ push-СѓРІРµРґРѕРјР»РµРЅРёРµ РґР»СЏ callee.
+   *  Р’С‹РЅРµСЃРµРЅРѕ РІ РѕС‚РґРµР»СЊРЅС‹Р№ РјРµС‚РѕРґ, С‡С‚РѕР±С‹ РЅРµ РґСѓР±Р»РёСЂРѕРІР°С‚СЊ РєРѕРґ
+   *  РґР»СЏ РЅРѕРІРѕРіРѕ Р·РІРѕРЅРєР° Рё РґР»СЏ reused pending Р·РІРѕРЅРєР°. */
   private async notifyIncomingCall(call: any) {
     const calleeId = call.calleeId;
 
@@ -120,8 +121,8 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await this.notificationsService.createNotification({
       userId: calleeId,
       type: 'CALL',
-      title: 'Входящий звонок',
-      body: `Вам звонит ${call.caller.fio}`,
+      title: 'Р’С…РѕРґСЏС‰РёР№ Р·РІРѕРЅРѕРє',
+      body: `Р’Р°Рј Р·РІРѕРЅРёС‚ ${call.caller.fio}`,
       data: {
         callId: call.id,
         callerId: call.callerId,
@@ -130,8 +131,16 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
-  /** Устанавливает таймаут 30 секунд на PENDING звонок.
-   *  Если за это время звонок не принят — завершает его. */
+  private async notifyCallEndedPush(callId: number, ...userIds: number[]) {
+    await Promise.all(
+      userIds.map((userId) =>
+        this.notificationsService.sendCallEndPush(userId, callId),
+      ),
+    );
+  }
+
+  /** РЈСЃС‚Р°РЅР°РІР»РёРІР°РµС‚ С‚Р°Р№РјР°СѓС‚ 30 СЃРµРєСѓРЅРґ РЅР° PENDING Р·РІРѕРЅРѕРє.
+   *  Р•СЃР»Рё Р·Р° СЌС‚Рѕ РІСЂРµРјСЏ Р·РІРѕРЅРѕРє РЅРµ РїСЂРёРЅСЏС‚ вЂ” Р·Р°РІРµСЂС€Р°РµС‚ РµРіРѕ. */
   private setupCallTimeout(callId: number) {
     const timeout = setTimeout(async () => {
       try {
@@ -143,6 +152,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
             callId,
             reason: 'no_answer',
           });
+          await this.notifyCallEndedPush(callId, currentCall.callerId, currentCall.calleeId);
         }
       } catch (error) {
         this.logger.error(
@@ -172,6 +182,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
             callId,
             reason: 'no_answer',
           });
+          await this.notifyCallEndedPush(callId, currentCall.callerId, currentCall.calleeId);
         }
       } catch (error) {
         this.logger.error(`[CALL_GATEWAY] CALL_DELIVERY_TIMEOUT failed callId=${callId} error=${error instanceof Error ? error.message : String(error)}`);
@@ -184,8 +195,8 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.callDeliveryTimeouts.set(callId, timeout);
   }
 
-  /** Проверяет, является ли PENDING звонок stale (старше STALE_CALL_TIMEOUT_MS).
-   *  Используется для автоматической очистки залипших звонков после перезапуска backend. */
+  /** РџСЂРѕРІРµСЂСЏРµС‚, СЏРІР»СЏРµС‚СЃСЏ Р»Рё PENDING Р·РІРѕРЅРѕРє stale (СЃС‚Р°СЂС€Рµ STALE_CALL_TIMEOUT_MS).
+   *  РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РґР»СЏ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРѕР№ РѕС‡РёСЃС‚РєРё Р·Р°Р»РёРїС€РёС… Р·РІРѕРЅРєРѕРІ РїРѕСЃР»Рµ РїРµСЂРµР·Р°РїСѓСЃРєР° backend. */
   private isStalePendingCall(call: any): boolean {
     if (call.status !== CallStatus.PENDING) {
       return false;
@@ -195,28 +206,28 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return age > CallService.STALE_CALL_TIMEOUT_MS;
   }
 
-  /** Проверяет, является ли ACCEPTED звонок stale.
-   *  Критерии: статус ACCEPTED, но startedAt отсутствует (никогда не был реально начат)
-   *  ИЛИ звонок старше 5 минут без endedAt (залипший).
-   *  Такие звонки не должны блокировать новые. */
+  /** РџСЂРѕРІРµСЂСЏРµС‚, СЏРІР»СЏРµС‚СЃСЏ Р»Рё ACCEPTED Р·РІРѕРЅРѕРє stale.
+   *  РљСЂРёС‚РµСЂРёРё: СЃС‚Р°С‚СѓСЃ ACCEPTED, РЅРѕ startedAt РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚ (РЅРёРєРѕРіРґР° РЅРµ Р±С‹Р» СЂРµР°Р»СЊРЅРѕ РЅР°С‡Р°С‚)
+   *  РР›Р Р·РІРѕРЅРѕРє СЃС‚Р°СЂС€Рµ 5 РјРёРЅСѓС‚ Р±РµР· endedAt (Р·Р°Р»РёРїС€РёР№).
+   *  РўР°РєРёРµ Р·РІРѕРЅРєРё РЅРµ РґРѕР»Р¶РЅС‹ Р±Р»РѕРєРёСЂРѕРІР°С‚СЊ РЅРѕРІС‹Рµ. */
   private isStaleAcceptedCall(call: any): boolean {
     if (call.status !== CallStatus.ACCEPTED) {
       return false;
     }
 
-    // Если звонок ACCEPTED, но never started — явно мёртвый
+    // Р•СЃР»Рё Р·РІРѕРЅРѕРє ACCEPTED, РЅРѕ never started вЂ” СЏРІРЅРѕ РјС‘СЂС‚РІС‹Р№
     if (!call.startedAt) {
       const age = Date.now() - new Date(call.createdAt).getTime();
       return age > CallService.STALE_CALL_TIMEOUT_MS;
     }
 
-    // Если звонок ACCEPTED и startedAt есть, но прошло больше 5 минут
-    // с момента старта — считаем его залипшим (нормальный звонок не длится вечно)
+    // Р•СЃР»Рё Р·РІРѕРЅРѕРє ACCEPTED Рё startedAt РµСЃС‚СЊ, РЅРѕ РїСЂРѕС€Р»Рѕ Р±РѕР»СЊС€Рµ 5 РјРёРЅСѓС‚
+    // СЃ РјРѕРјРµРЅС‚Р° СЃС‚Р°СЂС‚Р° вЂ” СЃС‡РёС‚Р°РµРј РµРіРѕ Р·Р°Р»РёРїС€РёРј (РЅРѕСЂРјР°Р»СЊРЅС‹Р№ Р·РІРѕРЅРѕРє РЅРµ РґР»РёС‚СЃСЏ РІРµС‡РЅРѕ)
     const age = Date.now() - new Date(call.startedAt).getTime();
-    return age > 5 * 60 * 1000; // 5 минут
+    return age > 5 * 60 * 1000; // 5 РјРёРЅСѓС‚
   }
 
-  /** Логирует детальную информацию о звонке для диагностики. */
+  /** Р›РѕРіРёСЂСѓРµС‚ РґРµС‚Р°Р»СЊРЅСѓСЋ РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ Р·РІРѕРЅРєРµ РґР»СЏ РґРёР°РіРЅРѕСЃС‚РёРєРё. */
   private logCallDetail(prefix: string, call: any): void {
     this.logger.log(
       `${prefix} callId=${call.id} status=${call.status} ` +
@@ -240,30 +251,30 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         `[CALL_GATEWAY] CALL_START resolved callerId=${callerId} calleeId=${payload.calleeId}`,
       );
 
-      // ========== Проверка активных звонков caller ==========
+      // ========== РџСЂРѕРІРµСЂРєР° Р°РєС‚РёРІРЅС‹С… Р·РІРѕРЅРєРѕРІ caller ==========
       const callerCalls = await this.callService.findActiveCallsByUserId(callerId);
       this.logger.log(
         `[CALL_GATEWAY] CALL_START caller active calls count=${callerCalls.length} callerId=${callerId}`,
       );
 
-      // Диагностика: логируем каждый звонок caller
+      // Р”РёР°РіРЅРѕСЃС‚РёРєР°: Р»РѕРіРёСЂСѓРµРј РєР°Р¶РґС‹Р№ Р·РІРѕРЅРѕРє caller
       for (const c of callerCalls) {
         this.logCallDetail('[CALL_GATEWAY] CALL_START caller call detail', c);
       }
 
-      // Фильтруем: ищем реальный ACCEPTED (не stale PENDING и не stale ACCEPTED)
+      // Р¤РёР»СЊС‚СЂСѓРµРј: РёС‰РµРј СЂРµР°Р»СЊРЅС‹Р№ ACCEPTED (РЅРµ stale PENDING Рё РЅРµ stale ACCEPTED)
       const callerAcceptedCall = callerCalls.find(
         (c) => c.status === CallStatus.ACCEPTED && !this.isStaleAcceptedCall(c),
       );
       if (callerAcceptedCall) {
         this.logCallDetail(
-          '[CALL_GATEWAY] CALL_START blocked caller_busy — blocking call detail',
+          '[CALL_GATEWAY] CALL_START blocked caller_busy вЂ” blocking call detail',
           callerAcceptedCall,
         );
-        return { success: false, error: 'У вас уже есть активный звонок' };
+        return { success: false, error: 'РЈ РІР°СЃ СѓР¶Рµ РµСЃС‚СЊ Р°РєС‚РёРІРЅС‹Р№ Р·РІРѕРЅРѕРє' };
       }
 
-      // Stale PENDING — автоматически завершаем
+      // Stale PENDING вЂ” Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё Р·Р°РІРµСЂС€Р°РµРј
       for (const c of callerCalls) {
         if (this.isStalePendingCall(c)) {
           this.logger.warn(
@@ -273,7 +284,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
       }
 
-      // Stale ACCEPTED — автоматически завершаем (залипшие звонки без startedAt)
+      // Stale ACCEPTED вЂ” Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё Р·Р°РІРµСЂС€Р°РµРј (Р·Р°Р»РёРїС€РёРµ Р·РІРѕРЅРєРё Р±РµР· startedAt)
       for (const c of callerCalls) {
         if (this.isStaleAcceptedCall(c)) {
           this.logger.warn(
@@ -283,30 +294,30 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
       }
 
-      // ========== Проверка активных звонков callee ==========
+      // ========== РџСЂРѕРІРµСЂРєР° Р°РєС‚РёРІРЅС‹С… Р·РІРѕРЅРєРѕРІ callee ==========
       const calleeCalls = await this.callService.findActiveCallsByUserId(payload.calleeId);
       this.logger.log(
         `[CALL_GATEWAY] CALL_START callee active calls count=${calleeCalls.length} calleeId=${payload.calleeId}`,
       );
 
-      // Диагностика: логируем каждый звонок callee
+      // Р”РёР°РіРЅРѕСЃС‚РёРєР°: Р»РѕРіРёСЂСѓРµРј РєР°Р¶РґС‹Р№ Р·РІРѕРЅРѕРє callee
       for (const c of calleeCalls) {
         this.logCallDetail('[CALL_GATEWAY] CALL_START callee call detail', c);
       }
 
-      // Фильтруем: ищем реальный ACCEPTED (не stale)
+      // Р¤РёР»СЊС‚СЂСѓРµРј: РёС‰РµРј СЂРµР°Р»СЊРЅС‹Р№ ACCEPTED (РЅРµ stale)
       const calleeAcceptedCall = calleeCalls.find(
         (c) => c.status === CallStatus.ACCEPTED && !this.isStaleAcceptedCall(c),
       );
       if (calleeAcceptedCall) {
         this.logCallDetail(
-          '[CALL_GATEWAY] CALL_START blocked callee_busy — blocking call detail',
+          '[CALL_GATEWAY] CALL_START blocked callee_busy вЂ” blocking call detail',
           calleeAcceptedCall,
         );
-        return { success: false, error: 'Пользователь уже занят другим звонком' };
+        return { success: false, error: 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ СѓР¶Рµ Р·Р°РЅСЏС‚ РґСЂСѓРіРёРј Р·РІРѕРЅРєРѕРј' };
       }
 
-      // Stale PENDING у callee — автоматически завершаем
+      // Stale PENDING Сѓ callee вЂ” Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё Р·Р°РІРµСЂС€Р°РµРј
       for (const c of calleeCalls) {
         if (this.isStalePendingCall(c)) {
           this.logger.warn(
@@ -316,7 +327,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
       }
 
-      // Stale ACCEPTED у callee — автоматически завершаем
+      // Stale ACCEPTED Сѓ callee вЂ” Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё Р·Р°РІРµСЂС€Р°РµРј
       for (const c of calleeCalls) {
         if (this.isStaleAcceptedCall(c)) {
           this.logger.warn(
@@ -326,13 +337,13 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
       }
 
-      // ========== Перечитываем данные после очистки stale ==========
-      // После endCall() stale-звонков нужно получить актуальное состояние,
-      // чтобы existingPendingBetween гарантированно был не-stale.
+      // ========== РџРµСЂРµС‡РёС‚С‹РІР°РµРј РґР°РЅРЅС‹Рµ РїРѕСЃР»Рµ РѕС‡РёСЃС‚РєРё stale ==========
+      // РџРѕСЃР»Рµ endCall() stale-Р·РІРѕРЅРєРѕРІ РЅСѓР¶РЅРѕ РїРѕР»СѓС‡РёС‚СЊ Р°РєС‚СѓР°Р»СЊРЅРѕРµ СЃРѕСЃС‚РѕСЏРЅРёРµ,
+      // С‡С‚РѕР±С‹ existingPendingBetween РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅРЅРѕ Р±С‹Р» РЅРµ-stale.
       const freshCallerCalls = await this.callService.findActiveCallsByUserId(callerId);
 
-      // ========== Сценарий B: reuse существующего PENDING между теми же пользователями ==========
-      // Ищем PENDING звонок, где caller=callerId, callee=calleeId
+      // ========== РЎС†РµРЅР°СЂРёР№ B: reuse СЃСѓС‰РµСЃС‚РІСѓСЋС‰РµРіРѕ PENDING РјРµР¶РґСѓ С‚РµРјРё Р¶Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏРјРё ==========
+      // РС‰РµРј PENDING Р·РІРѕРЅРѕРє, РіРґРµ caller=callerId, callee=calleeId
       const existingPendingBetween = freshCallerCalls.find(
         (c) =>
           c.status === CallStatus.PENDING &&
@@ -349,13 +360,13 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
           calleeId: payload.calleeId,
         });
 
-        // Очищаем старый таймаут, если он ещё висит (in-memory timeout мог сохраниться)
+        // РћС‡РёС‰Р°РµРј СЃС‚Р°СЂС‹Р№ С‚Р°Р№РјР°СѓС‚, РµСЃР»Рё РѕРЅ РµС‰С‘ РІРёСЃРёС‚ (in-memory timeout РјРѕРі СЃРѕС…СЂР°РЅРёС‚СЊСЃСЏ)
         this.clearCallTimeout(existingPendingBetween.id);
 
-        // Переиспользуем существующий звонок — повторно отправляем call:incoming
+        // РџРµСЂРµРёСЃРїРѕР»СЊР·СѓРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёР№ Р·РІРѕРЅРѕРє вЂ” РїРѕРІС‚РѕСЂРЅРѕ РѕС‚РїСЂР°РІР»СЏРµРј call:incoming
         await this.notifyIncomingCall(existingPendingBetween);
 
-        // Переустанавливаем таймаут (старый мог быть потерян при перезапуске backend)
+        // РџРµСЂРµСѓСЃС‚Р°РЅР°РІР»РёРІР°РµРј С‚Р°Р№РјР°СѓС‚ (СЃС‚Р°СЂС‹Р№ РјРѕРі Р±С‹С‚СЊ РїРѕС‚РµСЂСЏРЅ РїСЂРё РїРµСЂРµР·Р°РїСѓСЃРєРµ backend)
         this.setupCallTimeout(existingPendingBetween.id);
         this.setupCallDeliveryTimeout(existingPendingBetween.id);
 
@@ -366,7 +377,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return { success: true, callId: existingPendingBetween.id, reused: true };
       }
 
-      // ========== Сценарий: новый звонок ==========
+      // ========== РЎС†РµРЅР°СЂРёР№: РЅРѕРІС‹Р№ Р·РІРѕРЅРѕРє ==========
       this.logger.log(
         `[CALL_GATEWAY] CALL_START creating new call callerId=${callerId} calleeId=${payload.calleeId}`,
       );
@@ -399,7 +410,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.error(
         `[CALL_GATEWAY] CALL_START failed clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`,
       );
-      return { success: false, error: 'Не удалось инициировать звонок' };
+      return { success: false, error: 'РќРµ СѓРґР°Р»РѕСЃСЊ РёРЅРёС†РёРёСЂРѕРІР°С‚СЊ Р·РІРѕРЅРѕРє' };
     }
   }
 
@@ -415,7 +426,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       if (!existingCall) {
         this.logger.warn(`[CALL_GATEWAY] CALL_ACCEPT missing callId=${payload.callId}`);
-        return { success: false, error: 'Звонок не найден' };
+        return { success: false, error: 'Р—РІРѕРЅРѕРє РЅРµ РЅР°Р№РґРµРЅ' };
       }
 
       if (existingCall.status !== CallStatus.PENDING) {
@@ -426,7 +437,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
           callId: payload.callId,
           reason: 'expired',
         });
-        return { success: false, error: 'Звонок уже неактивен' };
+        return { success: false, error: 'Р—РІРѕРЅРѕРє СѓР¶Рµ РЅРµР°РєС‚РёРІРµРЅ' };
       }
 
       this.clearCallTimeout(payload.callId);
@@ -452,7 +463,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.error(
         `[CALL_GATEWAY] CALL_ACCEPT failed clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`,
       );
-      return { success: false, error: 'Не удалось принять звонок' };
+      return { success: false, error: 'РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРЅСЏС‚СЊ Р·РІРѕРЅРѕРє' };
     }
   }
 
@@ -482,13 +493,14 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         callId: call.id,
         reason: 'rejected',
       });
+      await this.notifyCallEndedPush(call.id, call.callerId, call.calleeId);
 
       return { success: true };
     } catch (error) {
       this.logger.error(
         `[CALL_GATEWAY] CALL_REJECT failed clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`,
       );
-      return { success: false, error: 'Не удалось отклонить звонок' };
+      return { success: false, error: 'РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєР»РѕРЅРёС‚СЊ Р·РІРѕРЅРѕРє' };
     }
   }
 
@@ -513,10 +525,11 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       await this.callService.updateCallStatus(payload.callId, CallStatus.ENDED, undefined, now);
 
-      // Если причина connect_failed — другой участник всё ещё на звонке,
-      // не отправляем ему call:ended, чтобы не сбросить его состояние.
+      // Р•СЃР»Рё РїСЂРёС‡РёРЅР° connect_failed вЂ” РґСЂСѓРіРѕР№ СѓС‡Р°СЃС‚РЅРёРє РІСЃС‘ РµС‰С‘ РЅР° Р·РІРѕРЅРєРµ,
+      // РЅРµ РѕС‚РїСЂР°РІР»СЏРµРј РµРјСѓ call:ended, С‡С‚РѕР±С‹ РЅРµ СЃР±СЂРѕСЃРёС‚СЊ РµРіРѕ СЃРѕСЃС‚РѕСЏРЅРёРµ.
       if (payload.reason === 'connect_failed') {
-        this.logger.log(`[CALL_GATEWAY] CALL_END reason=connect_failed — NOT sending call:ended to other participant callId=${payload.callId}`);
+        this.logger.log(`[CALL_GATEWAY] CALL_END reason=connect_failed вЂ” NOT sending call:ended to other participant callId=${payload.callId}`);
+        await this.notifyCallEndedPush(payload.callId, call.callerId, call.calleeId);
         return { success: true };
       }
 
@@ -525,13 +538,14 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         duration,
         reason: 'ended_by_caller',
       });
+      await this.notifyCallEndedPush(call.id, call.callerId, call.calleeId);
 
       return { success: true };
     } catch (error) {
       this.logger.error(
         `[CALL_GATEWAY] CALL_END failed clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`,
       );
-      return { success: false, error: 'Не удалось завершить звонок' };
+      return { success: false, error: 'РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РІРµСЂС€РёС‚СЊ Р·РІРѕРЅРѕРє' };
     }
   }
 
@@ -574,7 +588,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const fromUserId = this.getUserIdFromToken(client);
       if (!fromUserId) {
         this.logger.warn(`[CALL_GATEWAY] CALL_SIGNAL skipped clientId=${client.id} reason=no_user`);
-        return { success: false, error: 'Не удалось определить отправителя' };
+        return { success: false, error: 'РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ РѕС‚РїСЂР°РІРёС‚РµР»СЏ' };
       }
 
       const call = await this.callService.getCallById(payload.callId);
@@ -595,7 +609,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.error(
         `[CALL_GATEWAY] CALL_SIGNAL failed clientId=${client.id} error=${error instanceof Error ? error.message : String(error)}`,
       );
-      return { success: false, error: 'Не удалось передать сигнал' };
+      return { success: false, error: 'РќРµ СѓРґР°Р»РѕСЃСЊ РїРµСЂРµРґР°С‚СЊ СЃРёРіРЅР°Р»' };
     }
   }
 
