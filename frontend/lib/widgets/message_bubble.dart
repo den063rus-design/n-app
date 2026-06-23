@@ -26,6 +26,11 @@ class MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final time = DateFormat('HH:mm').format(DateTime.parse(message.createdAt));
 
+    // Системное сообщение о звонке — рендерим как центрированную строку, не как bubble
+    if (message.isCallMessage) {
+      return _buildCallSystemMessage(context, time);
+    }
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Column(
@@ -45,6 +50,88 @@ class MessageBubble extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// Рендерит системное сообщение о звонке в виде центрированной строки.
+  /// Текст и иконка строятся по metadata.status + isMine (сторона bubble).
+  /// callerId/calleeId из metadata читаются для будущего использования,
+  /// но направление пока определяется через isMine.
+  Widget _buildCallSystemMessage(BuildContext context, String time) {
+    final meta = message.metadata;
+    final callStatus = meta?['status'] as String? ?? 'ended';
+    final durationSec = meta?['durationSec'] as int? ?? 0;
+    // Читаем для будущего использования, пока не применяем для направления
+    final callerId = meta?['callerId'] as int?;
+    final calleeId = meta?['calleeId'] as int?;
+
+    // Направление определяется через сторону bubble (isMine)
+    final bool isOutgoing = isMine;
+
+    // Иконка и цвет
+    final bool isMissed = callStatus == 'missed';
+    final IconData icon = isMissed ? Icons.phone_missed : Icons.phone_in_talk;
+    final Color? iconColor = isMissed ? Colors.red[400] : Colors.grey[600];
+
+    // Текст строится по metadata + isOutgoing
+    final String displayText = _buildCallDisplayText(callStatus, durationSec, isOutgoing);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.grey[100],
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: iconColor),
+              const SizedBox(width: 6),
+              Text(
+                displayText,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey[700],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                time,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.grey[500],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Строит отображаемый текст звонка по статусу, длительности и направлению.
+  /// [isOutgoing] — true для исходящего звонка, false для входящего.
+  String _buildCallDisplayText(String callStatus, int durationSec, bool isOutgoing) {
+    switch (callStatus) {
+      case 'missed':
+        return isOutgoing ? 'Звонок не принят' : 'Пропущенный звонок';
+      case 'rejected':
+        return 'Звонок отклонён';
+      case 'cancelled':
+        return 'Звонок отменён';
+      case 'ended':
+      default:
+        final prefix = isOutgoing ? 'Исходящий звонок' : 'Входящий звонок';
+        if (durationSec > 0) {
+          final min = durationSec ~/ 60;
+          final sec = durationSec % 60;
+          final durStr = '${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
+          return '$prefix • $durStr';
+        }
+        return prefix;
+    }
   }
 
   Widget _buildBubble(BuildContext context, String time) {

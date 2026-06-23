@@ -97,6 +97,8 @@ class Message {
   final String status; // 'SENT' | 'DELIVERED' | 'READ'
   final List<Attachment>? attachments;
   final String createdAt;
+  final String type; // 'TEXT' | 'CALL'
+  final Map<String, dynamic>? metadata;
 
   Message({
     required this.id,
@@ -106,6 +108,8 @@ class Message {
     required this.status,
     this.attachments,
     required this.createdAt,
+    this.type = 'TEXT',
+    this.metadata,
   });
 
   factory Message.fromJson(Map<String, dynamic> json) => Message(
@@ -120,6 +124,8 @@ class Message {
                 .toList()
             : null,
         createdAt: json['createdAt'] as String? ?? DateTime.now().toIso8601String(),
+        type: (json['type'] as String?) ?? 'TEXT',
+        metadata: json['metadata'] as Map<String, dynamic>?,
       );
 
   Map<String, dynamic> toJson() => {
@@ -131,9 +137,12 @@ class Message {
         if (attachments != null)
           'attachments': attachments!.map((a) => a.toJson()).toList(),
         'createdAt': createdAt,
+        'type': type,
+        if (metadata != null) 'metadata': metadata,
       };
 
   bool get isRead => status == 'READ';
   bool get isDelivered => status == 'DELIVERED';
   bool get isSent => status == 'SENT';
+  bool get isCallMessage => type == 'CALL';
 }

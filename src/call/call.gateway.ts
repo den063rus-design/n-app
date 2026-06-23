@@ -10,6 +10,7 @@ import {
 import { CallStatus } from '@prisma/client';
 import { Namespace, Socket } from 'socket.io';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ChatService } from '../chat/chat.service';
 import { CallService } from './call.service';
 
 @WebSocketGateway({
@@ -30,6 +31,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly jwtService: JwtService,
     private readonly callService: CallService,
     private readonly notificationsService: NotificationsService,
+    private readonly chatService: ChatService,
   ) {}
 
   handleConnection(client: Socket) {
@@ -90,6 +92,15 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         `[CALL_GATEWAY] DISCONNECT ending_call callId=${call.id} user=${userId} otherUserId=${otherUserId}`,
       );
 
+      // Системное сообщение: звонок прерван из-за дисконнекта
+      const disconnectStatus = call.status === 'PENDING' ? 'cancelled' : 'ended';
+      await this.chatService.createCallMessage({
+        callerId: call.callerId,
+        calleeId: call.calleeId,
+        callId: call.id,
+        status: disconnectStatus,
+      });
+
       this.sendToBoth(userId, otherUserId, 'call:ended', {
         callId: call.id,
         reason: 'peer_disconnected',
@@ -148,6 +159,15 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         if (currentCall && currentCall.status === CallStatus.PENDING) {
           this.logger.warn(`[CALL_GATEWAY] NO_ANSWER timeout callId=${callId}`);
           await this.callService.endCall(callId);
+
+          // Системное сообщение: пропущенный звонок (caller не дождался ответа)
+          await this.chatService.createCallMessage({
+            callerId: currentCall.callerId,
+            calleeId: currentCall.calleeId,
+            callId,
+            status: 'missed',
+          });
+
           this.sendToBoth(currentCall.callerId, currentCall.calleeId, 'call:ended', {
             callId,
             reason: 'no_answer',
@@ -178,6 +198,15 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         if (currentCall && currentCall.status === CallStatus.PENDING) {
           this.logger.warn(`[CALL_GATEWAY] CALL_DELIVERY_TIMEOUT fired callId=${callId}`);
           await this.callService.endCall(callId);
+
+          // Системное сообщение: пропущенный звонок (callee не получил уведомление)
+          await this.chatService.createCallMessage({
+            callerId: currentCall.callerId,
+            calleeId: currentCall.calleeId,
+            callId,
+            status: 'missed',
+          });
+
           this.sendToBoth(currentCall.callerId, currentCall.calleeId, 'call:ended', {
             callId,
             reason: 'no_answer',
@@ -484,6 +513,14 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       await this.callService.endCall(call.id);
 
+      // Системное сообщение: звонок отклонён
+      await this.chatService.createCallMessage({
+        callerId: call.callerId,
+        calleeId: call.calleeId,
+        callId: call.id,
+        status: 'rejected',
+      });
+
       this.sendToUser(call.callerId, 'call:rejected', {
         callId: call.id,
         reason: 'rejected',
@@ -524,6 +561,15 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         : 0;
 
       await this.callService.updateCallStatus(payload.callId, CallStatus.ENDED, undefined, now);
+
+      // Системное сообщение: звонок завершён (состоявшийся)
+      await this.chatService.createCallMessage({
+        callerId: call.callerId,
+        calleeId: call.calleeId,
+        callId: call.id,
+        status: 'ended',
+        durationSec: duration,
+      });
 
       // Р•СЃР»Рё РїСЂРёС‡РёРЅР° connect_failed вЂ” РґСЂСѓРіРѕР№ СѓС‡Р°СЃС‚РЅРёРє РІСЃС‘ РµС‰С‘ РЅР° Р·РІРѕРЅРєРµ,
       // РЅРµ РѕС‚РїСЂР°РІР»СЏРµРј РµРјСѓ call:ended, С‡С‚РѕР±С‹ РЅРµ СЃР±СЂРѕСЃРёС‚СЊ РµРіРѕ СЃРѕСЃС‚РѕСЏРЅРёРµ.

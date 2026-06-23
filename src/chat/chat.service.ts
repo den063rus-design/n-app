@@ -5,7 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { MessageStatus, Role, UserStatus } from '@prisma/client';
+import { MessageStatus, MessageType, Role, UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatGateway } from './chat.gateway';
 import { FilesService } from '../files/files.service';
@@ -30,6 +30,8 @@ export class ChatService {
     senderId: true,
     receiverId: true,
     text: true,
+    type: true,
+    metadata: true,
     status: true,
     createdAt: true,
     updatedAt: true,
@@ -384,5 +386,42 @@ export class ChatService {
         'Чат доступен только между пользователем и администратором',
       );
     }
+  }
+
+  /**
+   * Создаёт системное сообщение о звонке в чате между caller и callee.
+   * Вызывается из CallGateway при завершении звонка.
+   * Текст нейтральный ('CALL_EVENT'), вся смысловая информация — в metadata.
+   * Frontend сам строит отображаемый текст по metadata + isMine.
+   */
+  async createCallMessage(data: {
+    callerId: number;
+    calleeId: number;
+    callId: number;
+    status: 'missed' | 'rejected' | 'ended' | 'cancelled';
+    durationSec?: number;
+  }) {
+    const message = await this.prisma.message.create({
+      data: {
+        senderId: data.callerId,
+        receiverId: data.calleeId,
+        text: 'CALL_EVENT',
+        type: MessageType.CALL,
+        metadata: {
+          callId: data.callId,
+          callerId: data.callerId,
+          calleeId: data.calleeId,
+          status: data.status,
+          durationSec: data.durationSec ?? 0,
+        },
+      },
+      select: this.messageSelect,
+    });
+
+    // Отправляем через WebSocket событие message:new (то же, что и для обычных сообщений)
+    this.chatGateway.sendToUser(data.calleeId, 'message:new', message);
+    this.chatGateway.sendToUser(data.callerId, 'message:new', message);
+
+    return message;
   }
 }

@@ -95,13 +95,23 @@ class _AttachmentViewerState extends State<AttachmentViewer> {
   }
 
   /// Открывает fullscreen просмотр видео
-  void _openFullscreenVideo(BuildContext context) {
+  Future<void> _openFullscreenVideo(BuildContext context) async {
     if (_videoController == null || !_isInitialized) return;
-    Navigator.of(context).push(
+    final currentPosition = _videoController!.value.position;
+    _videoController!.pause();
+    final returnedPosition = await Navigator.of(context).push<Duration>(
       MaterialPageRoute(
-        builder: (_) => _FullscreenVideoPage(controller: _videoController!),
+        builder: (_) => _FullscreenVideoPage(
+          url: widget.attachment.url,
+          initialPosition: currentPosition,
+        ),
       ),
     );
+    if (!mounted || _videoController == null) return;
+    final seekTo = returnedPosition ?? currentPosition;
+    if (seekTo > Duration.zero) {
+      _videoController!.seekTo(seekTo);
+    }
   }
 
   @override
@@ -374,30 +384,57 @@ class _FullscreenImagePage extends StatelessWidget {
 // Fullscreen Video Page
 // ============================================================
 class _FullscreenVideoPage extends StatefulWidget {
-  final VideoPlayerController controller;
+  final String url;
+  final Duration initialPosition;
 
-  const _FullscreenVideoPage({required this.controller});
+  const _FullscreenVideoPage({
+    required this.url,
+    required this.initialPosition,
+  });
 
   @override
   State<_FullscreenVideoPage> createState() => _FullscreenVideoPageState();
 }
 
 class _FullscreenVideoPageState extends State<_FullscreenVideoPage>
-    with SingleTickerProviderStateMixin {
+    with WidgetsBindingObserver {
   late VideoPlayerController _controller;
   bool _isPlaying = false;
   bool _showOverlay = true;
-  late Timer _overlayTimer;
+  Timer? _overlayTimer;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  bool _isScrubbing = false;
+  double _scrubPositionMs = 0;
+  bool _wasPlayingBeforePause = false;
 
   @override
   void initState() {
     super.initState();
-    _controller = widget.controller;
+    WidgetsBinding.instance.addObserver(this);
+    _controller = VideoPlayerController.networkUrl(
+      Uri.parse(widget.url),
+    );
     _controller.addListener(_onControllerUpdate);
-    // Автостарт при открытии fullscreen
-    if (!_controller.value.isPlaying) {
-      _controller.play();
+    _initFullscreenController();
+  }
+
+  Future<void> _initFullscreenController() async {
+    try {
+      await _controller.initialize();
+    } catch (_) {
+      return;
     }
+    if (!mounted) return;
+    if (widget.initialPosition > Duration.zero) {
+      try {
+        await _controller.seekTo(widget.initialPosition);
+      } catch (_) {}
+    }
+    try {
+      await _controller.play();
+    } catch (_) {}
+    if (!mounted) return;
     setState(() => _isPlaying = _controller.value.isPlaying);
     _startOverlayTimer();
   }
@@ -412,33 +449,116 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage>
     if (mounted) {
       setState(() {
         _isPlaying = _controller.value.isPlaying;
+        _position = _controller.value.position;
+        _duration = _controller.value.duration;
       });
     }
   }
 
   void _handleTap() {
     if (_isPlaying) {
-      _controller.pause();
+      try {
+        _controller.pause();
+      } catch (_) {}
       setState(() => _showOverlay = true);
     } else {
-      _controller.play();
+      try {
+        _controller.play();
+      } catch (_) {}
       setState(() => _showOverlay = true);
       _startOverlayTimer();
     }
   }
 
+  String _formatDuration(Duration d) {
+    if (d.inHours > 0) {
+      final h = d.inHours.toString().padLeft(2, '0');
+      final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+      final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+      return '$h:$m:$s';
+    }
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.removeListener(_onControllerUpdate);
-    _controller.pause(); // Останавливаем видео при выходе
-    _overlayTimer.cancel();
-    // Не диспозим controller — он принадлежит AttachmentViewer
+    try {
+      _controller.pause();
+    } catch (_) {}
+    _controller.dispose();
+    _overlayTimer?.cancel();
     super.dispose();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _wasPlayingBeforePause = _isPlaying;
+      if (_isPlaying) {
+        try {
+          _controller.pause();
+        } catch (_) {}
+      }
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => _showOverlay = true);
+      });
+    } else if (state == AppLifecycleState.inactive) {
+      _wasPlayingBeforePause = _isPlaying;
+      if (_isPlaying) {
+        try {
+          _controller.pause();
+        } catch (_) {}
+      }
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => _showOverlay = true);
+      });
+    } else if (state == AppLifecycleState.resumed) {
+      if (!_controller.value.isInitialized) {
+        if (!mounted) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() => _showOverlay = true);
+        });
+        return;
+      }
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {});
+      });
+      if (_wasPlayingBeforePause) {
+        try {
+          _controller.play();
+        } catch (_) {}
+      }
+      // Если было на паузе — оставляем на паузе, ничего не делаем
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final mediaPadding = MediaQuery.of(context).padding;
+    final durationMs = _duration.inMilliseconds.toDouble();
+    final maxSl = durationMs > 0 ? durationMs : 1.0;
+    final sliderValue = _isScrubbing
+        ? _scrubPositionMs
+        : _position.inMilliseconds.toDouble().clamp(0, maxSl).toDouble();
+
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        Navigator.of(context).pop(_position);
+      },
+      child: Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
@@ -483,9 +603,91 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage>
                   ),
                 ),
               ),
+            // Нижняя панель управления
+            if (_controller.value.isInitialized)
+              Positioned(
+                left: mediaPadding.left + 12,
+                right: mediaPadding.right + 12,
+                bottom: mediaPadding.bottom + 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Полоса перемотки — Slider
+                      SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: 8,
+                          thumbShape: const RoundSliderThumbShape(
+                            enabledThumbRadius: 10,
+                          ),
+                          overlayShape: const RoundSliderOverlayShape(
+                            overlayRadius: 20,
+                          ),
+                          activeTrackColor: Colors.white,
+                          inactiveTrackColor: Colors.white24,
+                          thumbColor: Colors.white,
+                          overlayColor: Colors.white12,
+                        ),
+                        child: Slider(
+                          min: 0,
+                          max: maxSl,
+                          value: sliderValue,
+                          onChanged: (v) {
+                            setState(() {
+                              _isScrubbing = true;
+                              _scrubPositionMs = v;
+                            });
+                          },
+                          onChangeEnd: (v) {
+                            try {
+                              _controller.seekTo(
+                                Duration(milliseconds: v.round()),
+                              );
+                            } catch (_) {}
+                            setState(() => _isScrubbing = false);
+                          },
+                        ),
+                      ),
+                      // Время слева / длительность справа
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            _formatDuration(
+                              Duration(
+                                milliseconds: sliderValue.round(),
+                              ),
+                            ),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                            ),
+                          ),
+                          Text(
+                            _formatDuration(_duration),
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
           ],
         ),
       ),
-    );
+    ),
+  );
   }
 }

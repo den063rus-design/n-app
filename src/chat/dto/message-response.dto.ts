@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { MessageStatus } from '@prisma/client';
+import { MessageStatus, MessageType } from '@prisma/client';
 
 class AttachmentDto {
   @ApiProperty()
@@ -27,6 +27,12 @@ export class MessageResponseDto {
 
   @ApiProperty()
   text!: string;
+
+  @ApiProperty({ enum: MessageType })
+  type!: MessageType;
+
+  @ApiPropertyOptional()
+  metadata?: Record<string, any>;
 
   @ApiProperty({ enum: MessageStatus })
   status!: MessageStatus;
