@@ -785,43 +785,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
           }
         }
       });
-      return;
     }
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-
-      if (intent is ShowIncomingCallIntent) {
-        showIncomingCallDialogFromService(
-          callerId: intent.callerUserId,
-          callerName: intent.callerName ?? 'Incoming call',
-          callId: intent.callId,
-          source: 'v2_push',
-        );
-      } else if (intent is ShowOutgoingCallIntent) {
-        Navigator.push(
-          navigatorKey.currentContext!,
-          MaterialPageRoute(
-            builder: (_) => CallScreen(
-              userId: intent.calleeUserId,
-              userName: intent.calleeName ?? 'User',
-            ),
-          ),
-        );
-      } else if (intent is ShowActiveCallIntent) {
-        Navigator.push(
-          navigatorKey.currentContext!,
-          MaterialPageRoute(
-            builder: (_) => CallScreen(
-              userId: intent.remoteUserId ?? 0,
-              userName: intent.remoteUserName ?? 'User',
-            ),
-          ),
-        );
-      } else if (intent is DismissCallScreenIntent) {
-        Navigator.of(navigatorKey.currentContext!).pop();
-      }
-    });
   }
 
   /// Слушает входящие звонки (socket path).
@@ -927,7 +891,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     // вызывается в main() до runApp()). В результате событие теряется.
     //
     // Здесь мы проверяем: если CallService уже в RINGING, но диалог ещё не
-    // показан — показываем диалог из данных CallService.
+    // показан — authority path получит stateStream и покажет dialog.
     _checkPendingIncomingCallFromPush();
   }
 
@@ -969,7 +933,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     _handleCallPushTap(pending);
   }
 
-  /// Проверяет, не было ли восстановлено состояние входящего звонка из push
+  /// Страховочная проверка: был ли восстановлен incoming call из push
   /// до того, как подписка на стрим была установлена.
   ///
   /// НЕ открывает dialog — это делает ТОЛЬКО _listenCallState (authority path).
@@ -994,6 +958,10 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     debugPrint('[APP] _checkPendingIncomingCallFromPush — state=RINGING, delegating to authority path');
   }
 
+  /// Страховочная проверка: есть ли pending incoming call в CallService
+  /// (например, после реконнекта socket).
+  ///
+  /// НЕ открывает dialog — это делает ТОЛЬКО _listenCallState (authority path).
   void _checkPendingIncomingCallFromService() {
     final callService = CallService();
     if (kUseCallV2UiFlow && _isV2SessionActive()) {

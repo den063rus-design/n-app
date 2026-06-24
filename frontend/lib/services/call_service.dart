@@ -34,9 +34,6 @@ class CallService {
   /// Алиас для v2StartLifecycleEnabled (обратная совместимость).
   static final bool v2UiLifecycleEnabled = v2StartLifecycleEnabled;
 
-  /// V2 shadow mode (observer/diagnostics, без управления).
-  static final bool v2ShadowEnabled = kUseCallV2Shadow || kUseCallV2;
-
   final SocketService _socketService = SocketService();
   final CallLogger _callLogger = CallLogger();
   final ApiService _apiService = ApiService();
@@ -144,31 +141,6 @@ class CallService {
   void markCallScreenClosed() => _isCallScreenOpen = false;
   void markIncomingDialogOpen() => _isIncomingDialogOpen = true;
   void markIncomingDialogClosed() => _isIncomingDialogOpen = false;
-
-  /// Fallback-мост: уведомляет UI о pending incoming call.
-  ///
-  /// НЕ открывает dialog напрямую — это делает ТОЛЬКО authority path
-  /// (_listenCallState в app.dart).
-  ///
-  /// Здесь только:
-  /// - V2 guard: если V2 session активна — выходим
-  /// - всё остальное делегируется authority path через stateStream
-  void notifyPendingIncomingCallToUi() {
-    if (_pendingIncomingCall == null) {
-      return;
-    }
-
-    final v2Session = CallV2Service.instance.session;
-    final v2SessionActive =
-        v2Session != null && v2Session.isActive;
-    if (kUseCallV2UiFlow && v2SessionActive) {
-      return;
-    }
-
-    // Pending data уже есть в CallService — authority path получит
-    // RINGING через stateStream и покажет dialog.
-    debugPrint('[CALL_SERVICE] notifyPendingIncomingCallToUi — pending exists, delegating to authority path');
-  }
 
   void minimizeCall() {
     if (_state == CallState.CALLING ||
