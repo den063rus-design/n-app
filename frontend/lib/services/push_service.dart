@@ -5,6 +5,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
 import '../services/call_ringtone_service.dart';
 import '../services/call_service.dart';
@@ -22,6 +23,10 @@ const String _messageAlertsChannelId = 'message_alerts_channel';
 const String _messageSummaryChannelId = 'message_summary_channel';
 const String _incomingCallChannelId = 'incoming_call_channel';
 const String _missedCallChannelId = 'missed_call_channel';
+
+/// Префикс для ключа SharedPreferences, хранящего счётчик сообщений
+/// для одного отправителя. Полный ключ: message_count_<senderKey>.
+const String _messageCountPrefPrefix = 'message_count_';
 
 Future<void> _ensureNotificationChannels(
   FlutterLocalNotificationsPlugin notifications,
@@ -121,16 +126,11 @@ String _messageNotificationSummaryTag(String senderKey) {
   return 'message_summary_$senderKey';
 }
 
-int _messageNotificationAlertId() {
-  return PushService.messageNotificationBaseId +
-      100000 +
-      (DateTime.now().microsecondsSinceEpoch % 899999);
-}
-
 Future<void> _cancelMessageNotificationGroup({
   required FlutterLocalNotificationsPlugin notifications,
   String? senderId,
   String? title,
+  SharedPreferences? prefs,
 }) async {
   final summaryId = _messageNotificationIdForSender(
     senderId: senderId,
@@ -142,6 +142,12 @@ Future<void> _cancelMessageNotificationGroup({
   );
   final alertTagPrefix = _messageNotificationAlertTagPrefix(senderKey);
   final summaryTag = _messageNotificationSummaryTag(senderKey);
+
+  // Сбрасываем persistent счётчик при очистке уведомления.
+  if (prefs != null) {
+    final prefKey = '$_messageCountPrefPrefix$senderKey';
+    await prefs.remove(prefKey);
+  }
 
   try {
     if (defaultTargetPlatform == TargetPlatform.android) {
@@ -177,31 +183,47 @@ Future<void> _showGroupedMessageNotification({
   required String title,
   required String body,
   required Map<String, dynamic> data,
+  SharedPreferences? prefs,
 }) async {
   final senderId = data['senderId'] as String?;
   final senderKey = _messageNotificationSenderKey(
     senderId: senderId,
     title: title,
   );
-  final alertTagPrefix = _messageNotificationAlertTagPrefix(senderKey);
-  final alertId = _messageNotificationAlertId();
-  var existingCount = 0;
-  try {
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      existingCount = await PushService.notificationsChannel
-              .invokeMethod<int>('getNotificationCountByTagPrefix', {
-            'tagPrefix': alertTagPrefix,
-          }) ??
-          0;
-    } else {
-      existingCount = countsBySender[senderKey] ?? 0;
-    }
-  } catch (_) {}
-  final childTag = '${alertTagPrefix}_${DateTime.now().microsecondsSinceEpoch}';
-  final count = existingCount > 0
-      ? existingCount + 1
-      : ((countsBySender[senderKey] ?? 0) + 1);
+
+  // Стабильный notificationId на одного отправителя.
+  // Один sender → одна карточка, которая обновляется при новых сообщениях.
+  final notificationId = _messageNotificationIdForSender(
+    senderId: senderId,
+    title: title,
+  );
+
+  // Счётчик сообщений от этого отправителя.
+  // Приоритет: countsBySender (foreground) > SharedPreferences (background/killed).
+  int prevCount;
+  if (countsBySender.containsKey(senderKey)) {
+    // Foreground: используем in-memory счётчик.
+    prevCount = countsBySender[senderKey]!;
+  } else if (prefs != null) {
+    // Background/killed: читаем из SharedPreferences.
+    final prefKey = '$_messageCountPrefPrefix$senderKey';
+    prevCount = prefs.getInt(prefKey) ?? 0;
+  } else {
+    prevCount = 0;
+  }
+
+  final count = prevCount + 1;
   countsBySender[senderKey] = count;
+
+  // Сохраняем счётчик в SharedPreferences для background/killed сценариев.
+  if (prefs != null) {
+    final prefKey = '$_messageCountPrefPrefix$senderKey';
+    await prefs.setInt(prefKey, count);
+  }
+
+  // Body со счётчиком: для первого сообщения — просто текст,
+  // для следующих — текст + счётчик.
+  final displayBody = count > 1 ? '$body (+$count)' : body;
 
   final payloadJson = jsonEncode(<String, String?>{
     'type': data['type'] as String?,
@@ -213,7 +235,9 @@ Future<void> _showGroupedMessageNotification({
     'callerName': data['callerName'] as String?,
   });
 
-  final childDetails = AndroidNotificationDetails(
+  // Без tag — Android обновляет существующее уведомление по notificationId.
+  // Это даёт стабильную группировку без дублей.
+  final androidDetails = AndroidNotificationDetails(
     _messageAlertsChannelId,
     'Основные уведомления',
     channelDescription: 'Уведомления о новых сообщениях и звонках',
@@ -222,15 +246,14 @@ Future<void> _showGroupedMessageNotification({
     showWhen: true,
     enableVibration: true,
     playSound: true,
-    tag: childTag,
     onlyAlertOnce: false,
   );
 
   await notifications.show(
-    alertId,
+    notificationId,
     title,
-    body,
-    NotificationDetails(android: childDetails),
+    displayBody,
+    NotificationDetails(android: androidDetails),
     payload: payloadJson,
   );
 }
@@ -270,6 +293,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
   await localNotifications.initialize(initSettings);
   await _ensureNotificationChannels(localNotifications);
+
+  // Получаем SharedPreferences для persistent счётчика сообщений.
+  // В background/killed сценариях in-memory countsBySender недоступен,
+  // поэтому храним счётчик в SharedPreferences.
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
 
   final payloadData = <String, String?>{
     'type': message.data['type'],
@@ -389,6 +417,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       'callerId': message.data['callerId'],
       'callerName': message.data['callerName'],
     },
+    prefs: prefs,
   );
 }
 
@@ -469,10 +498,12 @@ class PushService {
     );
     _messageNotificationCountsBySender.remove(senderKey);
     try {
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
       await _cancelMessageNotificationGroup(
         notifications: _localNotifications,
         senderId: senderId,
         title: title,
+        prefs: prefs,
       );
     } catch (_) {}
   }
@@ -1106,6 +1137,25 @@ class PushService {
     );
     if (type == null) return;
     await cancelIncomingCallNotification();
+
+    // При тапе на message-уведомление сбрасываем persistent счётчик.
+    if (type == 'message') {
+      try {
+        final senderId = data['senderId'] as String?;
+        final senderName = data['senderName'] as String?;
+        final senderKey = _messageNotificationSenderKey(
+          senderId: senderId,
+          title: senderName,
+        );
+        final SharedPreferences prefs = await SharedPreferences.getInstance();
+        final prefKey = '$_messageCountPrefPrefix$senderKey';
+        await prefs.remove(prefKey);
+        _messageNotificationCountsBySender.remove(senderKey);
+        debugPrint(
+          '[FCM_TAP] Reset message counter for senderKey=$senderKey',
+        );
+      } catch (_) {}
+    }
 
     if (type == 'call') {
       final callId = data['callId'] as String?;
