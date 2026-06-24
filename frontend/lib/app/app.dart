@@ -324,7 +324,7 @@ class _AppShell extends StatefulWidget {
 
 class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   static final bool v2ObserverEnabled =
-      kUseCallV2 || kUseCallV2Shadow || kUseCallV2FinalFlow;
+      kUseCallV2 || kUseCallV2Shadow || kUseCallV2FinalFlow || kUseCallV2UiFlow;
   bool _isChecking = true;
   bool _isOffline = false;
   AppLifecycleState _lastLifecycleState = AppLifecycleState.resumed;
@@ -338,6 +338,12 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   // V2
   StreamSubscription<CallUiIntentV2>? _v2IntentSubscription;
 
+  /// Latch: был ли уже показан V1 fallback incoming dialog для текущего звонка.
+  /// Ставится ТОЛЬКО в authority path (_listenCallState при RINGING).
+  /// Сбрасывается при ENDED/IDLE.
+  bool _incomingFallbackConsumed = false;
+
+  /// Единый helper: активна ли V2 session (не idle, не ended, не failed).
   bool _isV2SessionActive() {
     final session = CallV2Service.instance.session;
     if (session == null) return false;
@@ -445,7 +451,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
     // V2: инициализация после успешного auth (replay pending startup event)
     if (v2ObserverEnabled && auth.isAuthenticated) {
-      final userId = auth.currentUser?.id?.toString();
+      final userId = auth.currentUser?.id.toString();
       if (userId != null && userId.isNotEmpty) {
         CallV2Service.instance.init(localUserId: userId);
         debugPrint('[APP_SHELL] _handleAuthStateChanged — CallV2Service.init() OK (userId=$userId)');
@@ -588,16 +594,70 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   StreamSubscription<Map<String, dynamic>>? _incomingCallSubscription;
   StreamSubscription<CallState>? _callStateSubscription;
 
-  /// Слушает состояние звонка для автозакрытия IncomingCallDialog при завершении.
+  /// AUTHORITY PATH для V1 fallback incoming dialog.
+  ///
+  /// Единственный метод, который открывает IncomingCallDialog.
+  /// Все остальные entry points только:
+  /// - проверяют latch
+  /// - потребляют pending data
+  /// - делегируют authority path
+  ///
+  /// Latch _incomingFallbackConsumed:
+  /// - ставится ТОЛЬКО здесь (при RINGING, когда dialog показан)
+  /// - сбрасывается при ENDED/IDLE
   void _listenCallState() {
     final callService = CallService();
     _callStateSubscription = callService.stateStream.listen((state) {
       if (!mounted) return;
+
+      // ================================================================
+      // Сброс latch при завершении звонка
+      // ================================================================
+      if (state == CallState.ENDED || state == CallState.IDLE) {
+        if (_incomingFallbackConsumed) {
+          _incomingFallbackConsumed = false;
+          debugPrint('[APP] _listenCallState — latch reset (state=$state)');
+        }
+
+        // Guard: если диалог уже закрыт — не делаем pop()
+        if (!callService.isIncomingDialogOpen) {
+          debugPrint('[APP] _listenCallState — state=$state, dialog already closed — skipping pop');
+          return;
+        }
+        debugPrint('[APP] _listenCallState — state=$state, dialog open — closing via pop');
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          if (navigatorKey.currentContext == null) return;
+          if (!navigatorKey.currentContext!.mounted) return;
+
+          final routeName = callRouteObserver.currentRouteName;
+          if (routeName != 'incoming_call_dialog') {
+            debugPrint('[APP] _listenCallState — top route is "$routeName", not incoming_call_dialog — skipping pop');
+            return;
+          }
+
+          Navigator.of(navigatorKey.currentContext!).pop();
+        });
+        return;
+      }
+
+      // ================================================================
+      // AUTHORITY PATH: показ V1 fallback incoming dialog
+      // ================================================================
       if (state == CallState.RINGING) {
+        // V2 guard: если V2 session активна — V1 fallback не нужен
         if (kUseCallV2UiFlow && _isV2SessionActive()) {
           debugPrint('[APP-V2-FALLBACK] _listenCallState — V2 session active, skipping V1 fallback');
           return;
         }
+
+        // Latch guard: dialog уже был показан для этого звонка
+        if (_incomingFallbackConsumed) {
+          debugPrint('[APP] _listenCallState — latch already set, skipping');
+          return;
+        }
+
+        // Guard: UI уже открыт (другой путь уже показал dialog)
         if (callService.isIncomingDialogOpen || callService.isCallScreenOpen) {
           debugPrint('[APP] _listenCallState — state=RINGING, UI already open — skipping fallback');
           return;
@@ -611,6 +671,10 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
           debugPrint('[APP] _listenCallState — state=RINGING but remoteUserId is null');
           return;
         }
+
+        // Ставим latch ДО показа dialog, чтобы защититься от race
+        _incomingFallbackConsumed = true;
+        debugPrint('[APP] _listenCallState — latch SET');
 
         debugPrint(
           '[APP] _listenCallState — state=RINGING fallback -> show dialog '
@@ -627,28 +691,6 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
           );
         });
         return;
-      }
-
-      if (state == CallState.ENDED || state == CallState.IDLE) {
-        // Guard: если диалог уже закрыт — не делаем pop()
-        if (!callService.isIncomingDialogOpen) {
-          debugPrint('[APP] 📞 _listenCallState — state=$state, dialog already closed — skipping pop');
-          return;
-        }
-        debugPrint('[APP] 📞 _listenCallState — state=$state, dialog open — closing via pop');
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          if (navigatorKey.currentContext == null) return;
-          if (!navigatorKey.currentContext!.mounted) return;
-
-          final routeName = callRouteObserver.currentRouteName;
-          if (routeName != 'incoming_call_dialog') {
-            debugPrint('[APP] ⚠️ _listenCallState — top route is "$routeName", not incoming_call_dialog — skipping pop');
-            return;
-          }
-
-          Navigator.of(navigatorKey.currentContext!).pop();
-        });
       }
     });
   }
@@ -782,7 +824,12 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     });
   }
 
-  /// Слушает входящие звонки и показывает IncomingCallDialog через fullscreen route.
+  /// Слушает входящие звонки (socket path).
+  ///
+  /// НЕ открывает dialog напрямую — это делает ТОЛЬКО _listenCallState (authority path).
+  /// Здесь только:
+  /// - background: показать локальное уведомление
+  /// - foreground: проверить latch, сохранить pending для authority path
   void _listenIncomingCalls() {
     debugPrint('[APP] _listenIncomingCalls — subscribing to incomingCallStream (backup path)');
     _incomingCallSubscription = CallService().incomingCallStream.listen(
@@ -793,7 +840,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         final callerName = data['callerName'] as String;
         final callId = data['callId'] as int? ?? 0;
 
-        debugPrint('[APP] 📞 APP incoming socket event (backup path) — callerId=$callerId, callerName=$callerName, callId=$callId');
+        debugPrint('[APP] incoming socket event — callerId=$callerId, callerName=$callerName, callId=$callId');
 
         // Background check — ВСЕГДА первым, до любых V2/V1 проверок.
         // На Honor и других устройствах FCM не гарантирует heads-up уведомление,
@@ -817,13 +864,15 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
           return;
         }
 
-        // Foreground fallback: показать диалог входящего звонка
-        showIncomingCallDialogFromService(
-          callerId: callerId,
-          callerName: callerName,
-          callId: callId,
-          source: 'socket',
-        );
+        // Latch guard: authority path уже показал dialog
+        if (_incomingFallbackConsumed) {
+          debugPrint('[APP] _listenIncomingCalls — latch already set, authority path handled it');
+          return;
+        }
+
+        // Не открываем dialog — authority path (_listenCallState) сделает это
+        // при получении CallState.RINGING из stateStream.
+        debugPrint('[APP] _listenIncomingCalls — delegating to authority path (state_fallback)');
       },
       onError: (error, stackTrace) {
         debugPrint('[APP] _listenIncomingCalls — stream error: $error');
@@ -923,8 +972,8 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   /// Проверяет, не было ли восстановлено состояние входящего звонка из push
   /// до того, как подписка на стрим была установлена.
   ///
-  /// Если CallService в RINGING — извлекает данные звонка из CallService
-  /// и вызывает _showIncomingCallDialog(). Все guard'ы внутри _showIncomingCallDialog().
+  /// НЕ открывает dialog — это делает ТОЛЬКО _listenCallState (authority path).
+  /// Если CallService в RINGING — authority path получит stateStream и покажет dialog.
   void _checkPendingIncomingCallFromPush() {
     final callService = CallService();
     if (kUseCallV2UiFlow && _isV2SessionActive()) {
@@ -936,23 +985,13 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       return;
     }
 
-    final remoteUserId = callService.remoteUserId;
-    final remoteUserName = callService.remoteUserName;
-    final currentCallId = callService.currentCallId;
-
-    if (remoteUserId == null) {
-      debugPrint('[APP] _checkPendingIncomingCallFromPush — remoteUserId is null, cannot show dialog');
+    // Latch guard: authority path уже показал dialog
+    if (_incomingFallbackConsumed) {
+      debugPrint('[APP] _checkPendingIncomingCallFromPush — latch already set, authority path handled it');
       return;
     }
 
-    debugPrint('[APP] _checkPendingIncomingCallFromPush — state=RINGING — showing IncomingCallDialog (callerId=$remoteUserId, callerName=$remoteUserName)');
-
-    showIncomingCallDialogFromService(
-      callerId: remoteUserId,
-      callerName: remoteUserName ?? '�������� ������',
-      callId: currentCallId ?? 0,
-      source: 'push',
-    );
+    debugPrint('[APP] _checkPendingIncomingCallFromPush — state=RINGING, delegating to authority path');
   }
 
   void _checkPendingIncomingCallFromService() {
@@ -977,25 +1016,25 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       return;
     }
 
-    debugPrint(
-      '[APP] _checkPendingIncomingCallFromService — showing pending incoming call '
-      '(callerId=$callerId, callerName=$callerName, callId=$callId)',
-    );
+    // Latch guard: authority path уже показал dialog
+    if (_incomingFallbackConsumed) {
+      debugPrint('[APP] _checkPendingIncomingCallFromService — latch already set, authority path handled it');
+      return;
+    }
 
-    showIncomingCallDialogFromService(
-      callerId: callerId,
-      callerName: callerName ?? '�������� ������',
-      callId: callId,
-      source: 'pending_service',
+    debugPrint(
+      '[APP] _checkPendingIncomingCallFromService — pending incoming call exists '
+      '(callerId=$callerId, callerName=$callerName, callId=$callId), delegating to authority path',
     );
   }
 
   /// Обрабатывает тап по call push-уведомлению.
   ///
-  /// Пытается восстановить состояние входящего звонка из payload,
-  /// затем вызывает единый метод _showIncomingCallDialog().
-  /// Все guard'ы (уже открыт диалог / CallScreen) проверяются внутри
-  /// _showIncomingCallDialog().
+  /// НЕ открывает dialog — это делает ТОЛЬКО _listenCallState (authority path).
+  /// Здесь только:
+  /// - валидация payload
+  /// - hydrate состояния в CallService (если нужно)
+  /// - делегирование authority path (stateStream получит RINGING)
   void _handleCallPushTap(Map<String, String?> data) {
     if (kUseCallV2UiFlow && _isV2SessionActive()) {
       debugPrint('[APP-V2-FALLBACK] _handleCallPushTap — V2 session active, skipping V1 fallback');
@@ -1023,32 +1062,32 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     final callService = CallService();
 
     if (callId != 0 && callService.lastEndedCallId == callId) {
-      debugPrint('[APP] ?? ignoring stale call notification tap for ended callId=$callId');
+      debugPrint('[APP] ignoring stale call notification tap for ended callId=$callId');
       unawaited(PushService().cancelIncomingCallNotification());
       return;
     }
 
+    // Latch guard: authority path уже показал dialog
+    if (_incomingFallbackConsumed) {
+      debugPrint('[APP] _handleCallPushTap — latch already set, authority path handled it');
+      return;
+    }
+
     // Если state уже RINGING — socket уже установил состояние,
-    // hydrate не нужен. Просто показываем диалог.
+    // hydrate не нужен. Authority path получит stateStream.
     if (callService.state == CallState.RINGING) {
-      debugPrint('[APP] state=RINGING — showing dialog without hydrate');
-      showIncomingCallDialogFromService(
-        callerId: callerId,
-        callerName: callerName,
-        callId: callId,
-        source: 'push',
-      );
+      debugPrint('[APP] state=RINGING — delegating to authority path');
       return;
     }
 
     // Если уже на звонке (CALLING / IN_CALL) — игнорируем push
     if (callService.state == CallState.CALLING ||
         callService.state == CallState.IN_CALL) {
-      debugPrint('[APP] ⚠️ already in call (state=${callService.state}) — ignoring push tap');
+      debugPrint('[APP] already in call (state=${callService.state}) — ignoring push tap');
       return;
     }
 
-    // Восстанавливаем состояние из push
+    // Восстанавливаем состояние из push — authority path получит RINGING через stateStream
     debugPrint('[APP] Hydrating incoming call from push (state=${callService.state})');
     callService.hydrateIncomingCallFromPush(
       callId: callIdStr ?? '',
@@ -1056,12 +1095,8 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       callerName: callerName,
     );
 
-    showIncomingCallDialogFromService(
-      callerId: callerId,
-      callerName: callerName,
-      callId: callId,
-      source: 'push',
-    );
+    // Authority path (_listenCallState) получит stateStream и покажет dialog
+    debugPrint('[APP] _handleCallPushTap — hydrate done, delegating to authority path');
   }
 
 
@@ -1193,28 +1228,4 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     );
   }
 
-  /// Единый метод открытия CallScreen.
-  /// Вызывает markCallScreenOpen() и делает Navigator.push.
-  void _openCallScreen({
-    required int userId,
-    required String userName,
-    required bool isIncoming,
-    required String from,
-  }) {
-    final callService = CallService();
-    callService.markCallScreenOpen();
-    debugPrint('[APP] ✅ _openCallScreen — opening CallScreen (userId=$userId, from=$from)');
-    Navigator.push(
-      navigatorKey.currentContext!,
-      MaterialPageRoute(
-        settings: const RouteSettings(name: 'call_screen'),
-        builder: (context) => CallScreen(
-          userId: userId,
-          userName: userName,
-          isIncoming: isIncoming,
-          from: from,
-        ),
-      ),
-    );
-  }
 }

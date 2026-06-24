@@ -68,10 +68,16 @@ class CallV2Service {
 
     final oldState = _coordinator!.session?.state;
 
-    // Guard: не обрабатывать события в финальном состоянии (кроме ResetEvent)
+    // Guard: не обрабатывать поздние события прошлого звонка в финальном состоянии.
+    // Разрешены: ResetEvent (сброс), StartOutgoingEvent (новый исходящий),
+    // ReceiveIncomingEvent (новый входящий).
     if (oldState == CallStateV2.ended || oldState == CallStateV2.failed) {
-      if (event is! ResetEvent) {
-        debugPrint('[V2] SKIP event ${event.runtimeType} — already in $oldState');
+      if (event is ResetEvent ||
+          event is StartOutgoingEvent ||
+          event is ReceiveIncomingEvent) {
+        // Разрешено — пропускаем.
+      } else {
+        debugPrint('[V2] SKIP late event ${event.runtimeType} — already in $oldState');
         return;
       }
     }
@@ -92,6 +98,31 @@ class CallV2Service {
   // ===================================================================
   // Публичные методы для вызова из call_service.dart / UI
   // ===================================================================
+
+  /// Ранний старт исходящего звонка — создаёт V2 session сразу,
+  /// до получения реального callId от backend.
+  ///
+  /// callId = 0 (placeholder), будет обновлён позже через [updateOutgoingCallId].
+  void handleStartOutgoingEarly({
+    required int calleeId,
+    String? callType,
+  }) {
+    _handle(StartOutgoingEvent(
+      calleeId: calleeId,
+      callType: callType,
+      callId: 0, // placeholder, будет обновлён
+    ));
+  }
+
+  /// Обновление реального callId в существующей исходящей V2 session.
+  ///
+  /// Вызывается из call:started. Не запускает state machine,
+  /// не генерирует новые UI intents.
+  void updateOutgoingCallId(int callId) {
+    if (_coordinator == null) return;
+    _coordinator!.updateCallId(callId);
+    _sessionController.add(_coordinator!.session);
+  }
 
   void handleStartOutgoing({
     required int calleeId,

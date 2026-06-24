@@ -24,9 +24,18 @@ class CallService {
   static final CallService _instance = CallService._internal();
   factory CallService() => _instance;
   CallService._internal();
-  static final bool v2ShadowEnabled = kUseCallV2Shadow || kUseCallV2;
+  /// V2 управляет start/incoming/accept/reject/media-connected.
+  /// Активен когда включён UI-flow или полный V2.
+  static final bool v2StartLifecycleEnabled = kUseCallV2UiFlow || kUseCallV2;
+
+  /// V2 управляет final-flow (remote ended/rejected, local end, media failed, socket lost).
   static final bool v2FinalEnabled = kUseCallV2FinalFlow || kUseCallV2;
-  static final bool v2UiLifecycleEnabled = kUseCallV2UiFlow || kUseCallV2;
+
+  /// Алиас для v2StartLifecycleEnabled (обратная совместимость).
+  static final bool v2UiLifecycleEnabled = v2StartLifecycleEnabled;
+
+  /// V2 shadow mode (observer/diagnostics, без управления).
+  static final bool v2ShadowEnabled = kUseCallV2Shadow || kUseCallV2;
 
   final SocketService _socketService = SocketService();
   final CallLogger _callLogger = CallLogger();
@@ -64,9 +73,6 @@ class CallService {
   final _minimizedController = StreamController<bool>.broadcast();
   Map<String, dynamic>? _pendingIncomingCall;
 
-  // V2: ��������� ��������� ���������� ������ �� ��������� callId �� backend
-  String? _pendingCalleeId;
-  String? _pendingCallType;
 
   /// V2 guard: true ����� ����, ��� V2 ������� ���� �� ���� final event.
   /// ������������� ��������� V2 ������ �� ��������� socket-�������.
@@ -139,6 +145,14 @@ class CallService {
   void markIncomingDialogOpen() => _isIncomingDialogOpen = true;
   void markIncomingDialogClosed() => _isIncomingDialogOpen = false;
 
+  /// Fallback-мост: уведомляет UI о pending incoming call.
+  ///
+  /// НЕ открывает dialog напрямую — это делает ТОЛЬКО authority path
+  /// (_listenCallState в app.dart).
+  ///
+  /// Здесь только:
+  /// - V2 guard: если V2 session активна — выходим
+  /// - всё остальное делегируется authority path через stateStream
   void notifyPendingIncomingCallToUi() {
     if (_pendingIncomingCall == null) {
       return;
@@ -151,19 +165,9 @@ class CallService {
       return;
     }
 
-    final callerId = _pendingIncomingCall!['callerId'] as int?;
-    final callerName = _pendingIncomingCall!['callerName'] as String?;
-    final callId = _pendingIncomingCall!['callId'] as int? ?? 0;
-    if (callerId == null) {
-      return;
-    }
-
-    showIncomingCallDialogFromService(
-      callerId: callerId,
-      callerName: callerName ?? 'Incoming call',
-      callId: callId,
-      source: 'pending_service',
-    );
+    // Pending data уже есть в CallService — authority path получит
+    // RINGING через stateStream и покажет dialog.
+    debugPrint('[CALL_SERVICE] notifyPendingIncomingCallToUi — pending exists, delegating to authority path');
   }
 
   void minimizeCall() {
@@ -322,15 +326,10 @@ class CallService {
         _log('✅ call:started applied — callId=$_currentCallId');
       }
 
-      // V2: ������ outgoing session � �������� callId (������ _currentCallId ����� ����������)
-      if (v2UiLifecycleEnabled && !_v2FinalEventSent && _currentCallId != null && _pendingCalleeId != null) {
-        CallV2Service.instance.handleStartOutgoing(
-          calleeId: int.tryParse(_pendingCalleeId!) ?? 0,
-          callType: _pendingCallType,
-          callId: _currentCallId,
-        );
-        _pendingCalleeId = null;
-        _pendingCallType = null;
+      // V2: обновляем реальный callId в уже созданной исходящей сессии.
+      // Сама сессия создана ранее в startCall() через handleStartOutgoingEarly().
+      if (v2StartLifecycleEnabled && !_v2FinalEventSent && _currentCallId != null) {
+        CallV2Service.instance.updateOutgoingCallId(_currentCallId!);
       }
     });
 
@@ -511,10 +510,13 @@ class CallService {
     });
     await CallRingtoneService().playOutgoingRingbackTone();
 
-    // V2: ��������� calleeId ��� ������������� ����� ��������� callId �� call:started
-    if (v2UiLifecycleEnabled && !_v2FinalEventSent) {
-      _pendingCalleeId = userId.toString();
-      _pendingCallType = null;
+    // V2: ранний старт исходящей сессии — создаём V2 session сразу,
+    // до получения реального callId от backend.
+    if (v2StartLifecycleEnabled && !_v2FinalEventSent) {
+      CallV2Service.instance.handleStartOutgoingEarly(
+        calleeId: userId,
+        callType: null,
+      );
     }
   }
 
@@ -690,7 +692,7 @@ class CallService {
               RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
         _cancelPeerDisconnectTimer();
-        if (v2UiLifecycleEnabled && !_v2FinalEventSent) {
+        if (v2FinalEnabled && !_v2FinalEventSent) {
           CallV2Service.instance.handleMediaFailed(error: 'peer_connection_$state');
         }
         unawaited(_endCall(reason: 'peer_disconnected'));
@@ -711,7 +713,7 @@ class CallService {
       } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
           state == RTCIceConnectionState.RTCIceConnectionStateClosed) {
         _cancelPeerDisconnectTimer();
-        if (v2UiLifecycleEnabled && !_v2FinalEventSent) {
+        if (v2FinalEnabled && !_v2FinalEventSent) {
           CallV2Service.instance.handleMediaFailed(error: 'ice_$state');
         }
         unawaited(_endCall(reason: 'peer_disconnected'));
@@ -940,7 +942,7 @@ class CallService {
 
     _v2FinalEventSent = true;
 
-    if (v2ShadowEnabled || kUseCallV2UiFlow) {
+    if (v2StartLifecycleEnabled) {
       CallV2Service.instance.reset();
     }
 
@@ -957,8 +959,6 @@ class CallService {
     _isEndingCall = false;
     _lastEndReason = null;
     _pendingIncomingCall = null;
-    _pendingCalleeId = null;
-    _pendingCallType = null;
 
     _localStreamController.add(null);
     _remoteStreamController.add(null);

@@ -77,6 +77,17 @@ class CallCoordinatorV2 {
     );
   }
 
+  /// Техническое обновление callId в существующей сессии.
+  ///
+  /// Используется когда реальный callId приходит с backend с задержкой
+  /// (например, после call:started). Не запускает state machine,
+  /// не генерирует UI intents.
+  void updateCallId(int callId) {
+    if (_session == null) return;
+    _session = _session!.copyWith(callId: callId);
+    debugPrint('[V2_COORD] updateCallId — session.callId=$callId');
+  }
+
   /// Сбросить сессию в idle (например, после закрытия экрана).
   void reset() {
     handleEvent(const ResetEvent());
@@ -100,6 +111,16 @@ class CallCoordinatorV2 {
 
     // Если сессии ещё нет — создаём новую.
     if (current == null) {
+      return _createSessionFromEvent(event, result.newState);
+    }
+
+    // Если текущая сессия в финальном состоянии (ended/failed),
+    // а событие — старт нового звонка — создаём чистую новую сессию.
+    // Это гарантирует, что старые поля (endReason, endedAt, callStartedAt, callId)
+    // не переедут в новый звонок.
+    if (current.state.isFinal &&
+        (event is StartOutgoingEvent || event is ReceiveIncomingEvent)) {
+      _lastEmittedFinalState = null;
       return _createSessionFromEvent(event, result.newState);
     }
 

@@ -150,6 +150,24 @@ class CallStateMachineV2 {
           endReason: CallEndReasonV2.mediaFailed,
         );
       }
+      if (event is LocalEndEvent) {
+        return const StateMachineResult(
+          newState: CallStateV2.ended,
+          endReason: CallEndReasonV2.localEnd,
+        );
+      }
+      if (event is RemoteEndEvent) {
+        return const StateMachineResult(
+          newState: CallStateV2.ended,
+          endReason: CallEndReasonV2.remoteEnd,
+        );
+      }
+      if (event is PeerDisconnectedEvent) {
+        return const StateMachineResult(
+          newState: CallStateV2.failed,
+          endReason: CallEndReasonV2.connectionLost,
+        );
+      }
       if (event is SocketLostEvent) {
         return const StateMachineResult(
           newState: CallStateV2.failed,
@@ -174,13 +192,13 @@ class CallStateMachineV2 {
     CallStateV2.inCall: (event) {
       if (event is LocalEndEvent) {
         return const StateMachineResult(
-          newState: CallStateV2.ending,
+          newState: CallStateV2.ended,
           endReason: CallEndReasonV2.localEnd,
         );
       }
       if (event is RemoteEndEvent) {
         return const StateMachineResult(
-          newState: CallStateV2.ending,
+          newState: CallStateV2.ended,
           endReason: CallEndReasonV2.remoteEnd,
         );
       }
@@ -194,6 +212,12 @@ class CallStateMachineV2 {
         return const StateMachineResult(
           newState: CallStateV2.failed,
           endReason: CallEndReasonV2.connectionLost,
+        );
+      }
+      if (event is MediaFailedEvent) {
+        return const StateMachineResult(
+          newState: CallStateV2.failed,
+          endReason: CallEndReasonV2.mediaFailed,
         );
       }
       return const StateMachineResult(newState: CallStateV2.inCall);
@@ -215,9 +239,14 @@ class CallStateMachineV2 {
     // ended (финальное)
     // ================================================================
     CallStateV2.ended: (event) {
-      // Из финального состояния можно выйти только через ResetEvent.
       if (event is ResetEvent) {
         return const StateMachineResult(newState: CallStateV2.idle);
+      }
+      if (event is StartOutgoingEvent) {
+        return const StateMachineResult(newState: CallStateV2.outgoing);
+      }
+      if (event is ReceiveIncomingEvent) {
+        return const StateMachineResult(newState: CallStateV2.incoming);
       }
       return const StateMachineResult(newState: CallStateV2.ended);
     },
@@ -226,9 +255,14 @@ class CallStateMachineV2 {
     // failed (финальное)
     // ================================================================
     CallStateV2.failed: (event) {
-      // Из финального состояния можно выйти только через ResetEvent.
       if (event is ResetEvent) {
         return const StateMachineResult(newState: CallStateV2.idle);
+      }
+      if (event is StartOutgoingEvent) {
+        return const StateMachineResult(newState: CallStateV2.outgoing);
+      }
+      if (event is ReceiveIncomingEvent) {
+        return const StateMachineResult(newState: CallStateV2.incoming);
       }
       return const StateMachineResult(newState: CallStateV2.failed);
     },

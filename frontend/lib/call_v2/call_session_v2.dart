@@ -1,5 +1,4 @@
 import 'call_state.dart';
-import 'call_event.dart';
 
 /// Модель одной сессии звонка V2.
 ///
