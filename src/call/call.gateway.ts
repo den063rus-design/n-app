@@ -152,6 +152,24 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   /** РЈСЃС‚Р°РЅР°РІР»РёРІР°РµС‚ С‚Р°Р№РјР°СѓС‚ 30 СЃРµРєСѓРЅРґ РЅР° PENDING Р·РІРѕРЅРѕРє.
    *  Р•СЃР»Рё Р·Р° СЌС‚Рѕ РІСЂРµРјСЏ Р·РІРѕРЅРѕРє РЅРµ РїСЂРёРЅСЏС‚ вЂ” Р·Р°РІРµСЂС€Р°РµС‚ РµРіРѕ. */
+  /** Отправляет missed_call push только если callee не онлайн по socket.
+   *  Это предотвращает дубль с frontend missed-call notification,
+   *  который показывается в _endCall() когда приложение живо. */
+  private async maybeSendMissedCallPush(calleeId: number, callerId: number, callId: number) {
+    const calleeRoom = this.getUserRoomName(calleeId);
+    const calleeOnline = this.getRoomSize(calleeRoom) > 0;
+    if (calleeOnline) {
+      this.logger.log(
+        `[CALL_GATEWAY] MISSED_CALL push skipped — callee online (roomSize=${this.getRoomSize(calleeRoom)}) callId=${callId}`,
+      );
+      return;
+    }
+    this.logger.log(
+      `[CALL_GATEWAY] MISSED_CALL sending push — callee offline callId=${callId} callerId=${callerId}`,
+    );
+    await this.notificationsService.sendMissedCallPush(calleeId, callerId, callId);
+  }
+
   private setupCallTimeout(callId: number) {
     const timeout = setTimeout(async () => {
       try {
@@ -173,6 +191,13 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
             reason: 'no_answer',
           });
           await this.notifyCallEndedPush(callId, currentCall.callerId, currentCall.calleeId);
+
+          // Missed_call push только если callee offline (нет дубля с frontend)
+          await this.maybeSendMissedCallPush(
+            currentCall.calleeId,
+            currentCall.callerId,
+            callId,
+          );
         }
       } catch (error) {
         this.logger.error(
@@ -212,6 +237,13 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
             reason: 'no_answer',
           });
           await this.notifyCallEndedPush(callId, currentCall.callerId, currentCall.calleeId);
+
+          // Missed_call push только если callee offline (нет дубля с frontend)
+          await this.maybeSendMissedCallPush(
+            currentCall.calleeId,
+            currentCall.callerId,
+            callId,
+          );
         }
       } catch (error) {
         this.logger.error(`[CALL_GATEWAY] CALL_DELIVERY_TIMEOUT failed callId=${callId} error=${error instanceof Error ? error.message : String(error)}`);
@@ -585,6 +617,15 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         reason: 'ended_by_caller',
       });
       await this.notifyCallEndedPush(call.id, call.callerId, call.calleeId);
+
+      // Missed_call push: если звонок не был принят (нет startedAt) и callee offline
+      if (!call.startedAt) {
+        await this.maybeSendMissedCallPush(
+          call.calleeId,
+          call.callerId,
+          call.id,
+        );
+      }
 
       return { success: true };
     } catch (error) {

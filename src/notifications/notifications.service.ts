@@ -99,6 +99,60 @@ export class NotificationsService {
     }
   }
 
+  async sendMissedCallPush(userId: number, callerId: number, callId: number) {
+    try {
+      this.logger.log(
+        `[NOTIFICATIONS] SEND_MISSED_CALL begin userId=${userId} callerId=${callerId} callId=${callId}`,
+      );
+
+      const [user, caller] = await Promise.all([
+        this.prisma.user.findUnique({
+          where: { id: userId },
+          select: { fcmToken: true },
+        }),
+        this.prisma.user.findUnique({
+          where: { id: callerId },
+          select: { fio: true },
+        }),
+      ]);
+
+      if (!user?.fcmToken) {
+        this.logger.warn(
+          `[NOTIFICATIONS] SEND_MISSED_CALL missing token userId=${userId} callId=${callId} — skipping FCM push`,
+        );
+        return;
+      }
+
+      const callerName = caller?.fio ?? 'Пользователь';
+
+      const result = await this.pushService.sendPush({
+        token: user.fcmToken,
+        title: '',
+        body: '',
+        data: {
+          type: 'missed_call',
+          callerId: String(callerId),
+          callerName: callerName,
+          callId: String(callId),
+        },
+      });
+
+      if (result.success) {
+        this.logger.log(
+          `[NOTIFICATIONS] SEND_MISSED_CALL success userId=${userId} callerId=${callerId} callId=${callId}`,
+        );
+      } else {
+        this.logger.error(
+          `[NOTIFICATIONS] SEND_MISSED_CALL failed userId=${userId} callId=${callId} errorCode=${result.errorCode} error=${result.errorMessage}`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `[NOTIFICATIONS] SEND_MISSED_CALL failed userId=${userId} callId=${callId} error=${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   private async sendFcmPush(
     userId: number,
     data: { type: 'MESSAGE' | 'CALL'; title: string; body?: string; data?: any },

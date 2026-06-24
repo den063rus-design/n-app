@@ -326,6 +326,41 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     return;
   }
 
+  if (type == 'missed_call') {
+    final callerName = message.data['callerName'] ?? 'Пользователь';
+    final callerIdStr = message.data['callerId'];
+    final callIdStr = message.data['callId'];
+    debugPrint(
+      "[FCM_BG] Showing missed call notification - callerName=$callerName callerId=$callerIdStr callId=$callIdStr",
+    );
+
+    final callerId = callerIdStr != null ? int.tryParse(callerIdStr) : null;
+    final notificationId = PushService.missedCallNotificationBaseId +
+        (callerId?.hashCode.abs() ?? callerName.hashCode.abs()) % 99999;
+
+    const androidDetails = AndroidNotificationDetails(
+      _missedCallChannelId,
+      'Пропущенные звонки',
+      channelDescription: 'Уведомления о пропущенных звонках',
+      importance: Importance.high,
+      priority: Priority.high,
+      showWhen: true,
+      enableVibration: true,
+      playSound: true,
+    );
+
+    const details = NotificationDetails(android: androidDetails);
+
+    await localNotifications.show(
+      notificationId,
+      callerName,
+      'Пропущенный звонок',
+      details,
+      payload: payloadJson,
+    );
+    return;
+  }
+
   final senderName = (message.data['senderName'] ?? '').trim();
   final resolvedTitleSource = (message.data['title'] ?? title ?? '').trim();
   final resolvedBodySource = (message.data['body'] ?? body ?? '').trim();
@@ -868,6 +903,19 @@ class PushService {
         }
       });
 
+      return;
+    }
+
+    if (type == 'missed_call') {
+      final callerName = message.data['callerName'] ?? 'Пользователь';
+      final callIdStr = message.data['callId'];
+      debugPrint(
+        '[FCM_FG] missed_call received — showing missed-call notification (callerName=$callerName callId=$callIdStr)',
+      );
+      unawaited(showMissedCallNotification(
+        callerName: callerName,
+        callerId: int.tryParse(message.data['callerId'] ?? ''),
+      ));
       return;
     }
 
