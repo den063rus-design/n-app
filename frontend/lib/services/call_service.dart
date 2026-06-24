@@ -845,6 +845,12 @@ class CallService {
     _v2FinalEventSent = true;
     _log('🔴 _endCall() — reason=$reason state=$_state');
 
+    // Сохраняем состояние ДО _applyState, чтобы определить missed-call сценарий.
+    // Missed call: входящий звонок (RINGING), не принят, причина no_answer/expired.
+    final wasIncomingRinging = _state == CallState.RINGING;
+    final isMissedCall = wasIncomingRinging &&
+        (reason == 'ended_by_caller' || reason == 'no_answer' || reason == 'expired');
+
     _lastEndReason = reason;
     _lastCallEndTimestamp = DateTime.now().millisecondsSinceEpoch;
     _lastEndedCallId = _currentCallId;
@@ -861,6 +867,17 @@ class CallService {
 
     _applyState(CallState.ENDED);
     unawaited(_finishEndCallCleanup());
+
+    // Показываем missed-call notification после отмены incoming notification.
+    // _finishEndCallCleanup() уже вызвал cancelIncomingCallNotification().
+    if (isMissedCall) {
+      final name = _remoteUserName ?? 'Пользователь';
+      _log('📲 Missed call detected — showing missed-call notification (callerName=$name)');
+      unawaited(PushService().showMissedCallNotification(
+        callerName: name,
+        callerId: _remoteUserId,
+      ));
+    }
 
     _resetTimer?.cancel();
     _resetTimer = Timer(const Duration(seconds: 2), _hardReset);

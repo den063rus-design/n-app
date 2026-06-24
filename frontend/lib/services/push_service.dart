@@ -21,6 +21,7 @@ const String _defaultNotificationChannelId = 'default_notification_channel';
 const String _messageAlertsChannelId = 'message_alerts_channel';
 const String _messageSummaryChannelId = 'message_summary_channel';
 const String _incomingCallChannelId = 'incoming_call_channel';
+const String _missedCallChannelId = 'missed_call_channel';
 
 Future<void> _ensureNotificationChannels(
   FlutterLocalNotificationsPlugin notifications,
@@ -77,10 +78,20 @@ Future<void> _ensureNotificationChannels(
     return;
   }
 
+  const AndroidNotificationChannel missedCallChannel = AndroidNotificationChannel(
+    _missedCallChannelId,
+    'Пропущенные звонки',
+    description: 'Уведомления о пропущенных звонках',
+    importance: Importance.high,
+    playSound: true,
+    enableVibration: true,
+  );
+
   await androidPlugin.createNotificationChannel(defaultChannel);
   await androidPlugin.createNotificationChannel(messageAlertsChannel);
   await androidPlugin.createNotificationChannel(messageSummaryChannel);
   await androidPlugin.createNotificationChannel(callChannel);
+  await androidPlugin.createNotificationChannel(missedCallChannel);
 }
 
 int _messageNotificationIdForSender({
@@ -362,6 +373,7 @@ class PushService {
   /// Фиксированный ID для call-уведомления (чтобы не залипало).
   static const int incomingCallNotificationId = 777001;
   static const int messageNotificationBaseId = 880000;
+  static const int missedCallNotificationBaseId = 777100;
 
   String? _fcmToken;
   String? get fcmToken => _fcmToken;
@@ -713,6 +725,48 @@ class PushService {
     } catch (e) {
       debugPrint('[PUSH] cancelIncomingCallNotification failed: $e');
     }
+  }
+
+  /// Показывает notification о пропущенном звонке.
+  /// Вызывается из CallService._endCall() когда входящий звонок не был принят.
+  Future<void> showMissedCallNotification({
+    required String callerName,
+    int? callerId,
+  }) async {
+    debugPrint('[PUSH] showMissedCallNotification — callerName=$callerName callerId=$callerId');
+
+    const androidDetails = AndroidNotificationDetails(
+      _missedCallChannelId,
+      'Пропущенные звонки',
+      channelDescription: 'Уведомления о пропущенных звонках',
+      importance: Importance.high,
+      priority: Priority.high,
+      showWhen: true,
+      enableVibration: true,
+      playSound: true,
+    );
+
+    const details = NotificationDetails(android: androidDetails);
+
+    final payloadMap = <String, String?>{
+      'type': 'missed_call',
+      'callerId': callerId?.toString(),
+      'callerName': callerName,
+    };
+    final payloadJson = jsonEncode(payloadMap);
+
+    // Используем отдельный ID на основе callerId, чтобы не затирать
+    // последующие пропущенные от других людей.
+    final notificationId = PushService.missedCallNotificationBaseId +
+        (callerId?.hashCode.abs() ?? callerName.hashCode.abs()) % 99999;
+
+    await _localNotifications.show(
+      notificationId,
+      callerName,
+      'Пропущенный звонок',
+      details,
+      payload: payloadJson,
+    );
   }
 
   /// Обрабатывает foreground-сообщения.
