@@ -25,6 +25,7 @@ import '../widgets/active_call_overlay.dart';
 import '../widgets/incoming_call_dialog.dart';
 import '../call_v2/call_v2_service.dart';
 import '../call_v2/call_ui_intent.dart';
+import '../call_v2/call_state.dart';
 
 /// Глобальный ключ навигатора для доступа из CallService
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -322,6 +323,8 @@ class _AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
+  static final bool v2ObserverEnabled =
+      kUseCallV2 || kUseCallV2Shadow || kUseCallV2FinalFlow;
   bool _isChecking = true;
   bool _isOffline = false;
   AppLifecycleState _lastLifecycleState = AppLifecycleState.resumed;
@@ -334,6 +337,15 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
   // V2
   StreamSubscription<CallUiIntentV2>? _v2IntentSubscription;
+
+  bool _isV2SessionActive() {
+    final session = CallV2Service.instance.session;
+    if (session == null) return false;
+    final state = session.state;
+    return state != CallStateV2.idle &&
+        state != CallStateV2.ended &&
+        state != CallStateV2.failed;
+  }
 
   @override
   void initState() {
@@ -432,7 +444,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     _flushPendingMessageNavigation();
 
     // V2: инициализация после успешного auth (replay pending startup event)
-    if (kUseCallV2 && auth.isAuthenticated) {
+    if (v2ObserverEnabled && auth.isAuthenticated) {
       final userId = auth.currentUser?.id?.toString();
       if (userId != null && userId.isNotEmpty) {
         CallV2Service.instance.init(localUserId: userId);
@@ -582,6 +594,10 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     _callStateSubscription = callService.stateStream.listen((state) {
       if (!mounted) return;
       if (state == CallState.RINGING) {
+        if (kUseCallV2UiFlow && _isV2SessionActive()) {
+          debugPrint('[APP-V2-FALLBACK] _listenCallState — V2 session active, skipping V1 fallback');
+          return;
+        }
         if (callService.isIncomingDialogOpen || callService.isCallScreenOpen) {
           debugPrint('[APP] _listenCallState — state=RINGING, UI already open — skipping fallback');
           return;
@@ -640,7 +656,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   /// V2: подписка на intentStream (вызывается в initState).
   /// Подписка происходит ДО init(), чтобы не пропустить replay.
   void _setupV2CallListener() {
-    if (!kUseCallV2) return;
+    if (!v2ObserverEnabled) return;
     _v2IntentSubscription = CallV2Service.instance.intentStream.listen(_handleV2Intent);
     debugPrint('[APP] _setupV2CallListener — subscribed to V2 intentStream');
   }
@@ -649,6 +665,86 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   void _handleV2Intent(CallUiIntentV2 intent) {
     if (!mounted) return;
     debugPrint('[APP] _handleV2Intent — ${intent.runtimeType}');
+
+    final isUiStartIntent = intent is ShowIncomingCallIntent ||
+        intent is ShowOutgoingCallIntent ||
+        intent is ShowActiveCallIntent;
+    final isFinalIntent = intent is ShowCallEndedIntent ||
+        intent is ShowCallFailedIntent ||
+        intent is DismissCallScreenIntent;
+
+    if (kUseCallV2UiFlow && isUiStartIntent) {
+      if (intent is ShowIncomingCallIntent) {
+        showIncomingCallDialogFromService(
+          callerId: intent.callerUserId,
+          callerName: intent.callerName ?? 'Incoming call',
+          callId: intent.callId,
+          source: 'v2_ui',
+        );
+        return;
+      }
+
+      if (intent is ShowOutgoingCallIntent) {
+        if (callRouteObserver.currentRouteName != 'call_screen' &&
+            !CallService().isCallScreenOpen) {
+          _openCallScreenGlobal(
+            userId: intent.calleeUserId,
+            userName: intent.calleeName ?? 'User',
+            isIncoming: false,
+            from: 'v2_ui_outgoing',
+          );
+        }
+        return;
+      }
+
+      if (intent is ShowActiveCallIntent) {
+        final remoteUserId = intent.remoteUserId;
+        if (remoteUserId != null &&
+            remoteUserId != 0 &&
+            callRouteObserver.currentRouteName != 'call_screen' &&
+            !CallService().isCallScreenOpen) {
+          _openCallScreenGlobal(
+            userId: remoteUserId,
+            userName: intent.remoteUserName ?? 'User',
+            isIncoming: false,
+            from: 'v2_ui_active',
+          );
+        }
+        return;
+      }
+    }
+
+    if (kUseCallV2FinalFlow && isFinalIntent) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final context = navigatorKey.currentContext;
+        if (intent is ShowCallEndedIntent) {
+          if (context != null && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(intent.endReason)),
+            );
+          }
+          return;
+        }
+        if (intent is ShowCallFailedIntent) {
+          if (context != null && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(intent.error)),
+            );
+          }
+          return;
+        }
+        if (intent is DismissCallScreenIntent) {
+          final routeName = callRouteObserver.currentRouteName;
+          if (context != null &&
+              context.mounted &&
+              (routeName == 'call_screen' || routeName == 'incoming_call_dialog')) {
+            Navigator.of(context).pop();
+          }
+        }
+      });
+      return;
+    }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -699,27 +795,29 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
         debugPrint('[APP] 📞 APP incoming socket event (backup path) — callerId=$callerId, callerName=$callerName, callId=$callId');
 
+        // Background check — ВСЕГДА первым, до любых V2/V1 проверок.
+        // На Honor и других устройствах FCM не гарантирует heads-up уведомление,
+        // поэтому показываем локальное уведомление при любом фоновом входящем звонке.
         final isForeground = _lastLifecycleState == AppLifecycleState.resumed ||
             _lastLifecycleState == AppLifecycleState.inactive;
 
         if (!isForeground) {
-          final pushService = PushService();
-          if (pushService.fcmToken == null) {
-            debugPrint('[APP] incoming socket event while app is backgrounded and FCM token is missing � showing local call notification');
-            unawaited(pushService.showIncomingCallNotificationFromSocket(
-              callId: callId.toString(),
-              callerId: callerId.toString(),
-              callerName: callerName,
-            ));
-          } else {
-            debugPrint('[APP] incoming socket event while app is backgrounded � relying on FCM call notification');
-          }
+          debugPrint('[APP] incoming socket event while app is backgrounded — showing local call notification (regardless of FCM)');
+          unawaited(PushService().showIncomingCallNotificationFromSocket(
+            callId: callId.toString(),
+            callerId: callerId.toString(),
+            callerName: callerName,
+          ));
           return;
         }
 
-        // ?????? ????? ?????? ????????? ???????.
-        // ??? guard'? (??? ?? ??????, ??? ?????? ?????? ? ?.?.)
-        // ??????????? ?????? _showIncomingCallDialog.
+        // Foreground: V2 UI flow guard
+        if (kUseCallV2UiFlow && _isV2SessionActive()) {
+          debugPrint('[APP-V2-FALLBACK] _listenIncomingCalls — V2 session active, skipping V1 fallback');
+          return;
+        }
+
+        // Foreground fallback: показать диалог входящего звонка
         showIncomingCallDialogFromService(
           callerId: callerId,
           callerName: callerName,
@@ -807,6 +905,10 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   }
 
   void _checkPendingCallTap() {
+    if (kUseCallV2UiFlow && _isV2SessionActive()) {
+      debugPrint('[APP-V2-FALLBACK] _checkPendingCallTap — V2 session active, skipping V1 fallback');
+      return;
+    }
     final pending = PushService().consumePendingCallTap();
     if (pending == null || pending['type'] != 'call') {
       return;
@@ -825,6 +927,10 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   /// и вызывает _showIncomingCallDialog(). Все guard'ы внутри _showIncomingCallDialog().
   void _checkPendingIncomingCallFromPush() {
     final callService = CallService();
+    if (kUseCallV2UiFlow && _isV2SessionActive()) {
+      debugPrint('[APP-V2-FALLBACK] _checkPendingIncomingCallFromPush — V2 session active, skipping V1 fallback');
+      return;
+    }
     if (callService.state != CallState.RINGING) {
       debugPrint('[APP] _checkPendingIncomingCallFromPush — state=${callService.state}, not RINGING — nothing to do');
       return;
@@ -851,6 +957,10 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
   void _checkPendingIncomingCallFromService() {
     final callService = CallService();
+    if (kUseCallV2UiFlow && _isV2SessionActive()) {
+      debugPrint('[APP-V2-FALLBACK] _checkPendingIncomingCallFromService — V2 session active, skipping V1 fallback');
+      return;
+    }
     final pending = callService.consumePendingIncomingCall();
 
     if (pending == null) {
@@ -887,6 +997,10 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   /// Все guard'ы (уже открыт диалог / CallScreen) проверяются внутри
   /// _showIncomingCallDialog().
   void _handleCallPushTap(Map<String, String?> data) {
+    if (kUseCallV2UiFlow && _isV2SessionActive()) {
+      debugPrint('[APP-V2-FALLBACK] _handleCallPushTap — V2 session active, skipping V1 fallback');
+      return;
+    }
     final callerIdStr = data['callerId'];
     final callerName = data['callerName'] ?? '�������� ������';
     final callIdStr = data['callId'];
