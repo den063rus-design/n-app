@@ -173,11 +173,6 @@ Future<void> _showGroupedMessageNotification({
     title: title,
   );
   final alertTagPrefix = _messageNotificationAlertTagPrefix(senderKey);
-  final summaryTag = _messageNotificationSummaryTag(senderKey);
-  final summaryId = _messageNotificationIdForSender(
-    senderId: senderId,
-    title: title,
-  );
   final alertId = _messageNotificationAlertId();
   var existingCount = 0;
   try {
@@ -196,7 +191,6 @@ Future<void> _showGroupedMessageNotification({
       ? existingCount + 1
       : ((countsBySender[senderKey] ?? 0) + 1);
   countsBySender[senderKey] = count;
-  final summaryBody = count > 1 ? '$body (+$count)' : body;
 
   final payloadJson = jsonEncode(<String, String?>{
     'type': data['type'] as String?,
@@ -221,32 +215,11 @@ Future<void> _showGroupedMessageNotification({
     onlyAlertOnce: false,
   );
 
-  final summaryDetails = AndroidNotificationDetails(
-    _messageSummaryChannelId,
-    'Основные уведомления',
-    channelDescription: 'Уведомления о новых сообщениях и звонках',
-    importance: Importance.low,
-    priority: Priority.low,
-    showWhen: true,
-    enableVibration: false,
-    playSound: false,
-    tag: summaryTag,
-    onlyAlertOnce: true,
-  );
-
   await notifications.show(
     alertId,
     title,
     body,
     NotificationDetails(android: childDetails),
-    payload: payloadJson,
-  );
-
-  await notifications.show(
-    summaryId,
-    title,
-    summaryBody,
-    NotificationDetails(android: summaryDetails),
     payload: payloadJson,
   );
 }
