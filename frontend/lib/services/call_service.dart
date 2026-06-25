@@ -428,11 +428,8 @@ class CallService {
         CallV2Service.instance.handleRemoteEnded(reason: reason);
       }
       await _endCall(reason: reason);
-      if (reason == 'rejected') {
-        _showSnackbar('������ �������');
-      } else if (reason == 'expired') {
-        _showSnackbar('������ ��� ��������');
-      }
+      // V2 primary: snackbar показывается через ShowCallEndedIntent в app.dart.
+      // V1 snackbar убран, чтобы избежать дублирования.
     });
 
     _socketService.onCallEvent('call:rejected', (data) async {

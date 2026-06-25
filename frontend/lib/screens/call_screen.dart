@@ -37,13 +37,6 @@ class _CallScreenState extends State<CallScreen> {
   StreamSubscription<MediaStream?>? _localStreamSub;
   StreamSubscription<MediaStream?>? _remoteStreamSub;
 
-  // Отложенная задача закрытия экрана (заменяет Timer)
-  Timer? _closeCallScreenTimer;
-
-  // Флаг: было ли уже запланировано закрытие экрана после ENDED
-  // Предотвращает повторный вызов _closeCallScreen при ребилдах StreamBuilder
-  bool _closeScheduled = false;
-
   @override
   void initState() {
     super.initState();
@@ -61,6 +54,10 @@ class _CallScreenState extends State<CallScreen> {
 
     _initRenderers();
 
+    // V2 primary: V2 уже создал сессию через ShowOutgoingCallIntent.
+    // CallScreen НЕ стартует звонок самостоятельно — это делает V2 coordinator.
+    // Если state всё ещё IDLE — значит V2 не успел или это V1 fallback,
+    // в этом случае startCall() запустится через stateStream listener.
     if (!widget.isIncoming) {
       if (_callService.state == CallState.RINGING) {
         _log('initState() — isIncoming=false but state=RINGING, treating as incoming');
@@ -68,8 +65,9 @@ class _CallScreenState extends State<CallScreen> {
                  _callService.state == CallState.ACCEPTING ||
                  _callService.state == CallState.IN_CALL) {
         _log('initState() — already in call (state=${_callService.state})');
-      } else {
-        _log('initState() — starting outgoing call to userId=${widget.userId}');
+      } else if (_callService.state == CallState.IDLE) {
+        // V1 fallback: если V2 не запустил звонок — запускаем через V1
+        _log('initState() — state=IDLE, starting outgoing call via V1 (userId=${widget.userId})');
         _callService.startCall(widget.userId);
       }
     }
@@ -120,35 +118,21 @@ class _CallScreenState extends State<CallScreen> {
 
   /// Единый метод закрытия экрана звонка.
   /// Проверяет _hasNavigatedAway атомарно, чтобы избежать двойного pop().
-  void _closeCallScreen({Duration delay = Duration.zero}) {
+  ///
+  /// V2 primary: закрытие экрана управляется через DismissCallScreenIntent
+  /// из app.dart. Этот метод — только для пользовательского закрытия
+  /// (кнопка в _buildEndedUI, PopScope) и ended_by_caller immediate close.
+  void _closeCallScreen() {
     if (_hasNavigatedAway) return;
     _hasNavigatedAway = true;
-    _closeScheduled = false;
 
-    // Отменяем предыдущую отложенную задачу, если была
-    _closeCallScreenTimer?.cancel();
-    _closeCallScreenTimer = null;
-
-    if (delay == Duration.zero) {
-      _log('_closeCallScreen() — immediate close');
-      _callService.markCallScreenClosed();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && Navigator.of(context).canPop()) {
-          Navigator.pop(context);
-        }
-      });
-    } else {
-      _log('_closeCallScreen() ? delayed close in ${delay.inMilliseconds}ms');
-      _closeCallScreenTimer = Timer(delay, () {
-        if (mounted) {
-          _callService.markCallScreenClosed();
-          if (Navigator.of(context).canPop()) {
-            Navigator.pop(context);
-          }
-        }
-        _closeCallScreenTimer = null;
-      });
-    }
+    _log('_closeCallScreen() — immediate close');
+    _callService.markCallScreenClosed();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.pop(context);
+      }
+    });
   }
 
   Widget _buildRemoteStage() {
@@ -211,10 +195,6 @@ class _CallScreenState extends State<CallScreen> {
     _localStreamSub?.cancel();
     _remoteStreamSub?.cancel();
 
-    // Отменяем отложенную задачу закрытия
-    _closeCallScreenTimer?.cancel();
-    _closeCallScreenTimer = null;
-
     _callService.markCallScreenClosed();
     try {
       if (_localRendererInitialized) {
@@ -252,7 +232,11 @@ class _CallScreenState extends State<CallScreen> {
     final currentState = _callService.state;
     final currentReason = _callService.lastEndReason;
 
-    // ended_by_caller: закрываем немедленно, без единого лишнего фрейма
+    // V2 primary: закрытие экрана управляется через DismissCallScreenIntent
+    // из app.dart. CallScreen НЕ закрывает себя сам.
+    // Единственное исключение — ended_by_caller: закрываем немедленно,
+    // чтобы не было лишнего кадра перед тем, как DismissCallScreenIntent
+    // успеет сработать.
     if (currentState == CallState.ENDED &&
         currentReason == 'ended_by_caller' &&
         !_hasNavigatedAway) {
@@ -414,31 +398,18 @@ class _CallScreenState extends State<CallScreen> {
     );
   }
 
-  /// Единый метод для UI завершения звонка (ENDED).
+  /// UI завершения звонка (ENDED).
   /// Показывается по центру экрана, перекрывая старые видео-кадры.
-  /// Запускает отложенное закрытие экрана (кроме ended_by_caller).
+  ///
+  /// V2 primary: закрытие экрана управляется через DismissCallScreenIntent
+  /// из app.dart. CallScreen НЕ закрывает себя сам.
+  /// ended_by_caller обрабатывается в build() — здесь только остальные причины.
   Widget _buildEndedUI(CallState state) {
     final reason = _callService.lastEndReason;
 
     // ended_by_caller обрабатывается в build() — здесь только остальные причины
     if (reason == 'ended_by_caller') {
       return const SizedBox.shrink();
-    }
-
-    // Запускаем отложенное закрытие ТОЛЬКО один раз
-    if (!_hasNavigatedAway && !_closeScheduled) {
-      _closeScheduled = true;
-      Duration delay;
-      if (reason == 'no_answer') {
-        delay = const Duration(milliseconds: 1500);
-      } else if (reason == 'peer_disconnected') {
-        delay = const Duration(milliseconds: 1000);
-      } else {
-        // rejected, expired, и любые другие — 0.8 сек
-        delay = const Duration(milliseconds: 800);
-      }
-      _log('[ENDED] reason=$reason, auto-close in ${delay.inMilliseconds}ms');
-      _closeCallScreen(delay: delay);
     }
 
     // Определяем иконку и текст для каждой причины
