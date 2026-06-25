@@ -66,9 +66,21 @@ class CallRouteObserver extends NavigatorObserver {
 
 /// Открывает CallScreen из mini-call overlay при тапе.
 ///
+/// V2 primary: если V2 session активна — V2 сам управляет UI,
+/// V1 fallback не нужен.
+/// V1 fallback: если V2 не активна — используем старый путь.
+///
 /// Вынесена в глобальную область, чтобы быть доступной из MaterialApp.builder
 /// (который находится в NApp, а не в _AppShellState).
 void openCallScreenFromOverlay() {
+  // V2 guard: если V2 session активна — V2 сам эмитит ShowActiveCallIntent
+  // и управляет UI. V1 fallback не должен вмешиваться.
+  final v2Session = CallV2Service.instance.session;
+  if (v2Session != null && v2Session.isActive) {
+    debugPrint('[APP] openCallScreenFromOverlay — V2 session active, delegating to V2');
+    return;
+  }
+
   final callService = CallService();
   final currentRoute = callRouteObserver.currentRouteName;
 
@@ -92,7 +104,7 @@ void openCallScreenFromOverlay() {
     return;
   }
 
-  debugPrint('[APP] ✅ openCallScreenFromOverlay — opening CallScreen from overlay');
+  debugPrint('[APP] ✅ openCallScreenFromOverlay — opening CallScreen from overlay (V1 fallback)');
   callService.markCallScreenOpen();
   debugPrint('[APP] ✅ openCallScreenFromOverlay — opening CallScreen (userId=$remoteUserId, from=overlay)');
   Navigator.push(
@@ -933,11 +945,18 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     _handleCallPushTap(pending);
   }
 
-  /// Страховочная проверка: был ли восстановлен incoming call из push
-  /// до того, как подписка на стрим была установлена.
+  /// Cold-start rescue bridge для killed app + push tap.
   ///
-  /// НЕ открывает dialog — это делает ТОЛЬКО _listenCallState (authority path).
-  /// Если CallService в RINGING — authority path получит stateStream и покажет dialog.
+  /// Сценарий: приложение убито → пришёл push звонка → пользователь тапнул →
+  /// hydrateIncomingCallFromPush() перевёл CallService в RINGING, но authority path
+  /// (_listenCallState) уже пропустил этот transition (stateStream событие ушло
+  /// до того, как _listenCallState успел его обработать, или latch уже сброшен
+  /// промежуточным IDLE от _hardReset внутри hydrate).
+  ///
+  /// Здесь — последний rescue bridge: если RINGING есть, UI не открыт, V2 не активен —
+  /// открываем incoming dialog напрямую.
+  ///
+  /// НЕ используется для normal foreground — только для cold-start restored scenario.
   void _checkPendingIncomingCallFromPush() {
     final callService = CallService();
     if (kUseCallV2UiFlow && _isV2SessionActive()) {
@@ -955,7 +974,34 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       return;
     }
 
-    debugPrint('[APP] _checkPendingIncomingCallFromPush — state=RINGING, delegating to authority path');
+    // Guard: UI уже открыт
+    if (callService.isIncomingDialogOpen || callService.isCallScreenOpen) {
+      debugPrint('[APP] _checkPendingIncomingCallFromPush — UI already open, skipping');
+      return;
+    }
+
+    final callerId = callService.remoteUserId;
+    final callerName = callService.remoteUserName;
+    final callId = callService.currentCallId ?? 0;
+
+    if (callerId == null) {
+      debugPrint('[APP] _checkPendingIncomingCallFromPush — remoteUserId is null, cannot show dialog');
+      return;
+    }
+
+    // Cold-start rescue: authority path пропустил RINGING — открываем dialog напрямую
+    _incomingFallbackConsumed = true;
+    debugPrint('[APP] _checkPendingIncomingCallFromPush — COLD-START RESCUE: opening dialog directly (callerId=$callerId, callerName=$callerName, callId=$callId)');
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      showIncomingCallDialogFromService(
+        callerId: callerId,
+        callerName: callerName ?? '�������� ������',
+        callId: callId,
+        source: 'cold_start_push_fallback',
+      );
+    });
   }
 
   /// Страховочная проверка: есть ли pending incoming call в CallService
