@@ -12,9 +12,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:record/record.dart';
 import '../services/call_service.dart';
 import '../services/socket_service.dart';
-import 'call_screen.dart';
 import 'notifications_screen.dart';
 import 'chat_search_delegate.dart';
+import 'chat_screen.dart';
 
 class UserScreen extends StatefulWidget {
   const UserScreen({super.key});
@@ -603,16 +603,14 @@ class _UserScreenState extends State<UserScreen> with WidgetsBindingObserver {
               }
               final callService = CallService();
               if (callService.isCallScreenOpen) return; // guard от двойного открытия
-              callService.markCallScreenOpen();
               if (!context.mounted) return;
-              Navigator.push(
+              await Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const CallScreen(
-                    userId: 1, // ID администратора
+                  builder: (context) => const ChatScreen(
+                    userId: 1,
                     userName: 'Преподаватель',
-                    isIncoming: false,
-                    from: 'user',
+                    autoStartCallOnOpen: true,
                   ),
                 ),
               );

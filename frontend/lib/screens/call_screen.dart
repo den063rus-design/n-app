@@ -234,13 +234,13 @@ class _CallScreenState extends State<CallScreen> {
 
     // V2 primary: закрытие экрана управляется через DismissCallScreenIntent
     // из app.dart. CallScreen НЕ закрывает себя сам.
-    // Единственное исключение — ended_by_caller: закрываем немедленно,
+    // Исключения — ended_by_caller и rejected: закрываем немедленно,
     // чтобы не было лишнего кадра перед тем, как DismissCallScreenIntent
     // успеет сработать.
     if (currentState == CallState.ENDED &&
-        currentReason == 'ended_by_caller' &&
+        (currentReason == 'ended_by_caller' || currentReason == 'rejected') &&
         !_hasNavigatedAway) {
-      _log('[ENDED] ended_by_caller — immediate close');
+      _log('[ENDED] $currentReason — immediate close');
       // Сбрасываем renderers, чтобы не было старого кадра перед закрытием
       _localRenderer.srcObject = null;
       _remoteRenderer.srcObject = null;
@@ -250,6 +250,7 @@ class _CallScreenState extends State<CallScreen> {
     // Для остальных ENDED-причин сбрасываем renderers при первом обнаружении
     if (currentState == CallState.ENDED &&
         currentReason != 'ended_by_caller' &&
+        currentReason != 'rejected' &&
         !_hasNavigatedAway) {
       if (_localRenderer.srcObject != null || _remoteRenderer.srcObject != null) {
         _localRenderer.srcObject = null;

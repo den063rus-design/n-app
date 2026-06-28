@@ -46,12 +46,17 @@ class CallV2Service {
     _initializedLocalUserId = localUserId;
     _coordinator = CallCoordinatorV2(localUserId: localUserId);
 
-    // Replay pending startup event (cold-start: push tap до init)
+    // Replay pending startup event (cold-start: push tap до init).
+    // Используем scheduleMicrotask, чтобы дать app shell время завершить
+    // initState и гарантированно подписаться на intentStream.
+    // _pendingStartupEvent очищается ТОЛЬКО после успешного _handle().
     if (_pendingStartupEvent != null) {
-      final pending = _pendingStartupEvent!;
+      final pending = _pendingStartupEvent;
       _pendingStartupEvent = null; // очищаем ДО replay, чтобы избежать цикла
-      debugPrint('[V2] REPLAY pending startup event: ${pending.runtimeType}');
-      _handle(pending);
+      debugPrint('[V2] REPLAY pending startup event via scheduleMicrotask: ${pending!.runtimeType}');
+      scheduleMicrotask(() {
+        _handle(pending);
+      });
     }
   }
 
@@ -144,6 +149,58 @@ class CallV2Service {
   }) {
     _handle(ReceiveIncomingEvent(
       callerUserId: callerUserId,
+      callId: callId,
+      callType: callType,
+      callerName: callerName,
+    ));
+  }
+
+  /// V2 bootstrap для push tap / cold-start.
+  ///
+  /// Создаёт incoming V2 session из push payload, если:
+  /// - нет активной V2 session
+  /// - или есть, но это другой callId (старый звонок)
+  ///
+  /// Не дублирует сессию, если она уже активна по этому callId.
+  /// Не конфликтует с socket incoming (ReceiveIncomingEvent).
+  ///
+  /// Вызывается из push_service.dart при tap по call push,
+  /// даже если kUseCallV2=false (но kUseCallV2UiFlow=true).
+  void handleIncomingFromPushTap({
+    required int callId,
+    required int callerId,
+    String? callerName,
+    String? callType,
+  }) {
+    final currentSession = session;
+
+    // Если сессия уже есть и это тот же callId — ничего не делаем
+    if (currentSession != null && currentSession.callId == callId) {
+      debugPrint('[V2] handleIncomingFromPushTap — session already exists for callId=$callId, skipping');
+      return;
+    }
+
+    // Если сессия уже есть и это другой callId — игнорируем (старый звонок)
+    if (currentSession != null && currentSession.callId != callId && currentSession.callId != 0) {
+      debugPrint('[V2] handleIncomingFromPushTap — existing session for different callId=${currentSession.callId}, ignoring push tap for callId=$callId');
+      return;
+    }
+
+    // Если coordinator ещё не инициализирован — сохраняем для replay
+    if (_coordinator == null) {
+      _pendingStartupEvent = ReceiveIncomingEvent(
+        callerUserId: callerId,
+        callId: callId,
+        callType: callType,
+        callerName: callerName,
+      );
+      debugPrint('[V2] handleIncomingFromPushTap — QUEUED for replay (coordinator not ready)');
+      return;
+    }
+
+    debugPrint('[V2] handleIncomingFromPushTap — bootstrapping incoming session (callId=$callId, callerId=$callerId)');
+    _handle(ReceiveIncomingEvent(
+      callerUserId: callerId,
       callId: callId,
       callType: callType,
       callerName: callerName,

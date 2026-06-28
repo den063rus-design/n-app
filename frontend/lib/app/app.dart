@@ -190,7 +190,7 @@ void showIncomingCallDialogFromService({
 
   if (context == null) {
     debugPrint('[APP] ⚠️ GLOBAL showIncomingCallDialog — navigator context is null');
-    if (source == 'pending_service' || source == 'state_fallback' || source == 'service') {
+    if (source == 'pending_service' || source == 'state_fallback' || source == 'service' || source == 'v2_ui') {
       callService.restorePendingIncomingCall({
         'callerId': callerId,
         'callerName': callerName,
@@ -201,7 +201,7 @@ void showIncomingCallDialogFromService({
   }
   if (!context.mounted) {
     debugPrint('[APP] ⚠️ GLOBAL showIncomingCallDialog — navigator context is not mounted');
-    if (source == 'pending_service' || source == 'state_fallback' || source == 'service') {
+    if (source == 'pending_service' || source == 'state_fallback' || source == 'service' || source == 'v2_ui') {
       callService.restorePendingIncomingCall({
         'callerId': callerId,
         'callerName': callerName,
@@ -343,6 +343,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   AuthProvider? _authProvider;
   int? _pendingMessageChatUserId;
   String? _pendingMessageChatUserName;
+  DateTime? _suppressMessageNavigationUntil;
 
   // Храним, какой экран показывать (рендерится в build, а не через pushReplacement)
   Widget? _currentScreen;
@@ -365,6 +366,38 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         state != CallStateV2.failed;
   }
 
+  /// Гарантированный path инициализации V2 после старта app shell.
+  ///
+  /// Вызывается после _checkAuth() в initState цепочке.
+  /// Нужен для cold-start: _handleAuthStateChanged() может не сработать
+  /// как listener, если пользователь уже авторизован и auth state не меняется.
+  ///
+  /// Безопасен для повторных вызовов — CallV2Service.init() имеет guard
+  /// от повторной инициализации тем же userId.
+  void _ensureCallV2InitializedFromCurrentAuthState() {
+    if (!v2ObserverEnabled) {
+      debugPrint('[APP_SHELL] ensure V2 init from current auth state — skipped (v2ObserverEnabled=false)');
+      return;
+    }
+    try {
+      final auth = context.read<AuthProvider>();
+      if (!auth.isAuthenticated) {
+        debugPrint('[APP_SHELL] ensure V2 init from current auth state — skipped (not authenticated)');
+        return;
+      }
+      final userId = auth.currentUser?.id.toString();
+      if (userId == null || userId.isEmpty) {
+        debugPrint('[APP_SHELL] ensure V2 init from current auth state — skipped (userId is null/empty)');
+        return;
+      }
+      debugPrint('[APP_SHELL] ensure V2 init from current auth state — auth=true userId=$userId');
+      CallV2Service.instance.init(localUserId: userId);
+      debugPrint('[APP_SHELL] ensure V2 init from current auth state — CallV2Service.init() called');
+    } catch (e) {
+      debugPrint('[APP_SHELL] ensure V2 init from current auth state — error: $e');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -375,6 +408,11 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     _initServices().then((_) {
       debugPrint('[APP_SHELL] Calling _checkAuth()');
       return _checkAuth();
+    }).then((_) {
+      // Гарантированный path инициализации V2 после старта app shell.
+      // Нужен для cold-start: _handleAuthStateChanged() может не сработать
+      // как listener, если пользователь уже авторизован.
+      _ensureCallV2InitializedFromCurrentAuthState();
     }).catchError((e) {
       debugPrint('[APP_SHELL] ❌ init/auth bootstrap failed: $e');
       if (mounted) {
@@ -492,6 +530,26 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     _pendingMessageChatUserName = null;
   }
 
+  void _armPostCallMessageNavigationSuppression(String source) {
+    _suppressMessageNavigationUntil = DateTime.now().add(
+      const Duration(seconds: 3),
+    );
+    debugPrint(
+      '[APP] suppressing automatic message navigation after call end '
+      '(source=$source, until=$_suppressMessageNavigationUntil)',
+    );
+  }
+
+  bool _isPostCallMessageNavigationSuppressed() {
+    final until = _suppressMessageNavigationUntil;
+    if (until == null) return false;
+    if (DateTime.now().isAfter(until)) {
+      _suppressMessageNavigationUntil = null;
+      return false;
+    }
+    return true;
+  }
+
   void _openChatFromNotification({
     required int userId,
     required String userName,
@@ -545,8 +603,27 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       return;
     }
 
+    if (_isPostCallMessageNavigationSuppressed()) {
+      debugPrint(
+        '[APP] skipping _flushPendingMessageNavigation because call just ended '
+        '(userId=$userId)',
+      );
+      _clearPendingMessageNavigation();
+      PushService().clearPendingMessageTap();
+      return;
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      if (_isPostCallMessageNavigationSuppressed()) {
+        debugPrint(
+          '[APP] skipping deferred _flushPendingMessageNavigation because call just ended '
+          '(userId=$userId)',
+        );
+        _clearPendingMessageNavigation();
+        PushService().clearPendingMessageTap();
+        return;
+      }
       if (ChatNavigationService().isChatOpenWith(userId)) {
         _clearPendingMessageNavigation();
         return;
@@ -626,10 +703,21 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       // Сброс latch при завершении звонка
       // ================================================================
       if (state == CallState.ENDED || state == CallState.IDLE) {
+        _armPostCallMessageNavigationSuppression('call_state_$state');
         if (_incomingFallbackConsumed) {
           _incomingFallbackConsumed = false;
           debugPrint('[APP] _listenCallState — latch reset (state=$state)');
         }
+
+        // Очищаем pending message navigation после завершения звонка,
+        // чтобы не было самопроизвольного перехода в чат.
+        if (_pendingMessageChatUserId != null || _pendingMessageChatUserName != null) {
+          debugPrint('[APP] clearing pending message navigation after call end (userId=$_pendingMessageChatUserId)');
+          _clearPendingMessageNavigation();
+        }
+        // Также чистим pending message tap в PushService.
+        PushService().clearPendingMessageTap();
+        debugPrint('[APP] clearing pending message tap after call end');
 
         // Guard: если диалог уже закрыт — не делаем pop()
         if (!callService.isIncomingDialogOpen) {
@@ -729,6 +817,18 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
     if (kUseCallV2UiFlow && isUiStartIntent) {
       if (intent is ShowIncomingCallIntent) {
+        // Пробуем открыть dialog. Если context ещё не готов — сохраняем
+        // pending incoming call для повторной попытки в _checkPendingIncomingCallFromPush().
+        final context = navigatorKey.currentContext;
+        if (context == null || !context.mounted) {
+          debugPrint('[APP] _handleV2Intent — ShowIncomingCallIntent but context not ready, saving pending');
+          CallService().restorePendingIncomingCall({
+            'callerId': intent.callerUserId,
+            'callerName': intent.callerName ?? 'Incoming call',
+            'callId': intent.callId,
+          });
+          return;
+        }
         showIncomingCallDialogFromService(
           callerId: intent.callerUserId,
           callerName: intent.callerName ?? 'Incoming call',
@@ -769,6 +869,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     }
 
     if (kUseCallV2FinalFlow && isFinalIntent) {
+      _armPostCallMessageNavigationSuppression('v2_final_intent_${intent.runtimeType}');
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         final context = navigatorKey.currentContext;
@@ -789,12 +890,16 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
           return;
         }
         if (intent is DismissCallScreenIntent) {
-          final routeName = callRouteObserver.currentRouteName;
-          if (context != null &&
-              context.mounted &&
-              (routeName == 'call_screen' || routeName == 'incoming_call_dialog')) {
-            Navigator.of(context).pop();
-          }
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            final dismissContext = navigatorKey.currentContext;
+            final routeName = callRouteObserver.currentRouteName;
+            if (dismissContext != null &&
+                dismissContext.mounted &&
+                (routeName == 'call_screen' || routeName == 'incoming_call_dialog')) {
+              Navigator.of(dismissContext).pop();
+            }
+          });
         }
       });
     }
@@ -908,6 +1013,13 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   }
 
   void _checkPendingMessageTap() {
+    if (_isPostCallMessageNavigationSuppressed()) {
+      debugPrint('[APP] skipping _checkPendingMessageTap because call just ended');
+      PushService().clearPendingMessageTap();
+      _clearPendingMessageNavigation();
+      return;
+    }
+
     final pending = PushService().consumePendingMessageTap();
     if (pending == null || pending['type'] != 'message') {
       return;
@@ -947,22 +1059,49 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
   /// Cold-start rescue bridge для killed app + push tap.
   ///
-  /// Сценарий: приложение убито → пришёл push звонка → пользователь тапнул →
-  /// hydrateIncomingCallFromPush() перевёл CallService в RINGING, но authority path
-  /// (_listenCallState) уже пропустил этот transition (stateStream событие ушло
-  /// до того, как _listenCallState успел его обработать, или latch уже сброшен
-  /// промежуточным IDLE от _hardReset внутри hydrate).
+  /// V2 primary: V2 сам поднимает incoming flow из push tap через
+  /// handleIncomingFromPushTap() в push_service.dart.
   ///
-  /// Здесь — последний rescue bridge: если RINGING есть, UI не открыт, V2 не активен —
-  /// открываем incoming dialog напрямую.
+  /// Здесь — повторная попытка открыть incoming dialog, если первый
+  /// ShowIncomingCallIntent пришёл слишком рано (context был null).
+  /// В этом случае _handleV2Intent сохранил pending incoming call через
+  /// restorePendingIncomingCall(), и здесь мы его потребляем.
   ///
-  /// НЕ используется для normal foreground — только для cold-start restored scenario.
+  /// Больше НЕ открывает dialog напрямую как V1 rescue.
   void _checkPendingIncomingCallFromPush() {
     final callService = CallService();
+
+    // V2 replay path: если V2 session активна, но dialog ещё не открыт —
+    // пробуем открыть через V2 (source='v2_ui').
     if (kUseCallV2UiFlow && _isV2SessionActive()) {
-      debugPrint('[APP-V2-FALLBACK] _checkPendingIncomingCallFromPush — V2 session active, skipping V1 fallback');
+      // Guard: UI уже открыт
+      if (callService.isIncomingDialogOpen || callService.isCallScreenOpen) {
+        debugPrint('[APP-V2-FALLBACK] _checkPendingIncomingCallFromPush — V2 session active, UI already open');
+        return;
+      }
+
+      // Пробуем потребить pending incoming call (сохранённый _handleV2Intent)
+      final pending = callService.consumePendingIncomingCall();
+      if (pending != null) {
+        final callerId = pending['callerId'] as int?;
+        final callerName = pending['callerName'] as String?;
+        final callId = pending['callId'] as int? ?? 0;
+        if (callerId != null) {
+          debugPrint('[APP] _checkPendingIncomingCallFromPush — V2 replay: opening dialog from pending (callerId=$callerId)');
+          showIncomingCallDialogFromService(
+            callerId: callerId,
+            callerName: callerName ?? 'Incoming call',
+            callId: callId,
+            source: 'v2_ui',
+          );
+          return;
+        }
+      }
+
+      debugPrint('[APP-V2-FALLBACK] _checkPendingIncomingCallFromPush — V2 session active, no pending, skipping V1 fallback');
       return;
     }
+
     if (callService.state != CallState.RINGING) {
       debugPrint('[APP] _checkPendingIncomingCallFromPush — state=${callService.state}, not RINGING — nothing to do');
       return;
@@ -981,27 +1120,14 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     }
 
     final callerId = callService.remoteUserId;
-    final callerName = callService.remoteUserName;
-    final callId = callService.currentCallId ?? 0;
 
     if (callerId == null) {
       debugPrint('[APP] _checkPendingIncomingCallFromPush — remoteUserId is null, cannot show dialog');
       return;
     }
 
-    // Cold-start rescue: authority path пропустил RINGING — открываем dialog напрямую
-    _incomingFallbackConsumed = true;
-    debugPrint('[APP] _checkPendingIncomingCallFromPush — COLD-START RESCUE: opening dialog directly (callerId=$callerId, callerName=$callerName, callId=$callId)');
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      showIncomingCallDialogFromService(
-        callerId: callerId,
-        callerName: callerName ?? '�������� ������',
-        callId: callId,
-        source: 'cold_start_push_fallback',
-      );
-    });
+    // V1 fallback: authority path (_listenCallState) получит stateStream.
+    debugPrint('[APP] _checkPendingIncomingCallFromPush — V1 fallback, delegating to authority path (state=${callService.state})');
   }
 
   /// Страховочная проверка: есть ли pending incoming call в CallService

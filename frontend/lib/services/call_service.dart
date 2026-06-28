@@ -104,7 +104,6 @@ class CallService {
   Map<String, dynamic>? get pendingIncomingCall => _pendingIncomingCall == null
       ? null
       : Map<String, dynamic>.from(_pendingIncomingCall!);
-
   Future<void> init() async {
     if (_initialized) {
       return;
@@ -273,6 +272,8 @@ class CallService {
         });
       }
 
+      // V2 primary: V2 управляет UI через ShowIncomingCallIntent.
+      // V1 fallback (authority path) сработает только если V2 не активен.
       if (v2UiLifecycleEnabled && !_v2FinalEventSent) {
         final event = CallV2Mappers.incomingFromSocket(data);
         CallV2Service.instance.handleIncoming(
@@ -455,11 +456,12 @@ class CallService {
     _lastEndReason = null;
     _lastCallEndTimestamp = null;
     _lastEndedCallId = null;
-    _v2FinalEventSent = false;
 
     if (_state != CallState.IDLE) {
       _hardReset();
     }
+
+    _v2FinalEventSent = false;
 
     _isMinimized = false;
     _minimizedController.add(false);

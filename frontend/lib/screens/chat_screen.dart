@@ -14,7 +14,6 @@ import '../services/chat_navigation_service.dart';
 import '../services/push_service.dart';
 import '../services/socket_service.dart';
 import '../widgets/message_bubble.dart';
-import 'call_screen.dart';
 import 'chat_search_delegate.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -22,6 +21,7 @@ class ChatScreen extends StatefulWidget {
   final String userName;
   final bool isAdmin;
   final bool isOnline;
+  final bool autoStartCallOnOpen;
 
   const ChatScreen({
     super.key,
@@ -29,6 +29,7 @@ class ChatScreen extends StatefulWidget {
     required this.userName,
     this.isAdmin = false,
     this.isOnline = false,
+    this.autoStartCallOnOpen = false,
   });
 
   @override
@@ -47,6 +48,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   int? _highlightedMessageId;
   bool _autoScrollScheduled = false;
   bool _scrollAfterNextMessage = false;
+  bool _autoStartCallTriggered = false;
 
   @override
   void initState() {
@@ -62,6 +64,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _loadMessages();
       _scheduleScrollToBottom();
+      await _maybeAutoStartCall();
     });
     // Слушаем изменения текста для обновления кнопки отправки
     _messageController.addListener(_onTextChanged);
@@ -80,6 +83,31 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void _onTextChanged() {
     // Перестраиваем UI при изменении текста (для кнопки отправки)
     setState(() {});
+  }
+
+  Future<void> _maybeAutoStartCall() async {
+    if (!mounted || !widget.autoStartCallOnOpen || _autoStartCallTriggered) {
+      return;
+    }
+
+    _autoStartCallTriggered = true;
+    final callService = CallService();
+    if (callService.isCallScreenOpen) {
+      return;
+    }
+
+    final socketReady = await SocketService().waitUntilConnected();
+    if (!socketReady) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Подождите, подключаемся к серверу...'),
+        ),
+      );
+      return;
+    }
+
+    await callService.startCall(widget.userId);
   }
 
   @override
@@ -552,19 +580,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               }
               final callService = CallService();
               if (callService.isCallScreenOpen) return; // guard от двойного открытия
-              callService.markCallScreenOpen();
-              if (!context.mounted) return;
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => CallScreen(
-                    userId: widget.userId,
-                    userName: widget.userName,
-                    isIncoming: false,
-                    from: 'chat',
-                  ),
-                ),
-              );
+              await callService.startCall(widget.userId);
             },
           ),
           if (!widget.isAdmin)

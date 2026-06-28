@@ -12,11 +12,6 @@ import '../services/call_service.dart';
 import '../services/chat_navigation_service.dart';
 import '../config/api_config.dart';
 import '../call_v2/call_v2_service.dart';
-import '../call_v2/call_v2_mappers.dart';
-import '../notifications_v2/incoming_call_notification_router_v2.dart';
-import '../notifications_v2/message_notification_router_v2.dart';
-import '../notifications_v2/notification_tap_router_v2.dart';
-import '../notifications_v2/notification_event_v2.dart';
 
 const String _defaultNotificationChannelId = 'default_notification_channel';
 const String _messageAlertsChannelId = 'message_alerts_channel';
@@ -863,60 +858,47 @@ class PushService {
         return;
       }
 
-      // V2 routing
-      if (kUseCallV2) {
-        final transportEvent = CallV2Mappers.transportFromPush(
-          payload: jsonEncode(message.data),
-          isForeground: true,
-          notificationId: message.data['notification_id'] as String?,
-        );
-
-        final type = message.data['type'] as String?;
-
-        if (type == 'call') {
-          final router = IncomingCallNotificationRouterV2();
-          final action = router.route(transportEvent);
-
-          if (action is ShowIncomingCallAction) {
-            final callerId = int.tryParse(action.callerId) ?? 0;
-            final callId = int.tryParse(action.sessionId) ?? 0;
-            CallV2Service.instance.handleIncoming(
-              callerUserId: callerId,
-              callId: callId,
-              callType: action.callType,
-            );
-          }
-        } else if (type == 'message') {
-          final router = MessageNotificationRouterV2();
-          final action = router.route(transportEvent);
-
-          if (action is OpenChatAction) {
-            // Открыть чат через существующую навигацию
-            debugPrint('[PUSH_V2] OpenChatAction: chatId=${action.chatId}, messageId=${action.messageId}');
-          }
+      // V2 primary: bootstrap incoming session из foreground push.
+      // Используем kUseCallV2UiFlow (а не kUseCallV2), т.к. V2 UI flow активен.
+      if (kUseCallV2UiFlow) {
+        final parsedCallId = int.tryParse(callId);
+        final parsedCallerId = int.tryParse(callerId);
+        if (parsedCallId != null && parsedCallerId != null) {
+          debugPrint('[FCM_FG] V2 bootstrap from foreground push (callId=$parsedCallId, callerId=$parsedCallerId)');
+          // Сначала гидратируем CallService (data bootstrap), затем V2
+          CallService().hydrateIncomingCallFromPush(
+            callId: callId,
+            callerId: callerId,
+            callerName: callerName,
+          );
+          CallV2Service.instance.handleIncomingFromPushTap(
+            callId: parsedCallId,
+            callerId: parsedCallerId,
+            callerName: callerName,
+          );
         }
-
-        return; // V2 обработал — не идём в legacy
       }
 
-      // Legacy path (только если V2 выключен)
-      debugPrint(
-        '[FCM_FG] PUSH hydrate callId=$callId, callerId=$callerId, callerName=$callerName',
-      );
-      CallService().hydrateIncomingCallFromPush(
-        callId: callId,
-        callerId: callerId,
-        callerName: callerName,
-      );
+      // Legacy path (только если V2 UI flow выключен)
+      if (!kUseCallV2UiFlow) {
+        debugPrint(
+          '[FCM_FG] PUSH hydrate callId=$callId, callerId=$callerId, callerName=$callerName',
+        );
+        CallService().hydrateIncomingCallFromPush(
+          callId: callId,
+          callerId: callerId,
+          callerName: callerName,
+        );
 
-      Future.delayed(const Duration(milliseconds: 50), () {
-        _notificationTapStream.add({
-          'type': 'call',
-          'callId': callId,
-          'callerId': callerId,
-          'callerName': callerName,
+        Future.delayed(const Duration(milliseconds: 50), () {
+          _notificationTapStream.add({
+            'type': 'call',
+            'callId': callId,
+            'callerId': callerId,
+            'callerName': callerName,
+          });
         });
-      });
+      }
 
       if (!CallRingtoneService().isIncomingPlaying) {
         debugPrint('[FCM_FG] Starting ringtone from foreground push');
@@ -1178,72 +1160,31 @@ class PushService {
         return;
       }
 
-      if (kUseCallV2) {
-        try {
-          final transportEvent = CallV2Mappers.transportFromPush(
-            payload: jsonEncode(data),
-            isForeground: false,
-            notificationId: data['notification_id'] as String?,
+      // V2 primary: bootstrap incoming session из push tap.
+      // Используем kUseCallV2UiFlow (а не kUseCallV2), т.к. V2 UI flow активен.
+      if (kUseCallV2UiFlow) {
+        final parsedCallId = int.tryParse(callId ?? '');
+        final parsedCallerId = int.tryParse(callerId ?? '');
+        if (parsedCallId != null && parsedCallerId != null) {
+          debugPrint('[FCM_TAP] V2 bootstrap from push tap (callId=$parsedCallId, callerId=$parsedCallerId)');
+          // Сначала гидратируем CallService (data bootstrap), затем V2
+          CallService().hydrateIncomingCallFromPush(
+            callId: callId!,
+            callerId: callerId!,
+            callerName: callerName!,
           );
-
-          // Парсим тип через роутеры
-          final callRouter = IncomingCallNotificationRouterV2();
-          final callAction = callRouter.route(transportEvent);
-
-          if (callAction is ShowIncomingCallAction) {
-            final decision = NotificationRoutingDecisionV2(
-              category: NotificationCategoryV2.incomingCall,
-              callSessionId: callAction.sessionId,
-              callerId: callAction.callerId,
-              callerName: callAction.callerName,
-              callType: callAction.callType,
-              rawPayload: transportEvent.payload,
-            );
-
-            final tapRouter = NotificationTapRouterV2();
-            final tapResult = tapRouter.handleTap(decision);
-
-            if (tapResult.action is ShowIncomingCallAction) {
-              final action = tapResult.action as ShowIncomingCallAction;
-              final callerId = int.tryParse(action.callerId) ?? 0;
-              final callId = int.tryParse(action.sessionId) ?? 0;
-              CallV2Service.instance.handleIncoming(
-                callerUserId: callerId,
-                callId: callId,
-                callType: action.callType,
-              );
-            }
-            return; // V2 обработал — не идём в legacy
-          }
-
-          final msgRouter = MessageNotificationRouterV2();
-          final msgAction = msgRouter.route(transportEvent);
-
-          if (msgAction is OpenChatAction) {
-            final decision = NotificationRoutingDecisionV2(
-              category: NotificationCategoryV2.message,
-              chatId: msgAction.chatId,
-              messageId: msgAction.messageId,
-              rawPayload: transportEvent.payload,
-            );
-
-            final tapRouter = NotificationTapRouterV2();
-            final tapResult = tapRouter.handleTap(decision);
-
-            if (tapResult.action is OpenChatAction) {
-              final action = tapResult.action as OpenChatAction;
-              // Открыть чат через существующую навигацию
-              debugPrint('[PUSH_V2_TAP] OpenChatAction: chatId=${action.chatId}, messageId=${action.messageId}');
-            }
-            return; // V2 обработал — не идём в legacy
-          }
-        } catch (_) {
-          // ignore — fallback на legacy
+          CallV2Service.instance.handleIncomingFromPushTap(
+            callId: parsedCallId,
+            callerId: parsedCallerId,
+            callerName: callerName,
+          );
         }
+        // Не возвращаемся — legacy path ниже всё равно не выполнится
+        // из-за guard, но оставляем для safety.
       }
 
-      // Legacy path (только если V2 выключен или не смог обработать)
-      if (!kUseCallV2) {
+      // Legacy path (только если V2 UI flow выключен)
+      if (!kUseCallV2UiFlow) {
         debugPrint(
           '[FCM_TAP] PUSH hydrate callId=$callId, callerId=$callerId, callerName=$callerName',
         );
