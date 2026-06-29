@@ -12,6 +12,7 @@ import '../services/call_service.dart';
 import '../services/chat_navigation_service.dart';
 import '../config/api_config.dart';
 import '../call_v2/call_v2_service.dart';
+import '../call_v2/call_v2_debug.dart';
 
 const String _defaultNotificationChannelId = 'default_notification_channel';
 const String _messageAlertsChannelId = 'message_alerts_channel';
@@ -421,7 +422,7 @@ class PushService {
   factory PushService() => _instance;
 
   PushService._internal();
-  static final bool _v2CallUiEnabled = kUseCallV2 || kUseCallV2UiFlow;
+  static const bool _v2CallUiEnabled = kUseCallV2;
 
   final FirebaseMessaging _fcm = FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _localNotifications =
@@ -864,7 +865,7 @@ class PushService {
         final parsedCallId = int.tryParse(callId);
         final parsedCallerId = int.tryParse(callerId);
         if (parsedCallId != null && parsedCallerId != null) {
-          debugPrint('[FCM_FG] V2 bootstrap from foreground push (callId=$parsedCallId, callerId=$parsedCallerId)');
+          callV2Log('PUSH', 'foreground push bootstrap callId=$parsedCallId callerId=$parsedCallerId');
           // Сначала гидратируем CallService (data bootstrap), затем V2
           CallService().hydrateIncomingCallFromPush(
             callId: callId,
@@ -877,27 +878,6 @@ class PushService {
             callerName: callerName,
           );
         }
-      }
-
-      // Legacy path (только если V2 UI flow выключен)
-      if (!_v2CallUiEnabled) {
-        debugPrint(
-          '[FCM_FG] PUSH hydrate callId=$callId, callerId=$callerId, callerName=$callerName',
-        );
-        CallService().hydrateIncomingCallFromPush(
-          callId: callId,
-          callerId: callerId,
-          callerName: callerName,
-        );
-
-        Future.delayed(const Duration(milliseconds: 50), () {
-          _notificationTapStream.add({
-            'type': 'call',
-            'callId': callId,
-            'callerId': callerId,
-            'callerName': callerName,
-          });
-        });
       }
 
       if (!CallRingtoneService().isIncomingPlaying) {
@@ -1165,7 +1145,7 @@ class PushService {
         final parsedCallId = int.tryParse(callId ?? '');
         final parsedCallerId = int.tryParse(callerId ?? '');
         if (parsedCallId != null && parsedCallerId != null) {
-          debugPrint('[FCM_TAP] V2 bootstrap from push tap (callId=$parsedCallId, callerId=$parsedCallerId)');
+          callV2Log('PUSH', 'tap bootstrap callId=$parsedCallId callerId=$parsedCallerId');
           // Сначала гидратируем CallService (data bootstrap), затем V2
           CallService().hydrateIncomingCallFromPush(
             callId: callId!,
@@ -1182,17 +1162,6 @@ class PushService {
         return;
       }
 
-      // Legacy path (только если V2 UI flow выключен)
-      if (!_v2CallUiEnabled) {
-        debugPrint(
-          '[FCM_TAP] PUSH hydrate callId=$callId, callerId=$callerId, callerName=$callerName',
-        );
-        CallService().hydrateIncomingCallFromPush(
-          callId: callId!,
-          callerId: callerId!,
-          callerName: callerName!,
-        );
-      }
     }
 
     // Для call-типов при V2 не эмитим в стрим — V2 сам управляет навигацией

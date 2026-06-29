@@ -1,9 +1,9 @@
-import 'package:flutter/foundation.dart';
 import 'call_state.dart';
 import 'call_event.dart';
 import 'call_ui_intent.dart';
 import 'call_session_v2.dart';
 import 'call_state_machine_v2.dart';
+import 'call_v2_debug.dart';
 
 /// Результат обработки события coordinator'ом.
 ///
@@ -85,7 +85,7 @@ class CallCoordinatorV2 {
   void updateCallId(int callId) {
     if (_session == null) return;
     _session = _session!.copyWith(callId: callId);
-    debugPrint('[V2_COORD] updateCallId — session.callId=$callId');
+    callV2Log('COORD', 'updateCallId callId=$callId');
   }
 
   /// Сбросить сессию в idle (например, после закрытия экрана).
@@ -188,7 +188,7 @@ class CallCoordinatorV2 {
     // Guard: не эмитить повторные final intents
     if (result.newState == CallStateV2.ended || result.newState == CallStateV2.failed) {
       if (_lastEmittedFinalState == result.newState) {
-        debugPrint('[V2_COORD] SKIP intents — already emitted $result.newState');
+        callV2Log('COORD', 'skip final intents for $result.newState');
         return [];
       }
       _lastEmittedFinalState = result.newState;

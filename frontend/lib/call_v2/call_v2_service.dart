@@ -1,10 +1,10 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'call_coordinator_v2.dart';
 import 'call_event.dart';
 import 'call_session_v2.dart';
 import 'call_ui_intent.dart';
 import 'call_state.dart';
+import 'call_v2_debug.dart';
 
 /// V2 Service — тонкий адаптер над CallCoordinatorV2.
 ///
@@ -39,7 +39,7 @@ class CallV2Service {
 
   /// Инициализация.
   void init({required String localUserId}) {
-    debugPrint('[V2] init(localUserId: $localUserId)');
+    callV2Log('SERVICE', 'init(localUserId=$localUserId)');
     // Защита от повторной инициализации тем же userId
     if (_initializedLocalUserId == localUserId) return;
 
@@ -53,7 +53,7 @@ class CallV2Service {
     if (_pendingStartupEvent != null) {
       final pending = _pendingStartupEvent;
       _pendingStartupEvent = null; // очищаем ДО replay, чтобы избежать цикла
-      debugPrint('[V2] REPLAY pending startup event via scheduleMicrotask: ${pending!.runtimeType}');
+      callV2Log('SERVICE', 'replay pending startup event: ${pending!.runtimeType}');
       scheduleMicrotask(() {
         _handle(pending);
       });
@@ -66,7 +66,7 @@ class CallV2Service {
     if (_coordinator == null) {
       if (event is ReceiveIncomingEvent || event is PushTappedEvent) {
         _pendingStartupEvent = event;
-        debugPrint('[V2] QUEUED startup event: ${event.runtimeType} (coordinator not ready)');
+        callV2Log('SERVICE', 'queue startup event: ${event.runtimeType} (coordinator not ready)');
       }
       return;
     }
@@ -82,20 +82,20 @@ class CallV2Service {
           event is ReceiveIncomingEvent) {
         // Разрешено — пропускаем.
       } else {
-        debugPrint('[V2] SKIP late event ${event.runtimeType} — already in $oldState');
+        callV2Log('SERVICE', 'skip late event ${event.runtimeType} in final state $oldState');
         return;
       }
     }
 
-    debugPrint('[V2] >>> event: ${event.runtimeType} | oldState: $oldState');
+    callV2Log('EVENT', '${event.runtimeType} oldState=$oldState');
 
     _coordinator!.handleEvent(event, onIntent: (intent) {
-      debugPrint('[V2] >>> intent: ${intent.runtimeType}');
+      callV2Log('INTENT', intent.runtimeType.toString());
       _intentController.add(intent);
     });
 
     final newState = _coordinator!.session?.state;
-    debugPrint('[V2] <<< newState: $newState | endReason: ${_coordinator!.session?.endReason}');
+    callV2Log('STATE', 'newState=$newState endReason=${_coordinator!.session?.endReason}');
 
     _sessionController.add(_coordinator!.session);
   }
@@ -176,13 +176,13 @@ class CallV2Service {
 
     // Если сессия уже есть и это тот же callId — ничего не делаем
     if (currentSession != null && currentSession.callId == callId) {
-      debugPrint('[V2] handleIncomingFromPushTap — session already exists for callId=$callId, skipping');
+      callV2Log('PUSH', 'incoming push ignored, session already exists for callId=$callId');
       return;
     }
 
     // Если сессия уже есть и это другой callId — игнорируем (старый звонок)
     if (currentSession != null && currentSession.callId != callId && currentSession.callId != 0) {
-      debugPrint('[V2] handleIncomingFromPushTap — existing session for different callId=${currentSession.callId}, ignoring push tap for callId=$callId');
+      callV2Log('PUSH', 'incoming push ignored, active session callId=${currentSession.callId}, tapped callId=$callId');
       return;
     }
 
@@ -194,11 +194,11 @@ class CallV2Service {
         callType: callType,
         callerName: callerName,
       );
-      debugPrint('[V2] handleIncomingFromPushTap — QUEUED for replay (coordinator not ready)');
+      callV2Log('PUSH', 'incoming push queued for replay (coordinator not ready)');
       return;
     }
 
-    debugPrint('[V2] handleIncomingFromPushTap — bootstrapping incoming session (callId=$callId, callerId=$callerId)');
+    callV2Log('PUSH', 'bootstrap incoming from push callId=$callId callerId=$callerId');
     _handle(ReceiveIncomingEvent(
       callerUserId: callerId,
       callId: callId,
@@ -261,7 +261,7 @@ class CallV2Service {
 
   /// Сброс сессии через ResetEvent.
   void reset() {
-    debugPrint('[V2] reset()');
+    callV2Log('SERVICE', 'reset()');
     _coordinator?.reset();
     _sessionController.add(null);
   }

@@ -10,6 +10,7 @@ import 'push_service.dart';
 import '../config/api_config.dart';
 import '../call_v2/call_v2_service.dart';
 import '../call_v2/call_v2_mappers.dart';
+import '../call_v2/call_v2_debug.dart';
 
 enum CallState {
   IDLE,
@@ -24,15 +25,7 @@ class CallService {
   static final CallService _instance = CallService._internal();
   factory CallService() => _instance;
   CallService._internal();
-  /// V2 управляет start/incoming/accept/reject/media-connected.
-  /// Активен когда включён UI-flow или полный V2.
-  static final bool v2StartLifecycleEnabled = kUseCallV2UiFlow || kUseCallV2;
-
-  /// V2 управляет final-flow (remote ended/rejected, local end, media failed, socket lost).
-  static final bool v2FinalEnabled = kUseCallV2FinalFlow || kUseCallV2;
-
-  /// Алиас для v2StartLifecycleEnabled (обратная совместимость).
-  static final bool v2UiLifecycleEnabled = v2StartLifecycleEnabled;
+  static const bool v2Enabled = kUseCallV2;
 
   final SocketService _socketService = SocketService();
   final CallLogger _callLogger = CallLogger();
@@ -274,8 +267,9 @@ class CallService {
 
       // V2 primary: V2 управляет UI через ShowIncomingCallIntent.
       // V1 fallback (authority path) сработает только если V2 не активен.
-      if (v2UiLifecycleEnabled && !_v2FinalEventSent) {
+      if (v2Enabled && !_v2FinalEventSent) {
         final event = CallV2Mappers.incomingFromSocket(data);
+        callV2Log('BRIDGE', 'call:incoming -> handleIncoming callId=${event.callId}');
         CallV2Service.instance.handleIncoming(
           callerUserId: event.callerUserId,
           callId: event.callId,
@@ -301,7 +295,8 @@ class CallService {
 
       // V2: обновляем реальный callId в уже созданной исходящей сессии.
       // Сама сессия создана ранее в startCall() через handleStartOutgoingEarly().
-      if (v2StartLifecycleEnabled && !_v2FinalEventSent && _currentCallId != null) {
+      if (v2Enabled && !_v2FinalEventSent && _currentCallId != null) {
+        callV2Log('BRIDGE', 'call:started -> updateOutgoingCallId callId=$_currentCallId');
         CallV2Service.instance.updateOutgoingCallId(_currentCallId!);
       }
     });
@@ -335,8 +330,9 @@ class CallService {
         await _endCall(reason: 'connection_failed');
       }
 
-      if (v2UiLifecycleEnabled && !_v2FinalEventSent) {
+      if (v2Enabled && !_v2FinalEventSent) {
         final acceptedCallId = data['callId'] as int?;
+        callV2Log('BRIDGE', 'call:accepted -> handleRemoteAccepted callId=${acceptedCallId ?? _currentCallId ?? 0}');
         CallV2Service.instance.handleRemoteAccepted(
           remoteCallId: acceptedCallId ?? _currentCallId ?? 0,
         );
@@ -425,7 +421,8 @@ class CallService {
         return;
       }
       final reason = data['reason'] as String?;
-      if (v2FinalEnabled && !_v2FinalEventSent) {
+      if (v2Enabled && !_v2FinalEventSent) {
+        callV2Log('BRIDGE', 'call:ended -> handleRemoteEnded reason=$reason');
         CallV2Service.instance.handleRemoteEnded(reason: reason);
       }
       await _endCall(reason: reason);
@@ -439,7 +436,8 @@ class CallService {
           _state == CallState.RINGING ||
           _state == CallState.ACCEPTING) {
         await CallRingtoneService().stopAllCallSounds();
-        if (v2FinalEnabled && !_v2FinalEventSent) {
+        if (v2Enabled && !_v2FinalEventSent) {
+          callV2Log('BRIDGE', 'call:rejected -> handleRemoteRejected');
           CallV2Service.instance.handleRemoteRejected(reason: 'rejected');
         }
         await _endCall(reason: 'rejected');
@@ -483,7 +481,8 @@ class CallService {
 
     // V2: ранний старт исходящей сессии — создаём V2 session сразу,
     // до получения реального callId от backend.
-    if (v2StartLifecycleEnabled && !_v2FinalEventSent) {
+    if (v2Enabled && !_v2FinalEventSent) {
+      callV2Log('BRIDGE', 'startCall -> handleStartOutgoingEarly calleeId=$userId');
       CallV2Service.instance.handleStartOutgoingEarly(
         calleeId: userId,
         callType: null,
@@ -533,7 +532,8 @@ class CallService {
         await _endCall(reason: 'connection_failed');
         rethrow;
       }
-      if (v2UiLifecycleEnabled && !_v2FinalEventSent) {
+      if (v2Enabled && !_v2FinalEventSent) {
+        callV2Log('BRIDGE', 'acceptCall -> handleAccept');
         CallV2Service.instance.handleAccept();
       }
     } finally {
@@ -547,7 +547,8 @@ class CallService {
     _socketService.sendCallEvent('call:reject', {
       'callId': _currentCallId,
     });
-    if (v2UiLifecycleEnabled && !_v2FinalEventSent) {
+    if (v2Enabled && !_v2FinalEventSent) {
+      callV2Log('BRIDGE', 'rejectCall -> handleReject');
       CallV2Service.instance.handleReject(reason: 'rejected');
     }
     await _endCall(reason: 'rejected');
@@ -566,7 +567,8 @@ class CallService {
         'callId': _currentCallId,
       });
     }
-    if (v2FinalEnabled) {
+    if (v2Enabled) {
+      callV2Log('BRIDGE', 'endCall -> handleLocalEnd');
       CallV2Service.instance.handleLocalEnd();
     }
     _v2FinalEventSent = true;
@@ -653,7 +655,8 @@ class CallService {
       _log('🔗 PeerConnection state=$state');
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         _cancelPeerDisconnectTimer();
-        if (v2UiLifecycleEnabled && !_v2FinalEventSent) {
+        if (v2Enabled && !_v2FinalEventSent) {
+          callV2Log('BRIDGE', 'peer connected -> handleMediaConnected');
           CallV2Service.instance.handleMediaConnected();
         }
       } else if (state ==
@@ -663,7 +666,8 @@ class CallService {
               RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
         _cancelPeerDisconnectTimer();
-        if (v2FinalEnabled && !_v2FinalEventSent) {
+        if (v2Enabled && !_v2FinalEventSent) {
+          callV2Log('BRIDGE', 'peer failed/closed -> handleMediaFailed error=peer_connection_$state');
           CallV2Service.instance.handleMediaFailed(error: 'peer_connection_$state');
         }
         unawaited(_endCall(reason: 'peer_disconnected'));
@@ -675,7 +679,8 @@ class CallService {
       if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
           state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
         _cancelPeerDisconnectTimer();
-        if (v2UiLifecycleEnabled && !_v2FinalEventSent) {
+        if (v2Enabled && !_v2FinalEventSent) {
+          callV2Log('BRIDGE', 'ice connected/completed -> handleMediaConnected');
           CallV2Service.instance.handleMediaConnected();
         }
       } else if (state ==
@@ -684,7 +689,8 @@ class CallService {
       } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
           state == RTCIceConnectionState.RTCIceConnectionStateClosed) {
         _cancelPeerDisconnectTimer();
-        if (v2FinalEnabled && !_v2FinalEventSent) {
+        if (v2Enabled && !_v2FinalEventSent) {
+          callV2Log('BRIDGE', 'ice failed/closed -> handleMediaFailed error=ice_$state');
           CallV2Service.instance.handleMediaFailed(error: 'ice_$state');
         }
         unawaited(_endCall(reason: 'peer_disconnected'));
@@ -773,7 +779,8 @@ class CallService {
       unawaited(_endCall(reason: 'peer_disconnected'));
     }
 
-    if (v2FinalEnabled && !_v2FinalEventSent) {
+    if (v2Enabled && !_v2FinalEventSent) {
+      callV2Log('BRIDGE', 'connection lost -> handleSocketLost');
       CallV2Service.instance.handleSocketLost(error: 'connection_lost');
     }
   }
@@ -913,7 +920,8 @@ class CallService {
 
     _v2FinalEventSent = true;
 
-    if (v2StartLifecycleEnabled) {
+    if (v2Enabled) {
+      callV2Log('BRIDGE', '_hardReset -> reset()');
       CallV2Service.instance.reset();
     }
 

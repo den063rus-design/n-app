@@ -24,6 +24,7 @@ import '../screens/chat_screen.dart';
 import '../widgets/active_call_overlay.dart';
 import '../widgets/incoming_call_dialog.dart';
 import '../call_v2/call_v2_service.dart';
+import '../call_v2/call_v2_debug.dart';
 import '../call_v2/call_ui_intent.dart';
 import '../call_v2/call_state.dart';
 
@@ -89,6 +90,11 @@ void openCallScreenFromOverlay() {
     return;
   }
 
+  if (v2Session == null || !v2Session.isActive) {
+    callV2Log('APP', 'overlay tap ignored — no active V2 session');
+    return;
+  }
+
   final remoteUserId = callService.remoteUserId;
   final remoteUserName = callService.remoteUserName;
 
@@ -97,11 +103,7 @@ void openCallScreenFromOverlay() {
     return;
   }
 
-  if (v2Session != null && v2Session.isActive) {
-    debugPrint('[APP] openCallScreenFromOverlay — opening CallScreen from active V2 session');
-  } else {
-    debugPrint('[APP] ✅ openCallScreenFromOverlay — opening CallScreen from overlay (V1 fallback)');
-  }
+  callV2Log('APP', 'overlay tap opening call screen for userId=$remoteUserId');
   callService.markCallScreenOpen();
   debugPrint('[APP] ✅ openCallScreenFromOverlay — opening CallScreen (userId=$remoteUserId, from=overlay)');
   Navigator.push(
@@ -332,10 +334,7 @@ class _AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
-  static final bool v2UiEnabled = kUseCallV2 || kUseCallV2UiFlow;
-  static final bool v2FinalEnabled = kUseCallV2 || kUseCallV2FinalFlow;
-  static final bool v2ObserverEnabled =
-      v2UiEnabled || v2FinalEnabled || kUseCallV2Shadow;
+  static const bool v2Enabled = kUseCallV2;
   bool _isChecking = true;
   bool _isOffline = false;
   AppLifecycleState _lastLifecycleState = AppLifecycleState.resumed;
@@ -374,26 +373,26 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   /// Безопасен для повторных вызовов — CallV2Service.init() имеет guard
   /// от повторной инициализации тем же userId.
   void _ensureCallV2InitializedFromCurrentAuthState() {
-    if (!v2ObserverEnabled) {
-      debugPrint('[APP_SHELL] ensure V2 init from current auth state — skipped (v2ObserverEnabled=false)');
+    if (!v2Enabled) {
+      callV2Log('APP', 'ensure init skipped — v2 disabled');
       return;
     }
     try {
       final auth = context.read<AuthProvider>();
       if (!auth.isAuthenticated) {
-        debugPrint('[APP_SHELL] ensure V2 init from current auth state — skipped (not authenticated)');
+        callV2Log('APP', 'ensure init skipped — not authenticated');
         return;
       }
       final userId = auth.currentUser?.id.toString();
       if (userId == null || userId.isEmpty) {
-        debugPrint('[APP_SHELL] ensure V2 init from current auth state — skipped (userId is null/empty)');
+        callV2Log('APP', 'ensure init skipped — userId empty');
         return;
       }
-      debugPrint('[APP_SHELL] ensure V2 init from current auth state — auth=true userId=$userId');
+      callV2Log('APP', 'ensure init localUserId=$userId');
       CallV2Service.instance.init(localUserId: userId);
-      debugPrint('[APP_SHELL] ensure V2 init from current auth state — CallV2Service.init() called');
+      callV2Log('APP', 'ensure init done');
     } catch (e) {
-      debugPrint('[APP_SHELL] ensure V2 init from current auth state — error: $e');
+      callV2Log('APP', 'ensure init error: $e');
     }
   }
 
@@ -499,11 +498,11 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     _flushPendingMessageNavigation();
 
     // V2: инициализация после успешного auth (replay pending startup event)
-    if (v2ObserverEnabled && auth.isAuthenticated) {
+    if (v2Enabled && auth.isAuthenticated) {
       final userId = auth.currentUser?.id.toString();
       if (userId != null && userId.isNotEmpty) {
         CallV2Service.instance.init(localUserId: userId);
-        debugPrint('[APP_SHELL] _handleAuthStateChanged — CallV2Service.init() OK (userId=$userId)');
+        callV2Log('APP', '_handleAuthStateChanged init localUserId=$userId');
       }
     }
 
@@ -637,8 +636,9 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
     if (state == AppLifecycleState.resumed) {
       _enableStandardSystemUi();
-      _checkPendingIncomingCallFromService();
-      _checkPendingIncomingCallFromPush();
+      if (v2Enabled) {
+        _checkPendingIncomingCallFromPush();
+      }
     }
 
     // ?? 1: ????????? ??????, ???? ?????????? ?????/????????? ?? ??????
@@ -740,59 +740,11 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         return;
       }
 
-      if (v2UiEnabled) {
-        return;
-      }
-
-      // ================================================================
-      // AUTHORITY PATH: показ V1 fallback incoming dialog
-      // ================================================================
       if (state == CallState.RINGING) {
-        // V2 guard: если V2 session активна — V1 fallback не нужен
-        if (v2UiEnabled && _isV2SessionActive()) {
-          debugPrint('[APP-V2-FALLBACK] _listenCallState — V2 session active, skipping V1 fallback');
-          return;
-        }
-
-        // Latch guard: dialog уже был показан для этого звонка
-        if (_incomingFallbackConsumed) {
-          debugPrint('[APP] _listenCallState — latch already set, skipping');
-          return;
-        }
-
-        // Guard: UI уже открыт (другой путь уже показал dialog)
-        if (callService.isIncomingDialogOpen || callService.isCallScreenOpen) {
-          debugPrint('[APP] _listenCallState — state=RINGING, UI already open — skipping fallback');
-          return;
-        }
-
-        final callerId = callService.remoteUserId;
-        final callerName = callService.remoteUserName;
-        final callId = callService.currentCallId ?? 0;
-
-        if (callerId == null) {
-          debugPrint('[APP] _listenCallState — state=RINGING but remoteUserId is null');
-          return;
-        }
-
-        // Ставим latch ДО показа dialog, чтобы защититься от race
-        _incomingFallbackConsumed = true;
-        debugPrint('[APP] _listenCallState — latch SET');
-
-        debugPrint(
-          '[APP] _listenCallState — state=RINGING fallback -> show dialog '
-          '(callerId=$callerId, callerName=$callerName, callId=$callId)',
+        callV2Log(
+          'APP',
+          'stateStream RINGING callId=${callService.currentCallId} remoteUserId=${callService.remoteUserId}',
         );
-
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          showIncomingCallDialogFromService(
-            callerId: callerId,
-            callerName: callerName ?? '�������� ������',
-            callId: callId,
-            source: 'state_fallback',
-          );
-        });
         return;
       }
     });
@@ -801,15 +753,15 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   /// V2: подписка на intentStream (вызывается в initState).
   /// Подписка происходит ДО init(), чтобы не пропустить replay.
   void _setupV2CallListener() {
-    if (!v2ObserverEnabled) return;
+    if (!v2Enabled) return;
     _v2IntentSubscription = CallV2Service.instance.intentStream.listen(_handleV2Intent);
-    debugPrint('[APP] _setupV2CallListener — subscribed to V2 intentStream');
+    callV2Log('APP', 'intent listener subscribed');
   }
 
   /// V2: обработка UI intents.
   void _handleV2Intent(CallUiIntentV2 intent) {
     if (!mounted) return;
-    debugPrint('[APP] _handleV2Intent — ${intent.runtimeType}');
+    callV2Log('APP', 'intent ${intent.runtimeType}');
 
     final isUiStartIntent = intent is ShowIncomingCallIntent ||
         intent is ShowOutgoingCallIntent ||
@@ -818,13 +770,13 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         intent is ShowCallFailedIntent ||
         intent is DismissCallScreenIntent;
 
-    if (v2UiEnabled && isUiStartIntent) {
+    if (v2Enabled && isUiStartIntent) {
       if (intent is ShowIncomingCallIntent) {
         // Пробуем открыть dialog. Если context ещё не готов — сохраняем
         // pending incoming call для повторной попытки в _checkPendingIncomingCallFromPush().
         final context = navigatorKey.currentContext;
         if (context == null || !context.mounted) {
-          debugPrint('[APP] _handleV2Intent — ShowIncomingCallIntent but context not ready, saving pending');
+          callV2Log('APP', 'incoming intent arrived before navigator ready — saving pending');
           CallService().restorePendingIncomingCall({
             'callerId': intent.callerUserId,
             'callerName': intent.callerName ?? 'Incoming call',
@@ -871,7 +823,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       }
     }
 
-    if (v2FinalEnabled && isFinalIntent) {
+    if (v2Enabled && isFinalIntent) {
       _armPostCallMessageNavigationSuppression('v2_final_intent_${intent.runtimeType}');
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -942,9 +894,8 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
           return;
         }
 
-        if (v2UiEnabled) {
-          debugPrint('[APP] _listenIncomingCalls — foreground incoming is handled by V2');
-          return;
+        if (v2Enabled) {
+          callV2Log('APP', 'socket incoming observed in foreground callId=$callId callerId=$callerId');
         }
       },
       onError: (error, stackTrace) {
@@ -953,7 +904,9 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       },
     );
 
-    _checkPendingIncomingCallFromService();
+    if (v2Enabled) {
+      _checkPendingIncomingCallFromPush();
+    }
   }
 
   StreamSubscription<Map<String, String?>>? _pushTapSubscription;
@@ -979,15 +932,12 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
           }
         }
       } else if (type == 'call') {
-        // Для звонков — та же логика, что и для socket incoming:
-        // показать IncomingCallDialog, а не сразу CallScreen
         PushService().clearPendingCallTap();
-        _handleCallPushTap(data);
+        callV2Log('APP', 'call notification tap observed by app shell');
       }
     });
 
     _checkPendingMessageTap();
-    _checkPendingCallTap();
 
     // Проверяем, не было ли уже восстановлено состояние входящего звонка
     // из push-уведомления (getInitialMessage в PushService.init()).
@@ -1033,22 +983,6 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
     );
   }
 
-  void _checkPendingCallTap() {
-    if (v2UiEnabled) {
-      debugPrint('[APP] _checkPendingCallTap — skipped, call push tap is handled by V2');
-      return;
-    }
-    final pending = PushService().consumePendingCallTap();
-    if (pending == null || pending['type'] != 'call') {
-      return;
-    }
-
-    debugPrint(
-      '[APP] restoring pending call tap callId=${pending['callId']} callerId=${pending['callerId']}',
-    );
-    _handleCallPushTap(pending);
-  }
-
   /// Cold-start rescue bridge для killed app + push tap.
   ///
   /// V2 primary: V2 сам поднимает incoming flow из push tap через
@@ -1065,15 +999,15 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
     // V2 replay path: если V2 session активна, но dialog ещё не открыт —
     // пробуем открыть через V2 (source='v2_ui').
-    if (v2UiEnabled) {
+    if (v2Enabled) {
       if (!_isV2SessionActive()) {
-        debugPrint('[APP] _checkPendingIncomingCallFromPush — no active V2 session');
+        callV2Log('APP', 'pending incoming replay skipped — no active V2 session');
         return;
       }
 
       // Guard: UI уже открыт
       if (callService.isIncomingDialogOpen || callService.isCallScreenOpen) {
-        debugPrint('[APP] _checkPendingIncomingCallFromPush — V2 UI already open');
+        callV2Log('APP', 'pending incoming replay skipped — UI already open');
         return;
       }
 
@@ -1084,7 +1018,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         final callerName = pending['callerName'] as String?;
         final callId = pending['callId'] as int? ?? 0;
         if (callerId != null) {
-          debugPrint('[APP] _checkPendingIncomingCallFromPush — V2 replay: opening dialog from pending (callerId=$callerId)');
+          callV2Log('APP', 'pending incoming replay open dialog callerId=$callerId callId=$callId');
           showIncomingCallDialogFromService(
             callerId: callerId,
             callerName: callerName ?? 'Incoming call',
@@ -1094,147 +1028,11 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         }
       }
 
-      debugPrint('[APP] _checkPendingIncomingCallFromPush — V2 replay check finished');
+      callV2Log('APP', 'pending incoming replay finished');
       return;
     }
-
-    if (callService.state != CallState.RINGING) {
-      debugPrint('[APP] _checkPendingIncomingCallFromPush — state=${callService.state}, not RINGING — nothing to do');
-      return;
-    }
-
-    // Latch guard: authority path уже показал dialog
-    if (_incomingFallbackConsumed) {
-      debugPrint('[APP] _checkPendingIncomingCallFromPush — latch already set, authority path handled it');
-      return;
-    }
-
-    // Guard: UI уже открыт
-    if (callService.isIncomingDialogOpen || callService.isCallScreenOpen) {
-      debugPrint('[APP] _checkPendingIncomingCallFromPush — UI already open, skipping');
-      return;
-    }
-
-    final callerId = callService.remoteUserId;
-
-    if (callerId == null) {
-      debugPrint('[APP] _checkPendingIncomingCallFromPush — remoteUserId is null, cannot show dialog');
-      return;
-    }
-
-    // V1 fallback: authority path (_listenCallState) получит stateStream.
-    debugPrint('[APP] _checkPendingIncomingCallFromPush — V1 fallback, delegating to authority path (state=${callService.state})');
+    callV2Log('APP', 'pending incoming replay skipped — V2 disabled');
   }
-
-  /// Страховочная проверка: есть ли pending incoming call в CallService
-  /// (например, после реконнекта socket).
-  ///
-  /// НЕ открывает dialog — это делает ТОЛЬКО _listenCallState (authority path).
-  void _checkPendingIncomingCallFromService() {
-    final callService = CallService();
-    if (v2UiEnabled) {
-      debugPrint('[APP] _checkPendingIncomingCallFromService — skipped, incoming UI is handled by V2');
-      return;
-    }
-    final pending = callService.consumePendingIncomingCall();
-
-    if (pending == null) {
-      debugPrint('[APP] _checkPendingIncomingCallFromService — no pending incoming call');
-      return;
-    }
-
-    final callerId = pending['callerId'] as int?;
-    final callerName = pending['callerName'] as String?;
-    final callId = pending['callId'] as int? ?? 0;
-
-    if (callerId == null) {
-      debugPrint('[APP] _checkPendingIncomingCallFromService — pending callerId is null');
-      return;
-    }
-
-    // Latch guard: authority path уже показал dialog
-    if (_incomingFallbackConsumed) {
-      debugPrint('[APP] _checkPendingIncomingCallFromService — latch already set, authority path handled it');
-      return;
-    }
-
-    debugPrint(
-      '[APP] _checkPendingIncomingCallFromService — pending incoming call exists '
-      '(callerId=$callerId, callerName=$callerName, callId=$callId), delegating to authority path',
-    );
-  }
-
-  /// Обрабатывает тап по call push-уведомлению.
-  ///
-  /// НЕ открывает dialog — это делает ТОЛЬКО _listenCallState (authority path).
-  /// Здесь только:
-  /// - валидация payload
-  /// - hydrate состояния в CallService (если нужно)
-  /// - делегирование authority path (stateStream получит RINGING)
-  void _handleCallPushTap(Map<String, String?> data) {
-    if (v2UiEnabled) {
-      debugPrint('[APP] _handleCallPushTap — skipped, call push tap is handled by V2');
-      return;
-    }
-    final callerIdStr = data['callerId'];
-    final callerName = data['callerName'] ?? '�������� ������';
-    final callIdStr = data['callId'];
-
-    debugPrint('[APP] APP incoming push tap — callerId=$callerIdStr, callerName=$callerName, callId=$callIdStr');
-
-    if (callerIdStr == null) {
-      debugPrint('[APP] ⚠️ callerId is null, cannot process');
-      return;
-    }
-
-    final callerId = int.tryParse(callerIdStr);
-    if (callerId == null) {
-      debugPrint('[APP] ⚠️ invalid callerId: $callerIdStr');
-      return;
-    }
-
-    final callId = callIdStr != null ? int.tryParse(callIdStr) ?? 0 : 0;
-
-    final callService = CallService();
-
-    if (callId != 0 && callService.lastEndedCallId == callId) {
-      debugPrint('[APP] ignoring stale call notification tap for ended callId=$callId');
-      unawaited(PushService().cancelIncomingCallNotification());
-      return;
-    }
-
-    // Latch guard: authority path уже показал dialog
-    if (_incomingFallbackConsumed) {
-      debugPrint('[APP] _handleCallPushTap — latch already set, authority path handled it');
-      return;
-    }
-
-    // Если state уже RINGING — socket уже установил состояние,
-    // hydrate не нужен. Authority path получит stateStream.
-    if (callService.state == CallState.RINGING) {
-      debugPrint('[APP] state=RINGING — delegating to authority path');
-      return;
-    }
-
-    // Если уже на звонке (CALLING / IN_CALL) — игнорируем push
-    if (callService.state == CallState.CALLING ||
-        callService.state == CallState.IN_CALL) {
-      debugPrint('[APP] already in call (state=${callService.state}) — ignoring push tap');
-      return;
-    }
-
-    // Восстанавливаем состояние из push — authority path получит RINGING через stateStream
-    debugPrint('[APP] Hydrating incoming call from push (state=${callService.state})');
-    callService.hydrateIncomingCallFromPush(
-      callId: callIdStr ?? '',
-      callerId: callerIdStr,
-      callerName: callerName,
-    );
-
-    // Authority path (_listenCallState) получит stateStream и покажет dialog
-    debugPrint('[APP] _handleCallPushTap — hydrate done, delegating to authority path');
-  }
-
 
   /// Мониторинг подключения к интернету
   void _monitorConnectivity() {
@@ -1365,3 +1163,4 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   }
 
 }
+
