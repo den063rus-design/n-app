@@ -29,7 +29,7 @@ class ApiConfig {
 /// Feature flag для включения V2 call-flow.
 /// false — используется текущая система звонков (legacy).
 /// true — V2 coordinator/service управляет звонками.
-const bool kUseCallV2 = false;
+const bool kUseCallV2 = true;
 const bool kUseCallV2Shadow = false;
-const bool kUseCallV2FinalFlow = true;
-const bool kUseCallV2UiFlow = true;
+const bool kUseCallV2FinalFlow = false;
+const bool kUseCallV2UiFlow = false;

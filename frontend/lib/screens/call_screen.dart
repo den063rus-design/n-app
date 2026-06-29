@@ -66,9 +66,7 @@ class _CallScreenState extends State<CallScreen> {
                  _callService.state == CallState.IN_CALL) {
         _log('initState() — already in call (state=${_callService.state})');
       } else if (_callService.state == CallState.IDLE) {
-        // V1 fallback: если V2 не запустил звонок — запускаем через V1
-        _log('initState() — state=IDLE, starting outgoing call via V1 (userId=${widget.userId})');
-        _callService.startCall(widget.userId);
+        _log('initState() — state=IDLE, waiting for V2 runtime to drive call lifecycle');
       }
     }
   }

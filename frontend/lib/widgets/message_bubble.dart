@@ -60,10 +60,6 @@ class MessageBubble extends StatelessWidget {
     final meta = message.metadata;
     final callStatus = meta?['status'] as String? ?? 'ended';
     final durationSec = meta?['durationSec'] as int? ?? 0;
-    // Читаем для будущего использования, пока не применяем для направления
-    final callerId = meta?['callerId'] as int?;
-    final calleeId = meta?['calleeId'] as int?;
-
     // Направление определяется через сторону bubble (isMine)
     final bool isOutgoing = isMine;
 

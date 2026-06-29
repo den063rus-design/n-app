@@ -73,14 +73,7 @@ class CallRouteObserver extends NavigatorObserver {
 /// Вынесена в глобальную область, чтобы быть доступной из MaterialApp.builder
 /// (который находится в NApp, а не в _AppShellState).
 void openCallScreenFromOverlay() {
-  // V2 guard: если V2 session активна — V2 сам эмитит ShowActiveCallIntent
-  // и управляет UI. V1 fallback не должен вмешиваться.
   final v2Session = CallV2Service.instance.session;
-  if (v2Session != null && v2Session.isActive) {
-    debugPrint('[APP] openCallScreenFromOverlay — V2 session active, delegating to V2');
-    return;
-  }
-
   final callService = CallService();
   final currentRoute = callRouteObserver.currentRouteName;
 
@@ -104,7 +97,11 @@ void openCallScreenFromOverlay() {
     return;
   }
 
-  debugPrint('[APP] ✅ openCallScreenFromOverlay — opening CallScreen from overlay (V1 fallback)');
+  if (v2Session != null && v2Session.isActive) {
+    debugPrint('[APP] openCallScreenFromOverlay — opening CallScreen from active V2 session');
+  } else {
+    debugPrint('[APP] ✅ openCallScreenFromOverlay — opening CallScreen from overlay (V1 fallback)');
+  }
   callService.markCallScreenOpen();
   debugPrint('[APP] ✅ openCallScreenFromOverlay — opening CallScreen (userId=$remoteUserId, from=overlay)');
   Navigator.push(
@@ -335,8 +332,10 @@ class _AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
+  static final bool v2UiEnabled = kUseCallV2 || kUseCallV2UiFlow;
+  static final bool v2FinalEnabled = kUseCallV2 || kUseCallV2FinalFlow;
   static final bool v2ObserverEnabled =
-      kUseCallV2 || kUseCallV2Shadow || kUseCallV2FinalFlow || kUseCallV2UiFlow;
+      v2UiEnabled || v2FinalEnabled || kUseCallV2Shadow;
   bool _isChecking = true;
   bool _isOffline = false;
   AppLifecycleState _lastLifecycleState = AppLifecycleState.resumed;
@@ -741,12 +740,16 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         return;
       }
 
+      if (v2UiEnabled) {
+        return;
+      }
+
       // ================================================================
       // AUTHORITY PATH: показ V1 fallback incoming dialog
       // ================================================================
       if (state == CallState.RINGING) {
         // V2 guard: если V2 session активна — V1 fallback не нужен
-        if (kUseCallV2UiFlow && _isV2SessionActive()) {
+        if (v2UiEnabled && _isV2SessionActive()) {
           debugPrint('[APP-V2-FALLBACK] _listenCallState — V2 session active, skipping V1 fallback');
           return;
         }
@@ -815,7 +818,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
         intent is ShowCallFailedIntent ||
         intent is DismissCallScreenIntent;
 
-    if (kUseCallV2UiFlow && isUiStartIntent) {
+    if (v2UiEnabled && isUiStartIntent) {
       if (intent is ShowIncomingCallIntent) {
         // Пробуем открыть dialog. Если context ещё не готов — сохраняем
         // pending incoming call для повторной попытки в _checkPendingIncomingCallFromPush().
@@ -868,7 +871,7 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
       }
     }
 
-    if (kUseCallV2FinalFlow && isFinalIntent) {
+    if (v2FinalEnabled && isFinalIntent) {
       _armPostCallMessageNavigationSuppression('v2_final_intent_${intent.runtimeType}');
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -939,21 +942,10 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
           return;
         }
 
-        // Foreground: V2 UI flow guard
-        if (kUseCallV2UiFlow && _isV2SessionActive()) {
-          debugPrint('[APP-V2-FALLBACK] _listenIncomingCalls — V2 session active, skipping V1 fallback');
+        if (v2UiEnabled) {
+          debugPrint('[APP] _listenIncomingCalls — foreground incoming is handled by V2');
           return;
         }
-
-        // Latch guard: authority path уже показал dialog
-        if (_incomingFallbackConsumed) {
-          debugPrint('[APP] _listenIncomingCalls — latch already set, authority path handled it');
-          return;
-        }
-
-        // Не открываем dialog — authority path (_listenCallState) сделает это
-        // при получении CallState.RINGING из stateStream.
-        debugPrint('[APP] _listenIncomingCalls — delegating to authority path (state_fallback)');
       },
       onError: (error, stackTrace) {
         debugPrint('[APP] _listenIncomingCalls — stream error: $error');
@@ -1042,8 +1034,8 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   }
 
   void _checkPendingCallTap() {
-    if (kUseCallV2UiFlow && _isV2SessionActive()) {
-      debugPrint('[APP-V2-FALLBACK] _checkPendingCallTap — V2 session active, skipping V1 fallback');
+    if (v2UiEnabled) {
+      debugPrint('[APP] _checkPendingCallTap — skipped, call push tap is handled by V2');
       return;
     }
     final pending = PushService().consumePendingCallTap();
@@ -1073,10 +1065,15 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
 
     // V2 replay path: если V2 session активна, но dialog ещё не открыт —
     // пробуем открыть через V2 (source='v2_ui').
-    if (kUseCallV2UiFlow && _isV2SessionActive()) {
+    if (v2UiEnabled) {
+      if (!_isV2SessionActive()) {
+        debugPrint('[APP] _checkPendingIncomingCallFromPush — no active V2 session');
+        return;
+      }
+
       // Guard: UI уже открыт
       if (callService.isIncomingDialogOpen || callService.isCallScreenOpen) {
-        debugPrint('[APP-V2-FALLBACK] _checkPendingIncomingCallFromPush — V2 session active, UI already open');
+        debugPrint('[APP] _checkPendingIncomingCallFromPush — V2 UI already open');
         return;
       }
 
@@ -1094,11 +1091,10 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
             callId: callId,
             source: 'v2_ui',
           );
-          return;
         }
       }
 
-      debugPrint('[APP-V2-FALLBACK] _checkPendingIncomingCallFromPush — V2 session active, no pending, skipping V1 fallback');
+      debugPrint('[APP] _checkPendingIncomingCallFromPush — V2 replay check finished');
       return;
     }
 
@@ -1136,8 +1132,8 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   /// НЕ открывает dialog — это делает ТОЛЬКО _listenCallState (authority path).
   void _checkPendingIncomingCallFromService() {
     final callService = CallService();
-    if (kUseCallV2UiFlow && _isV2SessionActive()) {
-      debugPrint('[APP-V2-FALLBACK] _checkPendingIncomingCallFromService — V2 session active, skipping V1 fallback');
+    if (v2UiEnabled) {
+      debugPrint('[APP] _checkPendingIncomingCallFromService — skipped, incoming UI is handled by V2');
       return;
     }
     final pending = callService.consumePendingIncomingCall();
@@ -1176,8 +1172,8 @@ class _AppShellState extends State<_AppShell> with WidgetsBindingObserver {
   /// - hydrate состояния в CallService (если нужно)
   /// - делегирование authority path (stateStream получит RINGING)
   void _handleCallPushTap(Map<String, String?> data) {
-    if (kUseCallV2UiFlow && _isV2SessionActive()) {
-      debugPrint('[APP-V2-FALLBACK] _handleCallPushTap — V2 session active, skipping V1 fallback');
+    if (v2UiEnabled) {
+      debugPrint('[APP] _handleCallPushTap — skipped, call push tap is handled by V2');
       return;
     }
     final callerIdStr = data['callerId'];

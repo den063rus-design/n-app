@@ -421,6 +421,7 @@ class PushService {
   factory PushService() => _instance;
 
   PushService._internal();
+  static final bool _v2CallUiEnabled = kUseCallV2 || kUseCallV2UiFlow;
 
   final FirebaseMessaging _fcm = FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _localNotifications =
@@ -859,8 +860,7 @@ class PushService {
       }
 
       // V2 primary: bootstrap incoming session из foreground push.
-      // Используем kUseCallV2UiFlow (а не kUseCallV2), т.к. V2 UI flow активен.
-      if (kUseCallV2UiFlow) {
+      if (_v2CallUiEnabled) {
         final parsedCallId = int.tryParse(callId);
         final parsedCallerId = int.tryParse(callerId);
         if (parsedCallId != null && parsedCallerId != null) {
@@ -880,7 +880,7 @@ class PushService {
       }
 
       // Legacy path (только если V2 UI flow выключен)
-      if (!kUseCallV2UiFlow) {
+      if (!_v2CallUiEnabled) {
         debugPrint(
           '[FCM_FG] PUSH hydrate callId=$callId, callerId=$callerId, callerName=$callerName',
         );
@@ -1161,8 +1161,7 @@ class PushService {
       }
 
       // V2 primary: bootstrap incoming session из push tap.
-      // Используем kUseCallV2UiFlow (а не kUseCallV2), т.к. V2 UI flow активен.
-      if (kUseCallV2UiFlow) {
+      if (_v2CallUiEnabled) {
         final parsedCallId = int.tryParse(callId ?? '');
         final parsedCallerId = int.tryParse(callerId ?? '');
         if (parsedCallId != null && parsedCallerId != null) {
@@ -1179,12 +1178,12 @@ class PushService {
             callerName: callerName,
           );
         }
-        // Не возвращаемся — legacy path ниже всё равно не выполнится
-        // из-за guard, но оставляем для safety.
+        _pendingCallTapData = null;
+        return;
       }
 
       // Legacy path (только если V2 UI flow выключен)
-      if (!kUseCallV2UiFlow) {
+      if (!_v2CallUiEnabled) {
         debugPrint(
           '[FCM_TAP] PUSH hydrate callId=$callId, callerId=$callerId, callerName=$callerName',
         );

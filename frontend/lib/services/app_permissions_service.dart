@@ -14,16 +14,16 @@ class AppPermissionsService {
   }
 
   Future<void> _requestNotificationPermission() async {
-    final status = await Permission.notification.request();
+    await Permission.notification.request();
     // Не падаем, если пользователь отказал
   }
 
   Future<void> _requestCameraPermission() async {
-    final status = await Permission.camera.request();
+    await Permission.camera.request();
   }
 
   Future<void> _requestMicrophonePermission() async {
-    final status = await Permission.microphone.request();
+    await Permission.microphone.request();
   }
 
   Future<void> _requestMediaPermissions() async {
