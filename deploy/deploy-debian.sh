@@ -1,0 +1,128 @@
+#!/bin/bash
+
+# ============================================
+# N App - Deploy Script for Debian
+# Использование: bash deploy/deploy-debian.sh
+# ============================================
+
+set -e
+
+# Цвета для вывода
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+echo -e "${GREEN}============================================${NC}"
+echo -e "${GREEN}  N App - Деплой на Debian${NC}"
+echo -e "${GREEN}============================================${NC}"
+
+# Конфигурация
+PROJECT_DIR="/opt/n-app"
+BRANCH="main"
+
+# 1. Перейти в директорию проекта
+echo -e "\n${YELLOW}📁 Перехожу в директорию проекта...${NC}"
+cd "$PROJECT_DIR" || {
+    echo -e "${RED}❌ Директория $PROJECT_DIR не найдена!${NC}"
+    echo -e "${YELLOW}Сначала клонируй репозиторий:${NC}"
+    echo "   git clone https://github.com/den063rus-design/n-app.git $PROJECT_DIR"
+    exit 1
+}
+
+# 2. Сохранить текущий .env если есть
+if [ -f .env ]; then
+    echo -e "${YELLOW}💾 Сохраняю текущий .env...${NC}"
+    cp .env /tmp/n-app-env-backup
+fi
+
+# 3. Стянуть последние изменения с GitHub
+echo -e "\n${YELLOW}📥 Стягиваю последние изменения с GitHub...${NC}"
+git fetch origin
+git reset --hard "origin/$BRANCH"
+git clean -fd
+
+echo -e "${GREEN}✅ Последний коммит:${NC}"
+git log --oneline -1
+
+# 4. Восстановить .env
+if [ -f /tmp/n-app-env-backup ]; then
+    echo -e "${YELLOW}♻️ Восстанавливаю .env...${NC}"
+    cp /tmp/n-app-env-backup .env
+    rm /tmp/n-app-env-backup
+elif [ ! -f .env ]; then
+    echo -e "${YELLOW}⚠️ .env не найден. Создаю из .env.production...${NC}"
+    if [ -f .env.production ]; then
+        cp .env.production .env
+        echo -e "${RED}⚠️ ВАЖНО: Отредактируй .env и укажи правильные данные!${NC}"
+        echo "   nano .env"
+    fi
+fi
+
+# 5. Установить зависимости (включая devDependencies — нужен @nestjs/cli для сборки)
+echo -e "\n${YELLOW}📦 Устанавливаю npm зависимости...${NC}"
+npm install
+
+# 6. Собрать проект
+echo -e "\n${YELLOW}🔨 Собираю проект...${NC}"
+npm run build
+
+# 7. Сгенерировать Prisma клиент
+echo -e "\n${YELLOW}🗄️  Генерирую Prisma клиент...${NC}"
+npx prisma generate
+
+# 8. Применить миграции
+echo -e "\n${YELLOW}🗄️  Применяю миграции БД...${NC}"
+if npx prisma migrate deploy 2>&1; then
+    echo -e "${GREEN}✅ Миграции применены${NC}"
+else
+    echo -e "${YELLOW}⚠️ Нет существующих миграций. Создаю начальную миграцию...${NC}"
+    npx prisma migrate dev --name init --skip-generate
+    echo -e "${GREEN}✅ Начальная миграция создана и применена${NC}"
+fi
+
+# 9. Запустить seed
+echo -e "\n${YELLOW}🌱 Запускаю seed...${NC}"
+npx prisma db seed || echo -e "${YELLOW}⚠️ Seed пропущен (возможно уже есть данные)${NC}"
+
+# 10. Найти собранный файл (module:nodenext может создать dist/main.js или dist/main.mjs)
+echo -e "\n${YELLOW}🔍 Ищу собранный файл...${NC}"
+BUILD_FILE=""
+if [ -f dist/main.js ]; then
+    BUILD_FILE="dist/main.js"
+elif [ -f dist/main.mjs ]; then
+    BUILD_FILE="dist/main.mjs"
+elif [ -f dist/src/main.js ]; then
+    BUILD_FILE="dist/src/main.js"
+else
+    BUILD_FILE=$(find dist -name "main.*" -type f 2>/dev/null | head -1)
+fi
+
+if [ -z "$BUILD_FILE" ]; then
+    echo -e "${RED}❌ Не найден собранный файл main.js/main.mjs в dist/${NC}"
+    echo -e "${YELLOW}📌 Содержимое dist/:${NC}"
+    ls -la dist/ 2>/dev/null || echo "dist/ не существует"
+    exit 1
+fi
+
+echo -e "${GREEN}✅ Найден файл: $BUILD_FILE${NC}"
+
+# 11. Перезапустить PM2
+echo -e "\n${YELLOW}🔄 Перезапускаю PM2...${NC}"
+pm2 delete n-app-backend 2>/dev/null || true
+pm2 start "$BUILD_FILE" --name n-app-backend
+pm2 save
+
+# 11. Проверить статус
+sleep 2
+if pm2 show n-app-backend | grep -q "online"; then
+    echo -e "\n${GREEN}============================================${NC}"
+    echo -e "${GREEN}  ✅ Деплой завершён успешно!${NC}"
+    echo -e "${GREEN}============================================${NC}"
+    echo -e "📌 Сервер запущен на порту: ${YELLOW}3000${NC}"
+    echo -e "📌 Логи: ${YELLOW}pm2 logs n-app-backend${NC}"
+    echo -e "📌 Статус: ${YELLOW}pm2 status${NC}"
+else
+    echo -e "\n${RED}❌ Ошибка: сервер не запустился!${NC}"
+    echo -e "📌 Проверь логи: ${YELLOW}pm2 logs n-app-backend${NC}"
+fi

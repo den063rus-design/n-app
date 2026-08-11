@@ -1,0 +1,57 @@
+# Dependencies
+node_modules/
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# TypeScript
+*.tsbuildinfo
+tmp/
+
+# Prisma
+.prisma/
+
+# Tests
+coverage/
+
+# Flutter
+frontend/build/
+frontend/.dart_tool/
+frontend/.packages
+frontend/pubspec.lock
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/ios/Pods/
+frontend/ios/.symlinks/
+frontend/android/.gradle/
+frontend/android/local.properties
+frontend/android/app/build/
+
+# Firebase and signing secrets
+frontend/android/app/google-services.json
+frontend/android/key.properties
+frontend/android/*.jks
+frontend/android/app/*.jks
+frontend/android/app/*.jks.old
+firebase-service-account.json
+
+# Uploads
+uploads/
+*-firebase-adminsdk-*.json
